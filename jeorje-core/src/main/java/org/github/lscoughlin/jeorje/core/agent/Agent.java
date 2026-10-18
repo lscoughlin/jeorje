@@ -1,0 +1,786 @@
+package org.github.lscoughlin.jeorje.core.agent;
+
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Flow;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.locks.ReentrantLock;
+import java.lang.ref.WeakReference;
+import java.util.Optional;
+import java.util.function.Consumer;
+import org.github.lscoughlin.jeorje.core.compaction.ContextClassifier;
+import org.github.lscoughlin.jeorje.core.compaction.ContextCompactor;
+import org.github.lscoughlin.jeorje.core.compaction.ContextEntry;
+import org.github.lscoughlin.jeorje.core.compaction.Protection;
+import org.github.lscoughlin.jeorje.core.model.AgentEvent;
+import org.github.lscoughlin.jeorje.core.model.AgentId;
+import org.github.lscoughlin.jeorje.core.model.CancellationToken;
+import org.github.lscoughlin.jeorje.core.model.Chunk;
+import org.github.lscoughlin.jeorje.core.model.Content;
+import org.github.lscoughlin.jeorje.core.model.LlmEvent;
+import org.github.lscoughlin.jeorje.core.model.LlmRequest;
+import org.github.lscoughlin.jeorje.core.model.Message;
+import org.github.lscoughlin.jeorje.core.model.Role;
+import org.github.lscoughlin.jeorje.core.model.Text;
+import org.github.lscoughlin.jeorje.core.model.ToolResult;
+import org.github.lscoughlin.jeorje.core.model.ToolResultData;
+import org.github.lscoughlin.jeorje.core.model.ToolUse;
+import org.github.lscoughlin.jeorje.core.model.Turn;
+import org.github.lscoughlin.jeorje.core.port.ContextStore;
+import org.github.lscoughlin.jeorje.core.port.LlmClient;
+import org.github.lscoughlin.jeorje.core.port.PermissionPolicy;
+import org.github.lscoughlin.jeorje.core.port.Tool;
+import org.github.lscoughlin.jeorje.core.port.ToolContext;
+import org.github.lscoughlin.jeorje.core.compaction.PruningTable;
+import org.github.lscoughlin.jeorje.core.session.SessionManifest;
+import org.github.lscoughlin.jeorje.core.session.TranscriptReader;
+import org.github.lscoughlin.jeorje.core.session.TurnChunker;
+import org.github.lscoughlin.jeorje.core.state.AgentState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * One agent. It runs its loop in one virtual thread. The thread reads an input queue that the user,
+ * peers, and subagents fill. The agent publishes {@link AgentEvent} objects to a consumer and never
+ * exposes its state to the UI. {@link #runTurn} runs one turn on the calling thread.
+ */
+public final class Agent implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(Agent.class);
+    private static final JsonMapper MAPPER = JsonMapper.builder().build();
+    /** The text of the result of a tool call that did not finish. */
+    public static final String INTERRUPTED = "interrupted";
+
+    /**
+     * A hook at the step boundaries of a turn: before each model call, which is also after each tool call.
+     * It never runs inside a tool.
+     */
+    @FunctionalInterface
+    public interface StepBoundary {
+        /** Returns texts to add to the working context as user-role messages. Returns an empty list for none. */
+        List<String> messages();
+    }
+
+    /** The live agents by id. The references are weak. Callers use {@link #live} to reach a subagent. */
+    private static final Map<AgentId, WeakReference<Agent>> LIVE = new ConcurrentHashMap<>();
+
+    private final ReentrantLock turnLock = new ReentrantLock();
+    private static final String TODO_TOOL = "todo";
+    private static final String EMPTY_TODO = "Todo list: empty";
+
+    private final AgentId id;
+    private final AgentSettings settings;
+    private final LlmClient llm;
+    private final Map<String, Tool> tools = new LinkedHashMap<>();
+    private final PermissionPolicy policy;
+    private final ContextStore store;
+    private final TranscriptSink transcript;
+    private final Consumer<AgentEvent> events;
+    private final Clock clock;
+    private final ContextBuilder contextBuilder;
+    private final TurnChunker chunker;
+    private final AgentState state = new AgentState();
+    private final BlockingQueue<AgentInput> inbox = new LinkedBlockingQueue<>();
+    private final Map<String, CompletableFuture<Boolean>> confirmations = new ConcurrentHashMap<>();
+    private final List<Turn> completed = new ArrayList<>();
+    private final List<String> pinned = new ArrayList<>();
+    private List<ContextEntry> older = List.of();
+    private ContextCompactor compactor;
+    private ContextCompactor hardCompactor;
+    private String planMode;
+    private int turnNumber;
+    private volatile CancellationToken current = CancellationToken.none();
+    private volatile Thread thread;
+    private volatile StepBoundary stepBoundary = List::of;
+
+    public Agent(AgentId id, AgentSettings settings, LlmClient llm, List<Tool> toolList, PermissionPolicy policy,
+                 ContextStore store, TranscriptSink transcript, Consumer<AgentEvent> events, Clock clock) {
+        this.id = id;
+        this.settings = settings;
+        this.llm = llm;
+        for (var tool : toolList) tools.put(tool.definition().name(), tool);
+        this.policy = policy;
+        this.store = store;
+        this.transcript = transcript == null ? TranscriptSink.none() : transcript;
+        this.events = events;
+        this.clock = clock;
+        this.contextBuilder = new ContextBuilder(settings.contextWindowTokens(), settings.budgetPercent(),
+            settings.maxOutputTokens());
+        this.chunker = new TurnChunker(settings.sessionId());
+        LIVE.values().removeIf(ref -> ref.get() == null);
+        LIVE.put(id, new WeakReference<>(this));
+    }
+
+    /** The agent with this id, if it is alive. A later agent with the same id replaces an earlier one. */
+    public static Optional<Agent> live(AgentId id) {
+        var ref = LIVE.get(id);
+        return ref == null ? Optional.empty() : Optional.ofNullable(ref.get());
+    }
+
+    public AgentId id() { return id; }
+
+    public AgentState state() { return state; }
+
+    public ContextBuilder contextBuilder() { return contextBuilder; }
+
+    /** Turns that the agent finished, oldest first. */
+    public synchronized List<Turn> turns() { return List.copyOf(completed); }
+
+    /** Turns off compaction when null. */
+    public synchronized Agent withCompactor(ContextCompactor next) {
+        this.compactor = next;
+        return this;
+    }
+
+    /**
+     * Sets the compactor that {@link #compactNow} uses. It must prune at the hard level, which means a budget so
+     * small that every old chunk is over the limit. Null means that {@code compactNow} uses the normal compactor.
+     */
+    public synchronized Agent withHardCompactor(ContextCompactor next) {
+        this.hardCompactor = next;
+        return this;
+    }
+
+    /** Sets the hook that adds messages at step boundaries. Null removes the hook. */
+    public Agent withStepBoundary(StepBoundary hook) {
+        this.stepBoundary = hook == null ? List::of : hook;
+        return this;
+    }
+
+    /** Adds a pinned item. It stays in every request. */
+    public synchronized Agent pin(String item) {
+        pinned.add(item);
+        return this;
+    }
+
+    /** The pinned items, oldest first. */
+    public synchronized List<String> pinnedTexts() { return List.copyOf(pinned); }
+
+    /** The pruned working context: one entry for each chunk of the turns that left the recent window. */
+    public synchronized List<ContextEntry> workingEntries() { return older; }
+
+    /**
+     * Writes the pinned items and the pruning table into a manifest. A later {@link #restore} reads them back.
+     */
+    public synchronized SessionManifest recordInto(SessionManifest manifest) {
+        var items = new ArrayList<SessionManifest.PinnedItem>();
+        for (var i = 0; i < pinned.size(); i++) {
+            items.add(new SessionManifest.PinnedItem("pin-" + (i + 1), "text", pinned.get(i)));
+        }
+        return manifest.withPinned(items).withPruning(PruningTable.toEntries(older));
+    }
+
+    /**
+     * Restores the state of an earlier run of this agent. It sets the finished turns, the turn counter, the pinned
+     * items, and the pruned working context, so that the next request equals the request that the earlier run
+     * would have made.
+     *
+     * <p>The turns come from the transcript. Only the turns of this agent count. The text of each chunk comes
+     * from the turn, and the pruning table of the manifest gives the class, the level, the kept spans, and the
+     * decision note of each pruned chunk. A chunk that has no table row is at level 0. Call this before the agent
+     * starts or between turns.
+     *
+     * @param manifest the manifest of the session, or null for no pins and no pruning
+     * @param transcript the complete turns of the transcript, in file order
+     */
+    public Agent restore(SessionManifest manifest, List<TranscriptReader.TimedTurn> transcript) {
+        return restore(manifest, transcript, id);
+    }
+
+    /**
+     * Restores the state from the turns of another agent id. This is for a session that an earlier run started with
+     * a different id for the agent of the user. The chunk ids keep the old agent id, so the pruning table matches.
+     * The turns that the agent runs next use the id of this agent and continue the turn numbers.
+     *
+     * @param source the id of the agent that wrote the turns
+     */
+    public Agent restore(SessionManifest manifest, List<TranscriptReader.TimedTurn> transcript, AgentId source) {
+        turnLock.lock();
+        try {
+            synchronized (this) {
+                completed.clear();
+                pinned.clear();
+                var own = new ArrayList<TranscriptReader.TimedTurn>();
+                for (var timed : transcript) {
+                    if (timed.turn().agent().equals(source)) own.add(timed);
+                }
+                var last = 0;
+                for (var timed : own) {
+                    completed.add(timed.turn());
+                    last = Math.max(last, timed.turn().number());
+                }
+                turnNumber = last;
+                var table = manifest == null ? List.<SessionManifest.PruneEntry>of() : manifest.pruning();
+                if (manifest != null) manifest.pinned().forEach(item -> pinned.add(item.text()));
+                var entries = new ArrayList<ContextEntry>();
+                var cutoff = own.size() - settings.recentTurns();
+                var chunks = new ArrayList<Chunk>();
+                for (var i = 0; i < own.size(); i++) {
+                    var timed = own.get(i);
+                    chunks.addAll(chunker.chunk(timed.turn(), timed.timestamp()));
+                }
+                var ctx = new ContextClassifier.Context(last, settings.recentTurns(), Set.of(), Set.of(),
+                    Map.of(), settings.maxProtectedTokens());
+                var classes = new ContextClassifier().classify(chunks, ctx);
+                var leaving = new HashSet<Integer>();
+                for (var i = 0; i < cutoff; i++) leaving.add(own.get(i).turn().number());
+                var leaves = chunks.stream().filter(c -> leaving.contains(c.turn())).toList();
+                entries.addAll(PruningTable.restore(leaves, table,
+                    c -> classes.getOrDefault(c.chunkId(), Protection.AGGRESSIVE)));
+                older = List.copyOf(entries);
+            }
+        } finally {
+            turnLock.unlock();
+        }
+        return this;
+    }
+
+    /** Sets the plan-mode section of the system prompt, or null to leave plan mode. */
+    public synchronized Agent planMode(String section) {
+        this.planMode = section;
+        return this;
+    }
+
+    // ---- thread and queue ----
+
+    /** Starts the agent thread. */
+    public synchronized void start() {
+        if (thread != null) return;
+        thread = Thread.ofVirtual().name("agent-" + id).start(this::run);
+    }
+
+    /** Adds input to the queue. */
+    public void submit(AgentInput input) { inbox.add(input); }
+
+    /** Cancels the running turn. The agent stays usable. */
+    public void cancel() { current.cancel(); }
+
+    /** Answers a {@link AgentEvent.ConfirmationRequested} event. */
+    public void confirm(String toolUseId, boolean approved) {
+        var future = confirmations.get(toolUseId);
+        if (future != null) future.complete(approved);
+    }
+
+    /** Stops the thread after it cancels the running turn. */
+    @Override
+    public void close() {
+        inbox.add(new AgentInput.Stop());
+        current.cancel();
+        var t = thread;
+        if (t != null) {
+            try {
+                t.join(5_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void run() {
+        try {
+            while (true) {
+                var input = inbox.take();
+                if (input instanceof AgentInput.Stop) return;
+                try {
+                    runTurn(input.text());
+                } catch (RuntimeException e) {
+                    log.atError().setCause(e).log(() -> "Agent " + id + " failed in a turn");
+                    publish(new AgentEvent.Error(id, "Internal error: " + message(e)));
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    // ---- the loop ----
+
+    /** Runs one turn to its end on the calling thread. */
+    public void runTurn(String input) {
+        runTurn(input, settings.stepLimit());
+    }
+
+    /**
+     * Runs one turn on the calling thread with a budget of model calls.
+     *
+     * @return the number of model calls that the turn made. A result equal to {@code maxModelCalls} means that
+     *         the budget was used up. The turn may have ended on its own at the same time.
+     */
+    public int runTurn(String input, int maxModelCalls) {
+        turnLock.lock();
+        try {
+            return runTurnLocked(input, maxModelCalls);
+        } finally {
+            turnLock.unlock();
+        }
+    }
+
+    private int runTurnLocked(String input, int maxModelCalls) {
+        var limit = Math.min(maxModelCalls, settings.stepLimit());
+        var token = new CancellationToken();
+        current = token;
+        token.onCancel(() -> confirmations.values().forEach(f -> f.cancel(false)));
+        var number = ++turnNumber;
+        var messages = new ArrayList<Message>();
+        messages.add(Message.user(input));
+        var calls = 0;
+        while (true) {
+            if (token.isCancelled()) break;
+            if (calls >= limit) {
+                publish(new AgentEvent.Error(id, "Step limit reached: " + limit
+                    + " model calls in one turn. The turn ends."));
+                break;
+            }
+            addBoundaryMessages(messages);
+            calls++;
+            var built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages), olderEntries(),
+                recentTurns(), messages, definitions()));
+            var assistant = callModel(built, token);
+            if (assistant.error() != null) {
+                publish(new AgentEvent.Error(id, assistant.error()));
+                break;
+            }
+            if (!assistant.content().isEmpty()) messages.add(new Message(Role.ASSISTANT, assistant.content()));
+            var uses = assistant.content().stream().filter(ToolUse.class::isInstance).map(ToolUse.class::cast).toList();
+            if (token.isCancelled()) {
+                closeOpenCalls(messages, uses, List.of());
+                break;
+            }
+            if (uses.isEmpty()) break;
+            var results = dispatch(uses, token);
+            messages.add(new Message(Role.USER, List.copyOf(results)));
+            if (token.isCancelled()) break;
+        }
+        finishTurn(new Turn(id, number, messages));
+        return calls;
+    }
+
+    /**
+     * Asks the step boundary hook for messages. A message joins the last user message, so that a tool result
+     * always follows its tool use directly. Otherwise it becomes a new user message.
+     */
+    private void addBoundaryMessages(List<Message> messages) {
+        List<String> extra;
+        try {
+            extra = stepBoundary.messages();
+        } catch (RuntimeException e) {
+            log.atWarn().log(() -> "The step boundary hook failed: " + message(e));
+            return;
+        }
+        if (extra == null || extra.isEmpty()) return;
+        var texts = extra.stream().filter(t -> t != null && !t.isEmpty()).<Content>map(Text::new).toList();
+        if (texts.isEmpty()) return;
+        var last = messages.isEmpty() ? null : messages.getLast();
+        if (last != null && last.role() == Role.USER) {
+            var merged = new ArrayList<>(last.content());
+            merged.addAll(texts);
+            messages.set(messages.size() - 1, new Message(Role.USER, merged));
+        } else {
+            messages.add(new Message(Role.USER, texts));
+        }
+    }
+
+    private void closeOpenCalls(List<Message> messages, List<ToolUse> uses, List<ToolResult> done) {
+        var answered = new HashSet<String>();
+        for (var r : done) answered.add(r.toolUseId());
+        var open = new ArrayList<Content>(done);
+        for (var use : uses) {
+            if (answered.add(use.id())) {
+                open.add(new ToolResult(use.id(), INTERRUPTED, true));
+                publish(new AgentEvent.ToolFinished(id, use.id(), ToolResultData.error(INTERRUPTED)));
+            }
+        }
+        if (!open.isEmpty()) messages.add(new Message(Role.USER, open));
+    }
+
+    private synchronized List<Turn> recentTurns() {
+        var from = Math.max(0, completed.size() - settings.recentTurns());
+        return List.copyOf(completed.subList(from, completed.size()));
+    }
+
+    /** The pinned items of the user, and then the latest todo list. The list is read from the history of the agent. */
+    private synchronized List<String> pinnedItems(List<Message> current) {
+        var items = new ArrayList<>(pinned);
+        var todo = latestTodo(current);
+        if (todo != null) items.add(todo);
+        return List.copyOf(items);
+    }
+
+    /**
+     * The text of the latest successful {@code todo} result in the current messages and the finished turns, or
+     * null. The agent pins this text in each request, so that pruning never removes the list.
+     */
+    private String latestTodo(List<Message> current) {
+        var found = latestTodo(current, null);
+        for (var i = completed.size() - 1; found == null && i >= 0; i--) {
+            found = latestTodo(completed.get(i).messages(), null);
+        }
+        return found == null || found.startsWith(EMPTY_TODO) ? null : found;
+    }
+
+    private static String latestTodo(List<Message> messages, String none) {
+        var tools = new java.util.HashMap<String, String>();
+        for (var m : messages) {
+            for (var c : m.content()) if (c instanceof ToolUse u) tools.put(u.id(), u.tool());
+        }
+        for (var i = messages.size() - 1; i >= 0; i--) {
+            var content = messages.get(i).content();
+            for (var k = content.size() - 1; k >= 0; k--) {
+                if (content.get(k) instanceof ToolResult r && !r.error() && TODO_TOOL.equals(tools.get(r.toolUseId()))) {
+                    return r.output().strip();
+                }
+            }
+        }
+        return none;
+    }
+
+    private synchronized List<String> pinnedItems() { return List.copyOf(pinned); }
+
+    private synchronized List<ContextEntry> olderEntries() { return older; }
+
+    private List<org.github.lscoughlin.jeorje.core.model.ToolDefinition> definitions() {
+        return tools.values().stream().map(Tool::definition).toList();
+    }
+
+    private String systemPrompt() {
+        String plan;
+        synchronized (this) {
+            plan = planMode;
+        }
+        return SystemPromptBuilder.build(new SystemPromptBuilder.Parts(settings.systemPrompt(), definitions(),
+            settings.workingDirectory(), System.getProperty("os.name", "unknown"), LocalDate.now(clock),
+            settings.instructionsFor(settings.workingDirectory()), plan));
+    }
+
+    private void finishTurn(Turn turn) {
+        var now = clock.instant();
+        synchronized (this) {
+            completed.add(turn);
+        }
+        try {
+            store.append(chunker.chunk(turn, now));
+            transcript.writeTurn(turn, now);
+        } catch (RuntimeException e) {
+            log.atError().setCause(e).log(() -> "Cannot store turn " + turn.id());
+            publish(new AgentEvent.Error(id, "Cannot store turn " + turn.id() + ": " + message(e)));
+        }
+        publish(new AgentEvent.TurnFinished(id, turn.number()));
+        compact(turn.number());
+    }
+
+    /** Moves turns that leave the recent window into the pruned entries and compacts them. */
+    private synchronized void compact(int currentTurn) {
+        if (completed.size() <= settings.recentTurns() && compactor == null) return;
+        var outcome = prune(compactor, currentTurn);
+        if (outcome != null && outcome.event() != null) publish(outcome.event());
+    }
+
+    /**
+     * Compacts the working context now, at the hard level. It runs between turns. When a turn runs, it waits
+     * for the end of the turn. It uses the hard compactor, or the normal compactor when none is set. The next
+     * request is already smaller. It publishes the {@link AgentEvent.Compacted} event when something changed.
+     *
+     * @return the data of the event. It is zero in both numbers when nothing changed, and then no event is published.
+     */
+    public AgentEvent.Compacted compactNow() {
+        turnLock.lock();
+        try {
+            synchronized (this) {
+                var use = hardCompactor != null ? hardCompactor : compactor;
+                var none = new AgentEvent.Compacted(id, 0, 0);
+                if (use == null) return none;
+                var outcome = prune(use, turnNumber);
+                if (outcome == null || outcome.event() == null) return none;
+                publish(outcome.event());
+                return outcome.event();
+            }
+        } finally {
+            turnLock.unlock();
+        }
+    }
+
+    /**
+     * Adds the turns outside the recent window to the older entries and runs the compactor. At each call, it
+     * classifies all chunks of the agent again: the older entries and the chunks of the recent turns. The error
+     * state, the immediate file paths, and the concluded searches depend on the later chunks. A chunk that
+     * compaction already pruned keeps its class.
+     */
+    private ContextCompactor.Outcome prune(ContextCompactor by, int currentTurn) {
+        var entries = new ArrayList<>(older);
+        var known = new HashSet<Integer>();
+        for (var e : entries) known.add(e.chunk().turn());
+        var cutoff = completed.size() - settings.recentTurns();
+        for (var i = 0; i < cutoff; i++) {
+            var turn = completed.get(i);
+            if (!known.add(turn.number())) continue;
+            for (var c : chunker.chunk(turn, clock.instant())) entries.add(ContextEntry.of(c, Protection.AGGRESSIVE));
+        }
+        var all = new ArrayList<Chunk>();
+        for (var e : entries) all.add(e.chunk());
+        for (var i = Math.max(0, cutoff); i < completed.size(); i++) all.addAll(chunker.chunk(completed.get(i), clock.instant()));
+        var protectedTurns = by == null ? settings.recentTurns() : by.settings().protectedRecentTurns();
+        var ctx = new ContextClassifier.Context(currentTurn, protectedTurns, Set.of(), Set.of(), Map.of(),
+            settings.maxProtectedTokens());
+        var classifier = new ContextClassifier();
+        var classes = classifier.classify(all, ctx);
+        for (var i = 0; i < entries.size(); i++) {
+            var e = entries.get(i);
+            var next = e.level() > 0 ? e.protection() : classes.getOrDefault(e.chunk().chunkId(), Protection.AGGRESSIVE);
+            if (next != e.protection()) entries.set(i, new ContextEntry(e.chunk(), next, e.prune()));
+        }
+        ContextCompactor.Outcome outcome = null;
+        if (by != null && !entries.isEmpty()) {
+            var paths = classifier.immediatePaths(all, ctx, classes);
+            var concluded = classifier.concludedSearches(all, ctx, classes);
+            var overhead = contextBuilder.overhead(new ContextBuilder.Input(systemPrompt(), pinnedItems(List.of()),
+                List.of(), recentTurns(), List.of(), definitions()));
+            outcome = by.compact(entries, currentTurn, overhead, paths, concluded);
+            entries = new ArrayList<>(outcome.entries());
+        }
+        older = List.copyOf(entries);
+        return outcome;
+    }
+
+    // ---- model call ----
+
+    private record Assistant(List<Content> content, String error) {}
+
+    private Assistant callModel(ContextBuilder.Built built, CancellationToken token) {
+        var retry = settings.retry();
+        for (var attempt = 1; ; attempt++) {
+            var assembler = new Assembler(token);
+            try {
+                stream(built.request(), token, assembler);
+                if (assembler.usage != null) contextBuilder.observe(built.rawEstimate(), assembler.usage.inputTokens());
+                return new Assistant(assembler.content(), null);
+            } catch (CancellationException e) {
+                return new Assistant(assembler.content(), null);
+            } catch (RuntimeException e) {
+                if (token.isCancelled()) return new Assistant(assembler.content(), null);
+                var retryable = !assembler.received && retry.isRetryable(e);
+                if (!retryable || attempt >= retry.maxAttempts()) {
+                    return new Assistant(assembler.content(), "Model call failed: " + message(e));
+                }
+                var delay = retry.delay(attempt, e);
+                var number = attempt;
+                log.atDebug().log(() -> "Retry " + number + " in " + delay.toMillis() + " ms after: " + message(e));
+                try {
+                    settings.sleeper().sleep(delay);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return new Assistant(assembler.content(), null);
+                }
+            }
+        }
+    }
+
+    private void stream(LlmRequest request, CancellationToken token, Assembler assembler) {
+        var done = new CompletableFuture<Void>();
+        var subscription = new java.util.concurrent.atomic.AtomicReference<Flow.Subscription>();
+        llm.stream(request, token).subscribe(new Flow.Subscriber<>() {
+            @Override
+            public void onSubscribe(Flow.Subscription s) {
+                subscription.set(s);
+                s.request(Long.MAX_VALUE);
+            }
+
+            @Override
+            public void onNext(LlmEvent event) {
+                try {
+                    assembler.accept(event);
+                } catch (RuntimeException e) {
+                    done.completeExceptionally(e);
+                }
+            }
+
+            @Override
+            public void onError(Throwable t) { done.completeExceptionally(t); }
+
+            @Override
+            public void onComplete() { done.complete(null); }
+        });
+        token.onCancel(() -> {
+            var s = subscription.get();
+            if (s != null) s.cancel();
+            done.complete(null);
+        });
+        try {
+            done.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new CancellationException("interrupted");
+        } catch (ExecutionException e) {
+            throw e.getCause() instanceof RuntimeException r ? r : new RuntimeException(e.getCause());
+        }
+    }
+
+    /** Assembles the streamed events into the content of one assistant message. */
+    private final class Assembler {
+        private final CancellationToken token;
+        private final StringBuilder text = new StringBuilder();
+        private final Map<String, String> names = new LinkedHashMap<>();
+        private final Map<String, StringBuilder> inputs = new LinkedHashMap<>();
+        volatile LlmEvent.Usage usage;
+        volatile boolean received;
+
+        Assembler(CancellationToken token) { this.token = token; }
+
+        void accept(LlmEvent event) {
+            received = true;
+            switch (event) {
+                case LlmEvent.TextDelta d -> {
+                    text.append(d.text());
+                    publish(new AgentEvent.TokenDelta(id, d.text()));
+                }
+                case LlmEvent.ToolUseStart s -> {
+                    names.put(s.id(), s.tool());
+                    inputs.putIfAbsent(s.id(), new StringBuilder());
+                }
+                case LlmEvent.ToolUseInput i -> inputs.computeIfAbsent(i.id(), k -> new StringBuilder())
+                    .append(i.jsonFragment());
+                case LlmEvent.MessageStop s -> { }
+                case LlmEvent.Usage u -> usage = u;
+            }
+        }
+
+        List<Content> content() {
+            var out = new ArrayList<Content>();
+            if (!text.isEmpty()) out.add(new Text(text.toString()));
+            for (var entry : names.entrySet()) out.add(new ToolUse(entry.getKey(), entry.getValue(),
+                parse(inputs.get(entry.getKey()).toString())));
+            return out;
+        }
+
+        private JsonNode parse(String json) {
+            if (json.isBlank()) return MAPPER.createObjectNode();
+            try {
+                return MAPPER.readTree(json);
+            } catch (RuntimeException e) {
+                log.atDebug().log(() -> "Tool input is not valid JSON" + (token.isCancelled() ? " (cancelled)" : ""));
+                return MAPPER.createObjectNode();
+            }
+        }
+    }
+
+    // ---- tool dispatch ----
+
+    private List<ToolResult> dispatch(List<ToolUse> uses, CancellationToken token) {
+        var allReadOnly = uses.size() > 1 && uses.stream().allMatch(u -> tools.get(u.tool()) != null
+            && tools.get(u.tool()).readOnly());
+        var results = new ArrayList<ToolResult>();
+        if (allReadOnly) {
+            var gates = new ArrayList<ToolResultData>();
+            for (var use : uses) gates.add(token.isCancelled() ? interrupted() : gate(use, token));
+            try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+                var futures = new ArrayList<CompletableFuture<ToolResultData>>();
+                for (var i = 0; i < uses.size(); i++) {
+                    var use = uses.get(i);
+                    var gate = gates.get(i);
+                    futures.add(gate != null ? CompletableFuture.completedFuture(gate)
+                        : CompletableFuture.supplyAsync(() -> execute(use, token), pool));
+                }
+                for (var i = 0; i < uses.size(); i++) {
+                    var data = futures.get(i).join();
+                    results.add(finish(uses.get(i), data));
+                }
+            }
+        } else {
+            for (var use : uses) {
+                var data = token.isCancelled() ? interrupted() : gate(use, token);
+                if (data == null) data = execute(use, token);
+                results.add(finish(use, data));
+            }
+        }
+        return results;
+    }
+
+    private ToolResult finish(ToolUse use, ToolResultData data) {
+        if (!data.updates().isEmpty()) state.apply(data.updates());
+        publish(new AgentEvent.ToolFinished(id, use.id(), data));
+        return new ToolResult(use.id(), data.output(), data.error());
+    }
+
+    private static ToolResultData interrupted() { return ToolResultData.error(INTERRUPTED); }
+
+    /** Checks the permission. Returns a result when the call must not run, or null when it can run. */
+    private ToolResultData gate(ToolUse use, CancellationToken token) {
+        var decision = policy.check(use);
+        return switch (decision) {
+            case ALLOW -> null;
+            case DENY -> denied(use);
+            case ASK -> {
+                var future = new CompletableFuture<Boolean>();
+                confirmations.put(use.id(), future);
+                try {
+                    if (token.isCancelled()) future.cancel(false);
+                    publish(new AgentEvent.ConfirmationRequested(id, use));
+                    yield future.get() ? null : denied(use);
+                } catch (CancellationException e) {
+                    yield interrupted();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    yield interrupted();
+                } catch (ExecutionException e) {
+                    yield ToolResultData.error(message(e.getCause()));
+                } finally {
+                    confirmations.remove(use.id());
+                }
+            }
+        };
+    }
+
+    private static ToolResultData denied(ToolUse use) {
+        return ToolResultData.error("Permission denied: the call to " + use.tool() + " did not run.");
+    }
+
+    private ToolResultData execute(ToolUse use, CancellationToken token) {
+        var tool = tools.get(use.tool());
+        if (tool == null) return ToolResultData.error("Unknown tool: " + use.tool());
+        publish(new AgentEvent.ToolStarted(id, use.id(), use.tool(), summary(use)));
+        try {
+            var context = new ToolContext(settings.workingDirectory(), id, token, store, clock);
+            var result = tool.execute(use.input() == null ? MAPPER.createObjectNode() : use.input(), context);
+            if (result == null) return ToolResultData.error("Tool " + use.tool() + " returned no result.");
+            return token.isCancelled() && result.error() ? interrupted() : result;
+        } catch (CancellationException e) {
+            return interrupted();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return interrupted();
+        } catch (Exception e) {
+            if (token.isCancelled()) return interrupted();
+            log.atDebug().log(() -> "Tool " + use.tool() + " failed: " + message(e));
+            return ToolResultData.error(message(e));
+        }
+    }
+
+    private static String summary(ToolUse use) {
+        var input = use.input() == null ? "" : use.input().toString();
+        return use.tool() + (input.length() > 80 ? " " + input.substring(0, 80) + "..." : " " + input);
+    }
+
+    private static String message(Throwable e) {
+        return e.getMessage() == null || e.getMessage().isBlank() ? e.getClass().getSimpleName() : e.getMessage();
+    }
+
+    private void publish(AgentEvent event) {
+        try {
+            events.accept(event);
+        } catch (RuntimeException e) {
+            log.atWarn().log(() -> "An event consumer failed: " + message(e));
+        }
+    }
+}

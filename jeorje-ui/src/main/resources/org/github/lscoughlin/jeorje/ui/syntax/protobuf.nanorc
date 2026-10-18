@@ -1,0 +1,12 @@
+## Syntax file for Protocol Buffers. Written for Jeorje.
+##
+syntax "protobuf" "\.proto$"
+comment "//"
+
+color cyan "\<(syntax|package|import|option|message|enum|service|rpc|returns|stream|oneof|map|reserved|extensions|extend|public|weak|repeated|optional|required|to|max)\>"
+color green "\<(double|float|int32|int64|uint32|uint64|sint32|sint64|fixed32|fixed64|sfixed32|sfixed64|bool|string|bytes)\>"
+color yellow "\<(true|false)\>"
+color red ""(\\.|[^"])*"" "'(\\.|[^'])*'"
+color yellow "\b[0-9]+(\.[0-9]+)?\b" "\b0x[0-9a-fA-F]+\b"
+color blue "//.*"
+color blue start="/\*" end="\*/"

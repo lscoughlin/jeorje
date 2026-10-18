@@ -1,0 +1,4 @@
+%% note
+-module(foo).
+-export([run/0]).
+run() -> case ok of ok -> "hi"; _ -> 42 end.

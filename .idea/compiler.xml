@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <annotationProcessing>
+      <profile name="Maven default annotation processors profile" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <module name="jeorje-llm" />
+        <module name="jeorje-cli" />
+        <module name="jeorje-ui" />
+        <module name="jeorje-swarm" />
+        <module name="jeorje-core" />
+        <module name="jeorje-testkit" />
+        <module name="jeorje-tools" />
+        <module name="jeorje-index" />
+      </profile>
+    </annotationProcessing>
+  </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="jeorje-cli" options="-parameters" />
+      <module name="jeorje-core" options="-parameters" />
+      <module name="jeorje-index" options="-parameters" />
+      <module name="jeorje-llm" options="-parameters" />
+      <module name="jeorje-swarm" options="-parameters" />
+      <module name="jeorje-testkit" options="-parameters" />
+      <module name="jeorje-tools" options="-parameters" />
+      <module name="jeorje-ui" options="-parameters" />
+    </option>
+  </component>
+</project>

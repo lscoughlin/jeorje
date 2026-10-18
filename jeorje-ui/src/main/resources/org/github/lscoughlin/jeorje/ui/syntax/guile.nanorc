@@ -1,0 +1,13 @@
+## Syntax file for Guile. Written for Jeorje.
+##
+syntax "Guile" "\.guile$" "\.gsh$"
+comment ";"
+
+color red "\((if|cond|case|when|unless|and|or|not|do|begin|let|let\*|letrec|lambda|define|define-module|define-syntax|define-record-type|set!|use-modules|quote|quasiquote|else)\>"
+color green "\<(display|newline|car|cdr|cons|list|map|for-each|append|apply|length|format|assoc|assq|vector|string-append|number->string)\>"
+color yellow "#t|#f|#:[A-Za-z0-9-]+"
+color cyan "'[A-Za-z0-9!$%&*/:<=>?^_~+.-]+"
+color red ""(\\.|[^"])*""
+color yellow "\b[0-9]+(\.[0-9]+)?\b"
+color blue ";.*"
+color blue start="#\|" end="\|#"

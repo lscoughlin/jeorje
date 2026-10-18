@@ -1,0 +1,14 @@
+## Syntax file for Julia. Written for Jeorje.
+##
+syntax "Julia" "\.jl$"
+comment "#"
+
+color red "\<(if|elseif|else|for|while|break|continue|return|try|catch|finally|throw|do|in|end|begin|let)\>"
+color cyan "\<(function|macro|module|baremodule|struct|mutable|abstract|primitive|type|using|import|export|const|global|local|where|quote|isa)\>"
+color green "\<(Int|Int8|Int16|Int32|Int64|UInt|Float16|Float32|Float64|Bool|String|Char|Any|Nothing|Vector|Array|Dict|Set|Tuple|Symbol)\>"
+color yellow "\<(true|false|nothing|missing|NaN|Inf|pi)\>"
+color magenta "@[A-Za-z_][A-Za-z0-9_!]*"
+color red ""(\\.|[^"])*"" "'(\\.|[^'])'"
+color yellow "\b[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\b" "\b0x[0-9a-fA-F]+\b"
+color blue "#.*"
+color blue start="#=" end="=#"

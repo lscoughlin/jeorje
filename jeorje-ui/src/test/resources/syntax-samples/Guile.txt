@@ -1,0 +1,3 @@
+; note
+(define (add a b) (+ a b))
+(display "hi") (if #t (newline) 42)

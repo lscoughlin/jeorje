@@ -1,0 +1,5 @@
+<configuration>
+  <!-- Quiet default. LoggingSetup installs the real appenders at startup. -->
+  <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+  <root level="OFF"/>
+</configuration>

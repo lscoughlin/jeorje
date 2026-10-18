@@ -1,0 +1,3 @@
+x <- c(1, 2, 3) # note
+if (TRUE) print("hi") else NULL
+f <- function(a) { return(a + 1L) }

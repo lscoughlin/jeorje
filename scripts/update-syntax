@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Copies the .nanorc files of scopatz/nanorc into the jeorje-ui resources.
+# The files that were written for Jeorje (they are not in that project) stay in place; the script keeps them.
+# Files with several syntax lines stay whole here. SyntaxCatalog splits them when it extracts the set.
+# Usage: scripts/update-syntax [commit-or-ref]   (default: master)
+set -euo pipefail
+
+URL="https://github.com/scopatz/nanorc"
+REF="${1:-master}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DEST="$ROOT/jeorje-ui/src/main/resources/org/github/lscoughlin/jeorje/ui/syntax"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+git clone --quiet "$URL" "$TMP/nanorc"
+git -C "$TMP/nanorc" checkout --quiet "$REF"
+COMMIT="$(git -C "$TMP/nanorc" rev-parse HEAD)"
+
+# Files written for Jeorje. Add a new file name here when you write a new syntax file.
+WRITTEN=(objc dart r julia graphql nix protobuf erlang guile pascal changelog log)
+
+mkdir -p "$DEST" "$TMP/written"
+for name in "${WRITTEN[@]}"; do
+  cp "$DEST/$name.nanorc" "$TMP/written/"
+done
+rm -f "$DEST"/*.nanorc
+cp "$TMP/nanorc"/*.nanorc "$DEST"/
+for name in "${WRITTEN[@]}"; do
+  if [ -e "$DEST/$name.nanorc" ]; then
+    echo "The upstream project now has $name.nanorc. Jeorje keeps its own file." >&2
+  fi
+  cp "$TMP/written/$name.nanorc" "$DEST/"
+done
+
+COUNT="$(ls "$DEST"/*.nanorc | wc -l | tr -d ' ')"
+UPSTREAM=$((COUNT - ${#WRITTEN[@]}))
+WRITTEN_LIST=""
+for name in "${WRITTEN[@]}"; do
+  WRITTEN_LIST="$WRITTEN_LIST- $name.nanorc"$'\n'
+done
+cat > "$DEST/SOURCES.md" <<EOT
+---
+title: Embedded syntax files
+---
+
+# Embedded syntax files
+
+- Project: $URL
+- Commit: $COMMIT
+- Files: $COUNT ($UPSTREAM from the project, ${#WRITTEN[@]} written for Jeorje)
+- Updated by: scripts/update-syntax
+
+Jeorje copies the files of the project without a change. Each file keeps its original header.
+Jeorje splits a file with several syntax lines into one file for each syntax when it extracts the set.
+
+## Written for Jeorje
+
+The project has no files for these languages. Jeorje wrote simple files (keywords, strings, comments, numbers).
+The update script keeps them.
+
+$WRITTEN_LIST
+EOT
+echo "Copied $COUNT files from $URL at $COMMIT"

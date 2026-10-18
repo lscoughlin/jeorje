@@ -1,0 +1,10 @@
+## Syntax file for ChangeLog. Written for Jeorje.
+##
+syntax "ChangeLog" "(^|/)(ChangeLog|CHANGELOG|Changelog)(\.txt)?$"
+
+color cyan "^[0-9]{4}-[0-9]{2}-[0-9]{2}.*"
+color cyan "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) .*"
+color green "^[[:space:]]+\*[[:space:]][^:]*:"
+color magenta "<[^>]+@[^>]+>"
+color yellow "\([^)]*\)"
+color red "^[[:space:]]*(Fix|Fixes|Fixed|Add|Added|Remove|Removed|Update|Updated|Change|Changed)\>"

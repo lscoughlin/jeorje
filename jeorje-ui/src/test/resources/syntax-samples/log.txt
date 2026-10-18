@@ -1,0 +1,3 @@
+2024-01-05 10:11:12,345 ERROR [main] Cannot open file
+2024-01-05 10:11:13 WARN slow request 120ms
+2024-01-05 10:11:14 INFO started

@@ -1,0 +1,6 @@
+Title
+=====
+
+Some **bold** and ``code`` text::
+
+.. note:: a directive

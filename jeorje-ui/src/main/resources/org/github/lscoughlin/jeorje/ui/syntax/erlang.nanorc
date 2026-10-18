@@ -1,0 +1,13 @@
+## Syntax file for Erlang. Written for Jeorje.
+##
+syntax "Erlang" "\.(erl|hrl|escript)$"
+comment "%"
+
+color red "\<(if|case|of|when|receive|after|try|catch|end|begin|fun|let|query|cond|not|and|or|xor|andalso|orelse|div|rem|band|bor|bxor|bnot|bsl|bsr)\>"
+color cyan "^-(module|export|import|include|include_lib|define|ifdef|ifndef|else|endif|record|type|spec|behaviour|behavior|callback|opaque|compile|vsn|author|undef)\>"
+color green "\<(spawn|self|send|register|whereis|apply|length|hd|tl|element|setelement|is_atom|is_list|is_integer|io|lists|maps|erlang)\>"
+color yellow "\<(true|false|undefined|ok|error)\>"
+color magenta "\b[A-Z_][A-Za-z0-9_]*\b"
+color red ""(\\.|[^"])*""
+color yellow "\b[0-9]+(\.[0-9]+)?\b"
+color blue "%.*"

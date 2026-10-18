@@ -1,0 +1,12 @@
+## Syntax file for log files. Written for Jeorje.
+##
+syntax "log" "\.log$"
+
+color cyan "^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}([.,][0-9]+)?(Z|[-+][0-9:]+)?"
+color cyan "^[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2}"
+color brightred "\<(FATAL|SEVERE|CRITICAL|ERROR|Error|error|Exception|exception|FAILED|Failed|failed)\>"
+color yellow "\<(WARN|WARNING|Warning|warning)\>"
+color green "\<(INFO|NOTICE|OK|SUCCESS|Success)\>"
+color blue "\<(DEBUG|TRACE|FINE|FINER|FINEST)\>"
+color magenta "\[[^]]+\]"
+color yellow "\b[0-9]+(\.[0-9]+)?(ms|s|MB|KB|GB)?\b"

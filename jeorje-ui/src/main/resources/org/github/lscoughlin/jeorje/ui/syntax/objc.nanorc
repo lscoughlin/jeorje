@@ -1,0 +1,15 @@
+## Syntax file for Objective-C. Written for Jeorje.
+##
+syntax "Objective-C" "\.m$" "\.objc$"
+comment "//"
+
+color green "\<(int|long|short|char|float|double|void|unsigned|signed|BOOL|id|SEL|Class|NSInteger|NSUInteger|CGFloat)\>"
+color red "\<(if|else|for|while|do|switch|case|default|break|continue|return|goto|try|catch|finally|throw)\>"
+color cyan "\<(self|super|nil|Nil|YES|NO|NULL|static|const|extern|typedef|struct|enum|union|sizeof|inline)\>"
+color cyan "@(interface|implementation|end|protocol|property|synthesize|dynamic|class|selector|autoreleasepool|try|catch|finally|throw|synchronized|public|private|protected)\>"
+color magenta "^[[:space:]]*#[[:space:]]*(import|include|define|undef|if|ifdef|ifndef|else|elif|endif|pragma)\>"
+color red ""(\\.|[^"])*""
+color red "@"(\\.|[^"])*""
+color yellow "\b[0-9]+(\.[0-9]+)?\b" "\b0x[0-9a-fA-F]+\b"
+color blue "//.*"
+color blue start="/\*" end="\*/"

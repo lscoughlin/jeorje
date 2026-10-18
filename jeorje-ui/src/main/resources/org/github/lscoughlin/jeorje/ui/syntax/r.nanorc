@@ -1,0 +1,12 @@
+## Syntax file for R. Written for Jeorje.
+##
+syntax "R" "\.[rR]$" "\.Rprofile$"
+comment "#"
+
+color red "\<(if|else|for|while|repeat|break|next|return|function|in|switch)\>"
+color green "\<(library|require|source|c|list|data\.frame|matrix|vector|print|cat|paste|length|sum|mean|apply|sapply|lapply)\>"
+color yellow "\<(TRUE|FALSE|NULL|NA|NA_integer_|NA_real_|NA_character_|Inf|NaN)\>"
+color cyan "<-|<<-|->|->>|%[^%]*%|\|>"
+color red ""(\\.|[^"])*"" "'(\\.|[^'])*'"
+color yellow "\b[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?L?\b" "\b0x[0-9a-fA-F]+\b"
+color blue "#.*"

@@ -1,0 +1,3 @@
+import 'dart:io';
+class Foo extends Bar { final int x = 42; // note
+  void run() async { await go("hi"); } }

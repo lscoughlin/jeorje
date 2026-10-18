@@ -1,0 +1,2 @@
+def foo(): # note
+    return "hi" + str(42)

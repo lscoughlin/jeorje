@@ -1,0 +1,3 @@
+# comment 42 "string" 'text'
+// comment if else return true false null 0x1F
+function main() { return "text"; }

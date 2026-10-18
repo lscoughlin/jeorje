@@ -1,0 +1,12 @@
+## Syntax file for GraphQL. Written for Jeorje.
+##
+syntax "GraphQL" "\.(graphql|gql|graphqls)$"
+comment "#"
+
+color cyan "\<(query|mutation|subscription|fragment|on|schema|extend|type|interface|union|enum|input|scalar|directive|implements|repeatable)\>"
+color green "\<(Int|Float|String|Boolean|ID)\>"
+color yellow "\<(true|false|null)\>"
+color magenta "[@$][A-Za-z_][A-Za-z0-9_]*"
+color red ""(\\.|[^"])*""
+color yellow "\b-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\b"
+color blue "#.*"

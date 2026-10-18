@@ -1,0 +1,14 @@
+.credentials
+.env
+.env.*
+target/
+.jeorje/sessions/
+.jeorje/worktrees/
+.jeorje/stories/
+plan/
+.jeorje/snapshots/
+.jeorje/venv/
+.jeorje/*.log
+__pycache__/
+*.pyc
+.DS_Store

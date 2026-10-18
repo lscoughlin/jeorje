@@ -1,0 +1,3 @@
+# note
+{ pkgs ? import <nixpkgs> {} }:
+let x = 42; in pkgs.mkDerivation { name = "hi"; inherit x; }

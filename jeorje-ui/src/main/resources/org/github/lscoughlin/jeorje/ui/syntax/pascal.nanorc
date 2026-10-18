@@ -1,0 +1,14 @@
+## Syntax file for Pascal. Written for Jeorje.
+##
+syntax "Pascal" "\.(pas|dpr|lpr)$"
+comment "//"
+
+icolor red "\<(if|then|else|for|to|downto|do|while|repeat|until|case|of|begin|end|try|except|finally|raise|with|goto|exit|break|continue)\>"
+icolor cyan "\<(program|unit|uses|interface|implementation|procedure|function|var|const|type|record|class|object|constructor|destructor|property|private|public|protected|published|inherited|override|virtual|array|set|file|label|in|and|or|not|xor|div|mod|shl|shr|nil)\>"
+icolor green "\<(integer|int64|byte|word|longint|cardinal|real|double|single|extended|boolean|char|string|pointer|text)\>"
+icolor yellow "\<(true|false)\>"
+color red "'[^']*'"
+color yellow "\b[0-9]+(\.[0-9]+)?\b" "\$[0-9a-fA-F]+\b"
+color blue "//.*"
+color blue start="\{" end="\}"
+color blue start="\(\*" end="\*\)"

@@ -1,0 +1,3 @@
+# note
+query Hero($id: ID!) { hero(id: $id) { name } }
+type Hero { name: String!, age: Int }

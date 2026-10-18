@@ -1,0 +1,2 @@
+public class Foo { // note
+  String s = "hi"; int n = 42; }

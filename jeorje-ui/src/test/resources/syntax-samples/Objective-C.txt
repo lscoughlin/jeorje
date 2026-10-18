@@ -1,0 +1,4 @@
+#import <Foundation/Foundation.h>
+@interface Foo : NSObject
+- (void)run { NSLog(@"hi %d", 42); return nil; } // note
+@end

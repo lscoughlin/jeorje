@@ -1,0 +1,14 @@
+## Syntax file for Nix. Written for Jeorje.
+##
+syntax "Nix" "\.nix$"
+comment "#"
+
+color red "\<(if|then|else|assert|with|let|in|rec|inherit|or)\>"
+color green "\<(import|builtins|derivation|fetchurl|fetchFromGitHub|mkDerivation|callPackage|lib|pkgs)\>"
+color yellow "\<(true|false|null)\>"
+color cyan "(\+\+|//|->|&&|\|\||==|!=|<=|>=)"
+color red ""(\\.|[^"])*"" "''.*''"
+color magenta "\$\{[^}]*\}"
+color yellow "\b[0-9]+(\.[0-9]+)?\b"
+color blue "#.*"
+color blue start="/\*" end="\*/"
