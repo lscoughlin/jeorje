@@ -31,7 +31,7 @@ The agent adds the chunks to the index one time, when the turn ends. Adding the 
 [ messages of the current turn ]
 ```
 
-- **Pinned items** are texts that the user pins with `/pin`. The request puts the pinned items and the earlier context in front of the first user message, under the headings `[Pinned items]` and `[Earlier context]`.
+- **Pinned items** are texts that the user pins with `/pin`, followed by the latest todo list. The agent reads the text of the latest successful `todo` result from the current turn or from the finished turns, and pins it in every request. Pruning never removes the list. An empty list is not pinned. The request puts the pinned items and the earlier context in front of the first user message, under the headings `[Pinned items]` and `[Earlier context]`.
 - **Recent turns** stay verbatim. These are the last N turns (default 6, `context.recentTurns`).
 - **Protected content** is never pruned. See [Protection classes](#protection-classes).
 - **Pruned chunks** are the chunks of older turns. A chunk that compaction has not touched shows its original text. A pruned chunk has fewer tokens than the original and ends with a keyword hint.
@@ -47,11 +47,11 @@ Jeorje puts each chunk in one of three classes. The class decides how much compa
 |---------|------|
 | System prompt | Never in the chunk list. The agent builds it again for each request. |
 | Active user instructions | A chunk of the kind `user`. A `mixed` chunk is `PROTECTED` when it is the first chunk of its agent in the list that the classifier gets and its text starts with `USER:`. A chunk that the caller marks as pinned. |
-| Todo list | A chunk whose `toolName` is `todo`. |
+| Todo list | A chunk whose `toolName` is `todo`. The agent also pins the latest list in every request (see [Working context layout](#working-context-layout)). |
 | Current error state | The latest failing `tool_result` chunk of each tool that no later success of the same tool has resolved. A failure is a result that matches a failure pattern, for example `BUILD FAILURE`, `[ERROR]`, `FAILED`, a non-zero `exit code`, or `Tests run:` with failures. A later chunk of the same tool with no failure, or a note that the caller marks as resolved, ends the protection. The chunk then becomes `AGGRESSIVE`. |
 | Skill content | A `tool_result` chunk of the `skill` tool, because it is durable guidance. |
 
-**Immediate file paths.** `ContextClassifier.immediatePaths` finds the paths of files that the agent read, wrote, or edited in the last N turns (default 6), and the paths in a protected error chunk. The compactor and the pruner keep these path tokens at every level, also in chunks of other classes, when the caller gives them the set of paths. The agent loop gives an empty set, so the agent loop keeps no path for this reason.
+**Immediate file paths.** `ContextClassifier.immediatePaths` finds the paths of files that the agent read, wrote, or edited in the last N turns (default 6), and the paths in a protected error chunk. The compactor and the pruner keep these path tokens at every level, also in chunks of other classes. The agent computes the set before each compaction and gives it to the compactor. A path that only a pruned older turn used is not in the set.
 
 **Skill content.** The protection of skill content has a limit: when the protected skill content is more than 20,000 tokens, the skill that the agent used least recently becomes `AGGRESSIVE`. Its keyword hint has `skill:<name>`, so the agent can load it again with the `skill` tool. See [instructions-and-skills.md](instructions-and-skills.md#context-and-compaction).
 
@@ -76,7 +76,7 @@ Decision notes are the only text that the compactor writes. Jeorje checks each n
 | Raw build and test logs | Long output of build and test commands |
 | Recall references | Chunks whose `toolName` is `recall` |
 
-There is no separate rule for a search that led to a conclusion. A search result is a tool result, so it is `AGGRESSIVE`.
+A search result is a `tool_result` chunk of `grep`, `glob`, `ls`, `find`, or `search`. A search that led to a conclusion is a **concluded search**. `ContextClassifier.concludedSearches` finds it: a later edit or write call, or later assistant text, contains a path, a file name, or an identifier of the result. Compaction prunes a concluded search first, and it goes to level 3 at the first compaction that touches it. Pinned and protected chunks are never concluded searches.
 
 An `AGGRESSIVE` chunk goes to level 2 at the first compaction that touches it. It goes to level 3 when it is older than the recent turns by a second margin (default 12 turns, `context.compaction.aggressiveDropAfterTurns`) or when the hard trigger raises it again. Its keyword hint is the way to get it back.
 
@@ -155,9 +155,9 @@ Compaction runs after each turn. It does not wait for a hard limit. The budget i
 
 An **eligible** chunk is not `PROTECTED`, is older than the recent turns, and is below the highest level of its class.
 
-1. **Soft trigger.** If the earlier context is more than 50% of the budget (`softPercent`), raise all eligible chunks. Raise each `CAREFUL` chunk by one level. Raise each `AGGRESSIVE` chunk to level 2, or to level 3 when it is old enough (see [Aggressively compress or drop](#aggressively-compress-or-drop-aggressive)). Work in the eviction order.
+1. **Soft trigger.** If the earlier context is more than 50% of the budget (`softPercent`), raise all eligible chunks. Raise each `CAREFUL` chunk by one level. Raise each `AGGRESSIVE` chunk to level 2, or to level 3 when it is old enough or when it is a concluded search (see [Aggressively compress or drop](#aggressively-compress-or-drop-aggressive)). Work in the eviction order.
 2. **Hard trigger.** If the earlier context is more than 80% of the budget (`hardPercent`), raise more chunks. Raise each eligible chunk by one level, again and again, until the context is under 50% of the budget or no chunk can rise more.
-3. **Eviction order.** Prune large tool results first (2,000 tokens or more, the largest first), then raw logs (`bash` results and text with `BUILD ` or `Tests run:`), then other output. Then prune `CAREFUL` chunks. Chunks of the same rank go in the order of the history. Never prune `PROTECTED` chunks or recent turns.
+3. **Eviction order.** Prune concluded searches first. Then prune large tool results (2,000 tokens or more, the largest first), then raw logs (`bash` results and text with `BUILD ` or `Tests run:`), then other output. Then prune `CAREFUL` chunks. Chunks of the same rank go in the order of the history. Never prune `PROTECTED` chunks or recent turns.
 4. **Batches.** Jeorje sends the chunks to the compactor in batches. This keeps the cost low. A batch has up to 20 chunks or 16,000 tokens.
 5. **No loss.** Compaction never deletes history. The index has the original text of each chunk.
 
@@ -196,6 +196,6 @@ Recalled content enters the working context as a normal tool result at level 0. 
 
 ## Persistence and resume
 
-A session directory holds the index, the transcript, and a manifest. The manifest has the session id, the times, the agent tree, a snapshot of the config, the pinned items, the pruning table, the run state, the last turn number, and the state of an `/implement` run. The pruning table has the class, the level, the kept spans (character offsets) or the note, and the keywords for each pruned chunk.
+A session directory holds the index, the transcript, and a manifest. Jeorje removes secrets from the chunk text before it enters the index, and from every message before it enters the transcript. See [permissions-and-safety.md](permissions-and-safety.md#secrets). The manifest has the session id, the times, the agent tree, a snapshot of the config, the pinned items, the pruning table, the run state, the last turn number, and the state of an `/implement` run. The pruning table has the class, the level, the kept spans (character offsets) or the note, and the keywords for each pruned chunk.
 
 To resume a session, Jeorje reads the manifest and the transcript. It chunks the turns of the agent with `TurnChunker`. It builds the working context from the pinned items, the pruned chunks, and the latest turns. The text of a pruned chunk comes from the transcript, with the kept spans applied. For a decision note, it uses the stored note. A chunk with no row in the pruning table is at level 0. The next request equals the request that the earlier run would have made. The index can be rebuilt from the transcript with `jeorje index rebuild`.

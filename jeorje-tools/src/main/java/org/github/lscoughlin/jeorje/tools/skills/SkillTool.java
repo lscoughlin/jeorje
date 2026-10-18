@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.github.lscoughlin.jeorje.core.instructions.Skill;
+import org.github.lscoughlin.jeorje.core.model.Chunk;
 import org.github.lscoughlin.jeorje.core.model.ToolDefinition;
 import org.github.lscoughlin.jeorje.core.model.ToolResultData;
 import org.github.lscoughlin.jeorje.core.port.Tool;
@@ -36,6 +37,8 @@ public final class SkillTool implements Tool {
 
     private static final Logger log = LoggerFactory.getLogger(SkillTool.class);
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final java.util.regex.Pattern SKILL_CONTENT =
+            java.util.regex.Pattern.compile("<skill_content name=\"([^\"]+)\">");
     private static final String PLACEHOLDER = "$ARGUMENTS";
 
     private final Map<String, Skill> skills = new LinkedHashMap<>();
@@ -109,6 +112,22 @@ public final class SkillTool implements Tool {
 
     /** Marks all skills of an agent as no longer in the working context. */
     public void releaseAll(String agentId) { loaded.remove(agentId); }
+
+    /**
+     * Releases the skills that are in pruned chunks. It reads every {@code <skill_content name="...">} element in
+     * the text of the chunks, because a chunk of a mixed turn can hold more than one skill result.
+     */
+    public void releasePruned(String agentId, List<Chunk> chunks) {
+        if (agentId == null || chunks == null) return;
+        for (var chunk : chunks) {
+            var matcher = SKILL_CONTENT.matcher(chunk.text());
+            while (matcher.find()) {
+                var name = matcher.group(1);
+                log.atDebug().log(() -> "Skill " + name + " left the context of " + agentId + ".");
+                release(agentId, name);
+            }
+        }
+    }
 
     @Override
     public ToolResultData execute(JsonNode input, ToolContext context) {

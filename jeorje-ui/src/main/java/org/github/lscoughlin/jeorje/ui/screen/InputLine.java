@@ -105,6 +105,21 @@ public final class InputLine {
         }
     }
 
+    /** The text before the cursor. */
+    public String beforeCursor() {
+        var buffer = reader.getBuffer();
+        return buffer.substring(0, buffer.cursor());
+    }
+
+    /** Replaces the text before the cursor and keeps the text after it. The cursor goes after the new text. */
+    public void replaceBeforeCursor(String text) {
+        var buffer = reader.getBuffer();
+        var tail = buffer.substring(buffer.cursor());
+        buffer.clear();
+        buffer.write(text + tail);
+        buffer.cursor(text.length());
+    }
+
     /** The text in the buffer now. */
     public String buffer() { return reader.getBuffer().toString(); }
 

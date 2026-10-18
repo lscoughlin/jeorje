@@ -82,4 +82,32 @@ class AgentSwitcherPaneTest {
             assertFalse(screen.paneActive());
         }
     }
+
+    @Test
+    void theAgentsKeyClosesThePane() throws Exception {
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults());
+            screen.draw(); // the first draw probes the terminal modes and reads the reply
+            ft.type("\u0018a");
+            assertTrue(screen.runPane(new AgentSwitcherPane(switcher)).isEmpty());
+            assertFalse(switcher.isOpen());
+            assertEquals(ROOT, switcher.foreground());
+            assertFalse(screen.paneActive());
+        }
+    }
+
+    @Test
+    void aConfiguredAgentsKeyClosesThePaneAndTheOldChordDoesNot() throws Exception {
+        var keys = org.github.lscoughlin.jeorje.ui.keys.KeyBindings.resolve(java.util.List.of(
+                new org.github.lscoughlin.jeorje.ui.keys.KeyLayer("test", java.util.Map.of("agents", "Ctrl-X g"),
+                        java.util.Map.of())));
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults().keyBindings(keys));
+            screen.draw(); // the first draw probes the terminal modes and reads the reply
+            // The old chord does nothing. Down and Enter would pick beta, so the new chord must close the pane first.
+            ft.type("\u0018a\u0018g");
+            assertTrue(screen.runPane(new AgentSwitcherPane(switcher)).isEmpty());
+            assertEquals(ROOT, switcher.foreground());
+        }
+    }
 }

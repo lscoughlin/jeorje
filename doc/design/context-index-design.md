@@ -58,9 +58,10 @@ The `text` field uses `CodeAnalyzer`, an analyzer that is suitable for code. It 
 ## Write path
 
 1. `append` receives the chunks of a finished turn.
-2. If an embedder is configured, `append` embeds the chunk text on the calling thread, in batches of 64 rows. If a batch fails, it embeds each chunk of the batch alone.
-3. The writer thread writes each document with `updateDocument` on the term `chunk_id`. A second append of the same chunk id replaces the first document, so an append is idempotent. A commit follows each append. The `SearcherManager` refreshes. The new turn is then searchable when `append` returns.
-4. If embedding fails for a chunk, `append` does not fail. The index stores the chunk as text only with `vector_state=pending` and logs the failure. A background task tries the embedding again every 60 s and rewrites the chunk with its vector.
+2. `ScrubbingContextStore` wraps the index in the application. It removes secrets from the text of each chunk before the chunk enters the index. See [permissions-and-safety.md](permissions-and-safety.md#secrets).
+3. If an embedder is configured, `append` embeds the chunk text on the calling thread, in batches of 64 rows. If a batch fails, it embeds each chunk of the batch alone.
+4. The writer thread writes each document with `updateDocument` on the term `chunk_id`. A second append of the same chunk id replaces the first document, so an append is idempotent. A commit follows each append. The `SearcherManager` refreshes. The new turn is then searchable when `append` returns.
+5. If embedding fails for a chunk, `append` does not fail. The index stores the chunk as text only with `vector_state=pending` and logs the failure. A background task tries the embedding again every 60 s and rewrites the chunk with its vector.
 
 A chunk from a `recall` call holds only the query, the filters, and the ids of the returned chunks. It never holds the recalled text. Searches skip these chunks by default. A search can include them with the filter `toolNames=recall`. See [context-and-compaction.md](context-and-compaction.md#recall). When Jeorje rebuilds the index from `transcript.jsonl`, it applies the same rule: a `recall` result becomes a reference chunk, not a text chunk.
 

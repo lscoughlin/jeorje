@@ -53,4 +53,58 @@ class SwarmWiringTest {
             assertFalse(cli.out().contains("t0ken-value-123"));
         }
     }
+
+    @Test
+    void discoveryWritesAndRemovesTheFileOfThePeer() throws Exception {
+        try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
+            var file = cwd.write("disc.yaml", "swarm:\n  enabled: true\n  discovery: true\n"
+                    + "  bind: \"127.0.0.1:0\"\n");
+            var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), null);
+            var loaded = Wiring.loadConfig(new GlobalOptionsHolder(file).options(), cli.env);
+            assertTrue(loaded.config().swarm().discovery());
+            var bridge = SwarmBridge.forConfig(loaded.config(), home.root(), cwd.root(), text -> { }, null).start();
+            var peers = home.root().resolve(".jeorje").resolve("peers");
+            try (var files = java.nio.file.Files.list(peers)) {
+                assertEquals(1, files.filter(f -> f.toString().endsWith(".json")).count());
+            }
+            bridge.close();
+            try (var files = java.nio.file.Files.list(peers)) {
+                assertEquals(0, files.count());
+            }
+        }
+    }
+
+    @Test
+    void aKeyStoreThatCannotBeLoadedStopsTheRunWithAClearError() {
+        var llm = new ScriptedLlmClient(Response.text("ok"));
+        try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
+            var file = cwd.write("tls.yaml", "swarm:\n  enabled: true\n  bind: \"127.0.0.1:0\"\n  tls:\n"
+                    + "    keyStore: missing.p12\n");
+            var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), llm);
+            assertEquals(2, cli.run("--config", file.toString(), "run", "hi"), cli.err());
+            assertTrue(cli.err().contains("TLS key store"), cli.err());
+        }
+    }
+
+    @Test
+    void theTlsPasswordVariableMustBeSet() {
+        var tls = new org.github.lscoughlin.jeorje.core.config.JeorjeConfig.Tls("store.p12", "NO_SUCH_VARIABLE");
+        var e = org.junit.jupiter.api.Assertions.assertThrows(CliException.class,
+                () -> SwarmBridge.tlsContext(tls, java.nio.file.Path.of("."), Map.of()));
+        assertTrue(e.getMessage().contains("NO_SUCH_VARIABLE"));
+    }
+
+    /** Fills the global options with a config file, as picocli does. */
+    private record GlobalOptionsHolder(java.nio.file.Path file) {
+        static final class Holder {
+            @picocli.CommandLine.Mixin
+            GlobalOptions global = new GlobalOptions();
+        }
+
+        GlobalOptions options() {
+            var holder = new Holder();
+            new picocli.CommandLine(holder).parseArgs("--config", file.toString());
+            return holder.global;
+        }
+    }
 }

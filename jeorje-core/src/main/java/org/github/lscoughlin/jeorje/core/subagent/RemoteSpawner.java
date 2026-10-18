@@ -35,6 +35,19 @@ public interface RemoteSpawner {
         /** Answers a question of the remote subagent. */
         void answer(String questionId, String text);
 
+        /** Refuses a question of the remote subagent. The reason is {@code busy}, {@code deadlock}, and so on. */
+        default void answerError(String questionId, String reason) {
+            answer(questionId, "[the question was refused: " + reason + "]");
+        }
+
+        /**
+         * Asks the remote subagent a question. The future finishes with the answer text. It finishes with an error
+         * when the peer refuses the question (the message is the reason) or when the peer is lost.
+         */
+        default CompletableFuture<String> ask(String questionId, String text) {
+            return CompletableFuture.failedFuture(new UnsupportedOperationException("unsupported"));
+        }
+
         /** Finishes with the last event, or with an error when the peer is lost. */
         CompletableFuture<Event> completion();
     }

@@ -132,7 +132,7 @@ Plans are normal files. The user can commit them. Documentation never refers to 
 | `/implement status` | Show the stories, their state, and the workers |
 | `/implement stop` | Cancel all workers and end the run |
 
-`/implement` is a command of the interactive UI. The command `jeorje run "<task>"` runs one task with no UI and does not run slash commands. A path or a slug names the plan. A story id has one to four letters and digits, for example `S2`.
+`/implement` runs in the interactive UI. It also runs with no UI. See [Headless runs](#headless-runs). A path or a slug names the plan. A story id has one to four letters and digits, for example `S2`.
 
 ### Run steps
 
@@ -225,6 +225,25 @@ The orchestrator is the foreground agent. It keeps a compact view of the run in 
 ### Resume
 
 The run state is in the manifest of the session (the file `implement.json` in the session directory): the plan path, the story states, the attempts, the worker ids, and the worktrees. The checkboxes in the plan file are the durable record. If Jeorje stops during a run, `/implement` with the same plan reads the checkboxes and the manifest. It starts again with the stories that are not done. A story that was running starts with a new worker and a `### Previous attempt` section that states that the run was interrupted. A story that was blocked starts again with its blocked checkbox reopened, and a `### Previous attempt` section with the reason.
+
+## Headless runs
+
+The command `jeorje run` runs the plan commands with no UI. No user is present, so the run follows these rules.
+
+| Command | Action |
+|---------|--------|
+| `jeorje run "/plan <goal>"` | Run plan mode with the goal. The command prints the path of the plan file. `/plan` with no goal is an error. |
+| `jeorje run "/implement [plan] [stories]"` | Run `/implement` and print the final report. |
+| `jeorje run --plan <path> [stories]` | The same as `/implement <path> [stories]`. The task text lists the story ids. |
+| `jeorje run "/implement status"` | Print the state of the last run, read from the `implement.json` file of the newest session that has one. |
+
+- A question from `ask_user` gets the first choice (or "Use your best judgment and go on.") with `--yes` or `--yolo`. Without them, the run stops, prints the question and its choices, and exits with code 2.
+- A plan with the status `draft` needs `--yes` or `--yolo` for the approval. Without them, the run ends with the status `not approved`.
+- A tool call that needs a permission decision is denied, and the run prints a line that names the story. `--yes` or `--yolo` approves, as in the interactive UI.
+- `/implement pause`, `resume`, and `stop` are not available, because the run ends with its report. `jeorje run` prints an error for them.
+- The exit code is 0 when the plan is `done` and 1 for any other result.
+- Progress lines start with `IMPLEMENT:` and go to the error stream. The report goes to the output stream.
+- Worktrees, the sync, the review, and the merge back work as in the interactive UI. The slash commands `/merge`, `/discard`, and `/worktrees` exist only in the interactive UI.
 
 ## Events and UI
 

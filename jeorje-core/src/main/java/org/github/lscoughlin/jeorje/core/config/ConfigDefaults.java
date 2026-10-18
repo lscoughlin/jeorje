@@ -49,6 +49,10 @@ final class ConfigDefaults {
               wka: []
               token: ""
               gossipIntervalMs: 1000
+              discovery: false
+              tls:
+                keyStore: ""
+                passwordEnv: ""
             tools:
               read:
                 frontMatterScanLines: 25

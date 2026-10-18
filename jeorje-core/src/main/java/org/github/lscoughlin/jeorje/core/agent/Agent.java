@@ -105,6 +105,7 @@ public final class Agent implements AutoCloseable {
     private volatile CancellationToken current = CancellationToken.none();
     private volatile Thread thread;
     private volatile StepBoundary stepBoundary = List::of;
+    private volatile Consumer<List<Chunk>> pruneListener = chunks -> { };
 
     public Agent(AgentId id, AgentSettings settings, LlmClient llm, List<Tool> toolList, PermissionPolicy policy,
                  ContextStore store, TranscriptSink transcript, Consumer<AgentEvent> events, Clock clock) {
@@ -157,6 +158,16 @@ public final class Agent implements AutoCloseable {
     /** Sets the hook that adds messages at step boundaries. Null removes the hook. */
     public Agent withStepBoundary(StepBoundary hook) {
         this.stepBoundary = hook == null ? List::of : hook;
+        return this;
+    }
+
+    /**
+     * Sets the listener that receives the chunks that compaction newly pruned. A chunk is newly pruned when it
+     * is at a level above 0 after a compaction and was at level 0, or not in the working context, before it.
+     * The listener runs on the thread that compacts. Null removes the listener.
+     */
+    public Agent withPruneListener(Consumer<List<Chunk>> listener) {
+        this.pruneListener = listener == null ? chunks -> { } : listener;
         return this;
     }
 
@@ -519,6 +530,8 @@ public final class Agent implements AutoCloseable {
      * compaction already pruned keeps its class.
      */
     private ContextCompactor.Outcome prune(ContextCompactor by, int currentTurn) {
+        var before = new HashSet<String>();
+        for (var e : older) if (e.level() > 0) before.add(e.chunk().chunkId());
         var entries = new ArrayList<>(older);
         var known = new HashSet<Integer>();
         for (var e : entries) known.add(e.chunk().turn());
@@ -551,6 +564,15 @@ public final class Agent implements AutoCloseable {
             entries = new ArrayList<>(outcome.entries());
         }
         older = List.copyOf(entries);
+        var pruned = new ArrayList<Chunk>();
+        for (var e : older) if (e.level() > 0 && !before.contains(e.chunk().chunkId())) pruned.add(e.chunk());
+        if (!pruned.isEmpty()) {
+            try {
+                pruneListener.accept(List.copyOf(pruned));
+            } catch (RuntimeException ex) {
+                log.atWarn().log(() -> "The prune listener failed: " + ex.getMessage());
+            }
+        }
         return outcome;
     }
 

@@ -48,6 +48,11 @@ final class AgentNode {
     /** The handle of the task on a peer, or null for a local agent. */
     volatile RemoteSpawner.Task remote;
     volatile String remotePeer;
+    /** Finishes with the handle of the remote task as soon as the task has started. */
+    final CompletableFuture<RemoteSpawner.Task> remoteTask = new CompletableFuture<>();
+    /** The caps that a delegating peer set for this task: model calls (0 for none) and time (null for none). */
+    int callCap;
+    java.time.Duration timeCap;
     boolean ending;
     final StringBuilder tail = new StringBuilder();
     Question openAsk;

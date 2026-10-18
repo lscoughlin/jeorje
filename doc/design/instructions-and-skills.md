@@ -5,7 +5,7 @@ description: How Jeorje loads AGENTS.md instructions and the .agents directory -
 
 # Instructions and Skills
 
-Jeorje reads project instructions from `AGENTS.md` files. It reads reusable capabilities from the `.agents/` directory: **skills**, **custom commands**, and **subagent definitions**. The loaders are in `jeorje-core` (`InstructionsLoader`, `SkillRegistry`, `CommandRegistry`, `AgentTypeRegistry`, `TrustStore`). The `skill` tool is in `jeorje-tools`. `jeorje-cli` connects them. Parts that the launcher does not connect yet are marked in the text.
+Jeorje reads project instructions from `AGENTS.md` files. It reads reusable capabilities from the `.agents/` directory: **skills**, **custom commands**, and **subagent definitions**. The loaders are in `jeorje-core` (`InstructionsLoader`, `SkillRegistry`, `CommandRegistry`, `AgentTypeRegistry`, `TrustStore`). The `skill` tool is in `jeorje-tools`. `jeorje-cli` connects them.
 
 ## AGENTS.md
 
@@ -21,16 +21,16 @@ Jeorje reads project instructions from `AGENTS.md` files. It reads reusable capa
 
 The workspace root is the working directory of the agent. A subagent in a git worktree uses the root of its worktree. See [subagents.md](subagents.md#worktrees). The config key `instructions.userFiles` sets the user files. The key `instructions.enabled: false` turns off all `AGENTS.md` instructions.
 
-The launcher uses the user files and the project file. `InstructionsLoader.directoryFiles` returns the directory files, but no tool result carries them yet.
+The system prompt has the user files and the project file. The tools `read`, `write`, and `edit` deliver the directory files. See [How Jeorje uses them](#how-jeorje-uses-them).
 
 ### How Jeorje uses them
 
 - **System prompt.** When a session starts, Jeorje adds the user files and the project file to the system prompt, in the section `Instructions`. Each file has a title line that gives its path and level (`user` or `project`). The project file comes after the user files, so the project instructions are the more specific. See [agent-loop.md](agent-loop.md#system-prompt).
-- **Directory files.** A nested `AGENTS.md` is not in the system prompt. `InstructionsLoader.directoryFiles` returns the files on the path from the workspace root to a directory. The root file is not repeated, and the closest file is last. No tool result carries these files yet.
+- **Directory files.** A nested `AGENTS.md` is not in the system prompt. `InstructionsLoader.directoryFiles` returns the files on the path from the workspace root to a directory. The root file is not repeated, and the closest file is last. `NestedInstructions` puts these files in front of the result of the first `read`, `write`, or `edit` of a file in their directory. Each file has the title line `[directory instructions: <path>]`. An agent gets each file one time for the session. A call on the nested `AGENTS.md` itself does not repeat it. A file is cut at `instructions.maxBytes`. This delivery is on when `instructions.enabled` is `true` and `tools.read.directoryDocs` has the entry `AGENTS.md` (the default).
 - **Precedence.** The order in the system prompt gives the precedence: a project file is after a user file. The direct request of the user wins over all files.
 - **Size.** Each file is cut at `instructions.maxBytes` (default 32,768 bytes). A cut file ends with a note. The total of the system-prompt part is also limited by `instructions.maxTotalBytes` (default 65,536). When the total limit is reached, Jeorje cuts the text and adds a note.
 - **Compaction.** The `AGENTS.md` text is part of the system prompt, not of the history, so compaction never prunes it.
-- **Reload.** `InstructionsLoader` checks the size and the modification time of each file when it reads it. The launcher reads the files when the session starts, so an edit takes effect at the next start.
+- **Reload.** `InstructionsLoader` checks the size and the modification time of each file when it reads it. The agent builds the system prompt again before each model request. An edit of an `AGENTS.md` file therefore takes effect at the next request.
 - **Subagents.** All subagents, including the workers of `/implement`, get the same system-prompt part. This does not break the story-only context rule: instructions are part of the system prompt, not of the memory context. See [planning.md](planning.md#context-rule).
 - **Not executed.** Jeorje treats the file as text for the model. It does not run commands from it. Every action still goes through the permission policy.
 
@@ -59,7 +59,7 @@ ${CWD}/.jeorje/ and ${HOME}/.jeorje/         # Jeorje locations, same layout
 5. The `skills/` folder in each directory of `skills.dirs` and `agents.dirs`
 6. The directories in `skills.compat`
 
-There are no built-in items. The same order applies to `commands/` and `agents/`, except for step 6. Each directory in `skills.dirs` and `agents.dirs` has the sub-folders `skills/`, `commands/`, and `agents/`. The key `skills.compat` lists skill directories of other tools, for example `${HOME}/.claude/skills`. Jeorje uses each entry as a skills directory as it is. It does not expand `~` or `${HOME}` in this key. A relative entry starts at the working directory of the process. The key is empty by default.
+There are no built-in items. The same order applies to `commands/` and `agents/`, except for step 6. Each directory in `skills.dirs` and `agents.dirs` has the sub-folders `skills/`, `commands/`, and `agents/`. The key `skills.compat` lists skill directories of other tools, for example `${HOME}/.claude/skills`. Jeorje uses each entry as a skills directory. It expands `~`, `${HOME}`, and `${CWD}` at the start of an entry. A relative entry starts at the working directory of the process. The key is empty by default.
 
 **Collisions.** When two items have the same name, the item that Jeorje finds first (in the order above) wins. In one root, Jeorje reads the paths in sorted order. Jeorje logs a warning that names the file that it skipped, and `/skills`, `/commands`, and `/agent-types` show it.
 
@@ -125,25 +125,34 @@ The file has YAML frontmatter between two `---` lines, and a markdown body.
 - A YAML error, most often an unquoted value that has a colon (`description: Use when: the user ...`): Jeorje wraps the value in quotes and tries again. If YAML still fails, it skips the skill and records an error.
 - A body of more than 500 lines or 5,000 tokens: load it and record a warning (the specification recommends smaller skills and files that the skill loads on demand).
 
-**`allowed-tools`.** Jeorje keeps the field. It does not give a skill more permission than the agent has. The permission policy decides all tool runs. The key `skills.honorAllowedTools` is for an opt-in, but it has no effect yet: no code gives a skill extra permission. The key is also one of the keys that restricted mode ignores. The field is a space-separated string, for example `Bash(git:*) Bash(jq:*) Read`. `AllowedTools.parse` reads it like this:
+**`allowed-tools`.** Jeorje keeps the field. By default it does not give a skill more permission than the agent has, and the permission policy decides all tool runs. The key `skills.honorAllowedTools` (default `false`) is an opt-in. When it is `true`, `SkillGrantPolicy` records the grants of a skill after the model loads the skill with the `skill` tool. From then on, a call that the grants name, and that the permission policy would `ASK` about, becomes `ALLOW`. A `DENY` stays `DENY`. An `ALLOW` stays `ALLOW`. The grants last for the rest of the session and also apply to subagents. A skill that the user starts with `/<name>` gives no grants. The key is one of the keys that restricted mode ignores. The field is a space-separated string, for example `Bash(git:*) Bash(jq:*) Read`. `AllowedTools.parse` reads it like this:
 
 - A tool name is not case sensitive. `Bash` is `bash`, `Read` is `read`, `Edit` is `edit`, and so on.
-- `Tool(pattern)` limits the tool to commands or paths that match the pattern. For `bash`, `git:*` is the prefix rule `git ` (any arguments). Other patterns are glob patterns on the main argument of the tool (the path for file tools).
-- A name that is not a tool of the default set (`read`, `write`, `edit`, `bash`, `grep`, `glob`, `ls`, `webfetch`, `websearch`, `skill`, `spawn_agent`, `patch`) is ignored. `SkillRegistry.allowedToolsDiagnostics` reports the name, but `/skills` does not show this report yet.
+- A name with no pattern covers every call of the tool.
+- `Tool(pattern)` limits the tool to commands or paths that match the pattern. For `bash`, `git:*` is the prefix rule `git ` (any arguments). Other patterns are glob patterns on the main argument of the tool (the command, the path, the URL, the pattern, or the query, in this order).
+- A name that is not a tool of the default set (`read`, `write`, `edit`, `bash`, `grep`, `glob`, `ls`, `webfetch`, `websearch`, `skill`, `spawn_agent`, `patch`) is ignored. `SkillRegistry.allowedToolsDiagnostics` reports the name. See [Known limits](#known-limits).
 
 ### Progressive loading
 
-1. **Catalog.** `SkillCatalog.build` makes a catalog text with one entry for each skill: the `name`, the `description`, and the `location` (the absolute path of `SKILL.md`). A short instruction block comes with it:
+1. **Catalog.** `SkillCatalog.build` makes a catalog text with one entry for each skill that the model may see. An entry has the `name`, the `description`, and the `location` (the absolute path of `SKILL.md`). A short instruction block comes first:
 
    ```
    The following skills give instructions for specific tasks. When a task matches
    the description of a skill, call the skill tool with its name before you
    continue. Relative paths in a skill are relative to the folder of its SKILL.md.
+
+   <available_skills>
+     <skill>
+       <name>release-notes</name>
+       <description>Write release notes from the git log. ...</description>
+       <location>/path/to/release-notes/SKILL.md</location>
+     </skill>
+   </available_skills>
    ```
 
-   The catalog is cut at `skills.maxListChars` (default 8,000). Skills that do not fit are not listed. The launcher does not add the catalog to the system prompt yet, and `skills.maxListChars` has no effect yet. The model learns the skill names from the `enum` in the schema of the `skill` tool. Skills that are hidden by `disable-model-invocation: true` are not in the `enum`. If no skill is available, Jeorje does not register the `skill` tool. The key `skills.enabled` has no effect yet.
+   Jeorje adds the catalog to the system prompt after the `AGENTS.md` text, in the section `Instructions`. The catalog is cut at `skills.maxListChars` (default 8,000). A skill that does not fit, and all skills after it, are not listed. The model also learns the skill names from the `enum` in the schema of the `skill` tool. Skills that are hidden by `disable-model-invocation: true`, or by a `DENY` rule for the `skill` tool, are not in the catalog and not in the `enum`. If no skill is available, Jeorje does not register the `skill` tool and adds no catalog. With `skills.enabled: false`, Jeorje loads no skill, adds no catalog, and registers no `skill` tool.
 2. **Instructions.** The model calls the `skill` tool, or the user types `/<name>`. The result has the body of `SKILL.md`.
-3. **Resources.** The model reads other files of the skill with `read` and runs scripts with `bash`. The permission policy and the path sandbox decide these actions. `SkillTool.readableDirectories` lists the skill folders for a read-only sandbox rule, but the launcher does not pass them to the sandbox yet.
+3. **Resources.** The model reads other files of the skill with `read` and runs scripts with `bash`. The permission policy and the path sandbox decide these actions. The path sandbox of every agent has the skill folders outside the project (the user folders, the folders of `skills.dirs` and `agents.dirs`, and the folders of `skills.compat`) as read-only directories. An agent can read the files of a skill, but it cannot write them. The skill folders in the project are in the workspace already.
 
 ### The `skill` tool
 
@@ -165,19 +174,20 @@ The file has YAML frontmatter between two `---` lines, and a markdown body.
   ```
 
   The resource list names the other files of the skill folder and its sub-folders, in sorted order. It does not read them. It stops at 100 files and adds a note that says so.
-- **Deduplication.** The tool remembers, for each agent, the skills that it returned. A second call for the same skill returns a short note that the skill is already in the context. `SkillTool.release` clears this memory for a skill, but compaction does not call it yet. A skill that compaction pruned therefore stays unavailable to the tool until the next start.
+- **Deduplication.** The tool remembers, for each agent, the skills that it returned. A second call for the same skill returns a short note that the skill is already in the context. When compaction prunes a skill result, Jeorje calls `SkillTool.releasePruned` for the agent that owns the result. The tool then forgets the skill for that agent, and the next call returns the full body again. Each agent, including each subagent, has its own memory.
 - The tool is read-only and `ALLOW` in the permission policy. It also works in plan mode.
 
 ### User invocation
 
-`/<name> [arguments]` starts a skill. Jeorje sends the agent a prompt. The prompt names the skill, its file, and its directory, and then it has the body of the skill and the line `Arguments: <text>`. The `/<name>` form does not replace `$ARGUMENTS`. The input line completes skill names after `/`. Built-in slash commands have precedence over custom commands, and custom commands have precedence over skills. If a skill name clashes with a built-in command, the skill is available only through the `skill` tool. If it clashes with a custom command, the custom command runs. `/help` shows a warning in both cases.
+`/<name> [arguments]` starts a skill. Jeorje sends the agent a prompt. The prompt names the skill, its file, and its directory, and then it has the body of the skill and the line `Arguments: <text>`. The `/<name>` form does not replace `$ARGUMENTS`. `Tab` on the input line completes skill names after `/`. Built-in slash commands have precedence over custom commands, and custom commands have precedence over skills. If a skill name clashes with a built-in command, the skill is available only through the `skill` tool. If it clashes with a custom command, the custom command runs. `/help` shows a warning in both cases.
 
 ### Context and compaction
 
 A skill is durable guidance. If compaction removes it, the agent loses the guidance with no visible error. Jeorje therefore protects it.
 
 - The result of the `skill` tool is `PROTECTED`. Compaction does not prune it. See [context-and-compaction.md](context-and-compaction.md#protection-classes).
-- A limit keeps skills from filling the context. When the protected skills are over the limit, Jeorje changes the oldest skill result to `AGGRESSIVE`, and the pruner can prune it. The limit is 20,000 tokens. The agent uses this value as a fixed number, so `skills.maxProtectedTokens` has no effect yet. Jeorje has no record of when a skill was last used, so it orders the skills by the turn of the result. Its keyword hint has `skill:<name>`, and the model can load the skill again.
+- A limit keeps skills from filling the context. When the protected skills are over the limit, Jeorje changes the oldest skill result to `AGGRESSIVE`, and the pruner can prune it. The key `skills.maxProtectedTokens` sets the limit. The default is 20,000 tokens. Jeorje has no record of when a skill was last used, so it orders the skills by the turn of the result. Its keyword hint has `skill:<name>`.
+- When compaction prunes a skill result, Jeorje releases the skill in the `skill` tool. The model can load the skill again with a new `skill` call. This holds for the main agent and for subagents. A pruned chunk of a mixed turn can hold a skill result. Jeorje releases every skill that the chunk holds.
 - The index and `transcript.jsonl` keep the text of every skill result.
 
 ### Subagents
@@ -241,10 +251,10 @@ instructions:
   maxTotalBytes: 65536             # system-prompt part
   userFiles: [${HOME}/.jeorje/AGENTS.md, ${HOME}/.agents/AGENTS.md]
 skills:
-  enabled: true                    # no effect yet
-  maxListChars: 8000               # no effect yet
-  maxProtectedTokens: 20000        # no effect yet
-  honorAllowedTools: false         # no effect yet
+  enabled: true                    # false: no skills, no catalog, no skill tool
+  maxListChars: 8000               # size of the catalog in the system prompt
+  maxProtectedTokens: 20000        # limit for protected skill results
+  honorAllowedTools: false         # true: the allowed-tools field of a loaded skill grants permission
   dirs: []                         # more directories, each with skills/, commands/, agents/
   compat: []                       # skill directories of other tools, used as written
 trust:
@@ -253,7 +263,7 @@ agents:
   dirs: []                         # more directories, each with skills/, commands/, agents/
 ```
 
-The keys `skills.dirs`, `agents.dirs`, `instructions.userFiles`, and `trust.projects` expand `~`, `${HOME}`, and `${CWD}` at the start of a value. See [configuration.md](configuration.md).
+The keys `skills.dirs`, `skills.compat`, `agents.dirs`, `instructions.userFiles`, and `trust.projects` expand `~`, `${HOME}`, and `${CWD}` at the start of a value. See [configuration.md](configuration.md).
 
 ## Commands
 
@@ -266,3 +276,8 @@ The keys `skills.dirs`, `agents.dirs`, `instructions.userFiles`, and `trust.proj
 | `/commands` | List custom commands, with their diagnostics |
 | `/agent-types` | List subagent definitions, with their diagnostics |
 | `/instructions` | Show the user files and the project file that apply, in the order Jeorje uses them. A cut file has the mark `(truncated)`. |
+
+## Known limits
+
+- **Report of `allowed-tools` names.** `SkillRegistry.allowedToolsDiagnostics` finds names in `allowed-tools` that are not tools of Jeorje. `/skills` does not show this report.
+- **Last use of a skill.** Jeorje does not record when the agent last used a skill. When the protected skills are over the limit, it orders the skills by the turn of the result.

@@ -21,8 +21,8 @@ The interface is in `jeorje-ui`. It uses JLine 4 (`org.jline:jline`). The parent
 ```
 
 - The **chat view** shows the conversation of the foreground agent. It uses all rows above the input line. A permission prompt appears as a box at the bottom of this region. A pane (the agent switcher or the file browser) replaces the chat view while it is open.
-- The **input line** is owned by a JLine `LineReader`. It has history and multi-line input. The history file is `${HOME}/.jeorje/history`. `Alt-Enter` adds a new line. The input area grows with the text, up to three rows less than the terminal height. The input line has no tab completion. `SlashCommands.complete` returns candidates for slash commands, but the line reader does not call it yet.
-- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields when they apply: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the context use as a percent of the budget), `peers n` (the number of live peers), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
+- The **input line** is owned by a JLine `LineReader`. It has history and multi-line input. The history file is `${HOME}/.jeorje/history`. `Alt-Enter` adds a new line. The input area grows with the text, up to three rows less than the terminal height. `Tab` completes the text before the cursor. See [Tab completion](#tab-completion).
+- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the context use as a percent of the budget), `peers n` (the number of live peers), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
 
 JLine `Display` draws the chat region. It writes only the lines that change. The status line is written directly to the last row after each draw. The input line belongs to the `LineReader`, which draws its own rows. A permission prompt interrupts the input read. While the prompt waits, the screen reads the answer keys itself. After the answer, the input read starts again and keeps the text that the user had typed.
 
@@ -31,11 +31,12 @@ JLine `Display` draws the chat region. It writes only the lines that change. The
 - User messages, assistant text, tool calls, and tool results appear in order.
 - Assistant text streams token by token.
 - Markdown output has basic styling: headings, lists, bold text, code blocks, and inline code. Code blocks keep their whitespace, except that a tab becomes four spaces.
-- A tool call shows one line: the tool name and a short form of the input. A tool result is collapsed by default. It shows its first line and, for a longer result, the number of lines and the hint `Ctrl-X o to expand`. The user can expand the last tool result, and collapse it again, with `Ctrl-X o`.
+- A tool call shows one line: the tool name and a short form of the input. A tool result is collapsed by default. It shows its first line and, for a longer result, the number of lines and the hint `Ctrl-X o to expand`. The user can expand the last tool result, and collapse it again, with `Ctrl-X o`. A click on a collapsed result line expands it. See [Mouse in the chat view](#mouse-in-the-chat-view).
 - `edit` results show a colored diff.
 - A `Compacted` event shows a dim line that gives the number of chunks that Jeorje pruned and the tokens it freed.
 - The view keeps the last 10,000 logical lines of each agent. `PgUp` and `PgDn` scroll by a page. Each agent has its own chat view.
-- Syntax highlighting of code and diffs is described in [Syntax highlighting in the chat view](#syntax-highlighting-in-the-chat-view). The interactive launcher does not turn it on yet. See [Current limits](#current-limits).
+- Syntax highlighting of code and diffs is described in [Syntax highlighting in the chat view](#syntax-highlighting-in-the-chat-view). The interactive launcher turns it on at startup.
+- When the user scrolls above the first line, the view loads older lines from `transcript.jsonl`. See [Mouse in the chat view](#mouse-in-the-chat-view).
 
 ### Syntax highlighting in the chat view
 
@@ -77,11 +78,11 @@ The chat view uses the same `SyntaxCatalog` and `SyntaxHighlighter` as the edito
 
 These two limits are fixed in the chat view. They have no config key there.
 
-**Config.** The keys `ui.chat.highlight.enabled`, `ui.chat.highlight.maxLines`, `ui.chat.highlight.aliases`, `ui.chat.highlight.diff`, `ui.chat.highlight.read`, and `ui.chat.highlight.fences` control the behavior. See [configuration.md](configuration.md). `NO_COLOR` turns all colors off. When the editor has `editor.syntax.enabled: false`, the chat view has no code colors either, but diff tints stay.
+**Config.** The keys `ui.chat.highlight.enabled`, `ui.chat.highlight.maxLines`, `ui.chat.highlight.aliases`, `ui.chat.highlight.diff`, `ui.chat.highlight.read`, and `ui.chat.highlight.fences` control the behavior. See [configuration.md](configuration.md). A `NO_COLOR` variable with a value turns all colors off. An empty `NO_COLOR` has no effect. When the editor has `editor.syntax.enabled: false`, the chat view has no code colors either, but diff tints stay.
 
 ## Mouse
 
-Jeorje supports the mouse in the chat view (the wheel), the editor, the file browser, the agent switcher, menus, and dialogs. The keyboard can do everything that the mouse can do. A terminal that has no mouse support still works with the keys.
+Jeorje supports the mouse in the chat view (the wheel, the scroll bar, selection, and clicks), the editor, the file browser, the agent switcher, menus, and dialogs. The keyboard can do everything that the mouse can do. A terminal that has no mouse support still works with the keys.
 
 ### Input
 
@@ -92,7 +93,7 @@ Jeorje supports the mouse in the chat view (the wheel), the editor, the file bro
 
 ### Regions
 
-Each visible region registers its screen rectangle with the `RegionRegistry` of `jeorje-ui`. The registry sends an event to the region under the pointer, not to the region that has the keyboard focus. A drag that starts in a region stays with that region until the button is released, also when the pointer leaves the region. The interactive chat view registers one region, which handles the wheel. Panes and the editor read the mouse themselves.
+Each visible region registers its screen rectangle with the `RegionRegistry` of `jeorje-ui`. The registry sends an event to the region under the pointer, not to the region that has the keyboard focus. A drag that starts in a region stays with that region until the button is released, also when the pointer leaves the region. The interactive chat view registers three regions: the text area, the scroll bar, and the follow notice in the status line. Panes and the editor read the mouse themselves.
 
 ### Scrolling
 
@@ -101,7 +102,7 @@ Each visible region registers its screen rectangle with the `RegionRegistry` of 
 | Wheel up, wheel down | Scroll the region under the pointer by `ui.mouse.wheelLines` lines (default 3) |
 | `Shift` with the wheel in the chat view | Scroll three times as far |
 | `Shift` with the wheel in the editor | Scroll sideways |
-| Click on the arrow of a scroll bar (editor, dialog lists, Show Changes) | Scroll one line |
+| Click on the arrow of a scroll bar (chat view, editor, dialog lists, Show Changes) | Scroll one line |
 | Click on the track of a scroll bar | Scroll one page toward the click |
 | Drag the thumb of a scroll bar | Scroll to the position of the pointer |
 
@@ -110,10 +111,14 @@ Each visible region registers its screen rectangle with the `RegionRegistry` of 
 - **Lists.** In the file browser and the agent switcher, the wheel scrolls the list. It does not change the selected row.
 - **Speed.** The value `ui.mouse.wheelLines` sets the number of lines for each wheel step.
 
-### Chat view
+### Mouse in the chat view
 
 - The wheel scrolls the chat view of the foreground agent. The view keeps the last 10,000 logical lines.
-- A click does not select text, expand a result, or open a path in the chat view yet. See [Current limits](#current-limits).
+- **Scroll bar.** When the mouse works, the last column of the chat area shows a scroll bar. A click on an arrow scrolls one line. A click on the track scrolls one page toward the click. A drag of the thumb scrolls to the pointer. With `--no-mouse`, `ui.mouse.enabled: false`, or a terminal without mouse support, the chat view has no scroll bar.
+- **Follow mode.** While the view is at the bottom, it follows new output. If the user scrolls up, the view stays where it is. New lines are counted. The start of the status line then shows the notice `N new lines - Ctrl-X b or click here to follow`. `Ctrl-X b` (the action `follow`), a click on the notice, or a scroll to the bottom returns to the bottom and removes the notice. The notice shows the configured key of the action.
+- **Older lines.** When the user scrolls above the first line, the view loads a block of 500 older lines from `transcript.jsonl` of the session and shows them in a dim color with no highlighting.
+- **Click.** A click on a collapsed tool result line expands the result. A click on the header line of an expanded result collapses it. A click on a file path in any other line opens the file in the editor, like `/edit`. The path must name an existing file in the working directory. A click on other text does nothing.
+- **Selection.** See [Selecting and copying text](#selecting-and-copying-text).
 
 ### Panes
 
@@ -132,11 +137,25 @@ Each visible region registers its screen rectangle with the `RegionRegistry` of 
 
 Mouse tracking replaces the native text selection of the terminal. Most terminals give the native selection back when the user holds `Shift` during the drag. The native selection copies the text with the borders of the screen.
 
-The library has its own selection and clipboard classes. `ChatRegion` selects text in the chat view with a drag, a double click, and a triple click. `Clipboard` sends copied text to the clipboard of the terminal with the OSC 52 escape sequence. If the terminal does not support OSC 52, it keeps the text in an internal clipboard. The interactive launcher does not connect these classes yet. See [Current limits](#current-limits).
+The chat view has its own selection and clipboard.
+
+- A drag selects text. A double click selects a word. A triple click selects a line. Selected cells show in reverse video. A click without a drag clears the selection.
+- `Ctrl-X c` (the action `copySelection`) copies the selected text. With `ui.mouse.copyOnSelect: true`, a selection copies when the user releases the button.
+- The copied text has no color codes. `Clipboard` sends it to the clipboard of the terminal with the OSC 52 escape sequence. If the terminal does not support OSC 52, `Clipboard` keeps the text in an internal clipboard. The status line shows where the copy went. If nothing is selected, `Ctrl-X c` shows the notice `Nothing is selected.`
 
 ### Configuration
 
-The keys `ui.mouse.enabled` and `ui.mouse.wheelLines` control the mouse. See [configuration.md](configuration.md). The key `ui.mouse.copyOnSelect` is part of the config, but it has no effect yet. The option `--no-mouse` turns the mouse off for one run. The key `ui.mouse.enabled: false` turns it off for all runs.
+The keys `ui.mouse.enabled` and `ui.mouse.wheelLines` control the mouse. See [configuration.md](configuration.md). The key `ui.mouse.copyOnSelect` copies a selection of the chat view when the user releases the button. It has no effect in the editor. See [Known limits](#known-limits). The option `--no-mouse` turns the mouse off for one run. The key `ui.mouse.enabled: false` turns it off for all runs.
+
+### Tab completion
+
+`Tab` completes the text before the cursor in the input line. `InputCompletion` does the work. It acts only on a line that starts with `/`. Text that is not a command stays as typed.
+
+- **Command names.** It completes the names of the built-in commands, the custom commands, and the skills. It also completes the fixed arguments of some commands, for example `/trust revoke` and `off` for `/compactor` and `/advisor`.
+- **Paths.** It completes file and directory names for `/edit`, for `/files add`, and for the first argument of `/implement`. Paths are relative to the working directory. Names that start with a dot show only when the typed part starts with a dot. A directory gets a trailing `/`.
+- **One match.** Jeorje completes the text. A command name or a file gets a trailing space. A directory does not.
+- **Several matches.** Jeorje inserts the common prefix. It then prints the notice `N matches:` and one line for each candidate in the chat view. A list has at most 200 candidates.
+- **No match.** The line does not change.
 
 ## Permission prompts
 
@@ -174,7 +193,7 @@ The up and down keys move the mark, and `Enter` chooses the marked line. The age
 - `Esc` closes the browser.
 - `/files [filter]` prints the tree in the chat view. `/files add <path>` adds a path to the next prompt.
 
-The browser hides `.git/` and the paths in the `.gitignore` of the working directory unless the user presses `.`. It reads the names, the globs, a leading slash, and a trailing slash of the file. It does not read negation lines. This is a display filter. It is not a sandbox. The pane reads fixed keys. The `browser*` action ids of the config have no effect on it yet.
+The browser hides `.git/` and the paths in the `.gitignore` of the working directory unless the user presses `.`. It reads the names, the globs, a leading slash, and a trailing slash of the file. It does not read negation lines. This is a display filter. It is not a sandbox. The keys of the pane come from the `browser*` actions. See [configuration.md](configuration.md#key-bindings).
 
 ## Editor
 
@@ -360,7 +379,7 @@ Dialogs, such as Find, Save As, and Go To Line, are boxes in the middle of the s
 
 - The editor saves a file in the same way as the `write` tool: it writes a temporary file in the same directory and moves it into place, with an atomic move when the file system allows it. It keeps the permissions of the file and the line end style of the file (LF or CRLF). See [tools.md](tools.md).
 - When the agent changes the open file on disk, the editor shows a notice in the status bar and offers Reload in the File menu and Show Changes in the View menu. If the editor text has unsaved changes, Reload asks for a confirmation (Reload, Show Changes, or Cancel). On a save, the editor checks the file again. If the file changed on disk, a dialog asks to Overwrite, Show Changes, or Cancel. The editor never overwrites a file that changed on disk without this dialog.
-- The editor copies to its own in-memory clipboard. It does not send the text to the clipboard of the terminal yet.
+- The editor copies to its own in-memory clipboard. It does not send the text to the clipboard of the terminal. See [Known limits](#known-limits).
 - After a save, Jeorje records the new content hash of the file in the file-state table of the foreground agent. See [tools.md](tools.md).
 - The editor does not call a tool and does not use the permission policy. The user edits the file directly.
 
@@ -376,8 +395,8 @@ Dialogs, such as Find, Save As, and Go To Line, are boxes in the middle of the s
 | `Ctrl-X f` | Open the file browser |
 | `Ctrl-X o` | Expand or collapse the last tool result |
 | `Ctrl-L` | Redraw the screen |
-| `Ctrl-X b` | Jump to the bottom of the chat view |
-| `Ctrl-X c` | Copy the selected text in the chat view (no effect yet. See [Current limits](#current-limits).) |
+| `Ctrl-X b` | Jump to the bottom of the chat view and follow new output |
+| `Ctrl-X c` | Copy the selected text in the chat view |
 | `PgUp`, `PgDn` | Scroll the chat view by a page |
 
 The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of line) and `Ctrl-F` (forward one character). Jeorje uses the `Ctrl-X` prefix for its own commands, so they do not replace the editing keys. Every key in this section is a default. The config can change all of them, except for the fixed keys. See [configuration.md](configuration.md#key-bindings) for the notation, the rules, and the action ids.
@@ -416,6 +435,7 @@ picocli parses the command line. `JeorjeMain` is the entry point.
 |---------|---------|
 | `jeorje` | Start the interactive UI in the current directory |
 | `jeorje run "<task>"` | Run a task with no UI and print the final result |
+| `jeorje run "/plan <goal>"`, `jeorje run "/implement [plan] [stories]"`, `jeorje run --plan <path>` | Plan and implement with no UI. See [planning.md](planning.md#headless-runs). |
 | `jeorje --resume [session]` | Start the interactive UI on an earlier session. The default is the latest session. |
 | `jeorje resume [session] [--task "<text>"]` | Resume a session in the UI. With `--task`, continue the session with no UI and print the final answer. |
 | `jeorje index rebuild [--session <id>]` | Build the index again from the transcript of a session. The default is the latest session. |
@@ -432,13 +452,6 @@ Common options: `--dir`, `--no-mouse`, `--model`, `--base-url`, `--peer host:por
 - Colors follow `NO_COLOR` and the terminal capabilities.
 - All logs go to a file. The UI never writes logs to the terminal. See [configuration.md](configuration.md).
 
-## Current limits
+## Known limits
 
-The `jeorje-ui` module has some parts that the interactive launcher in `jeorje-cli` does not connect yet. These parts have no effect in the chat view.
-
-- **Chat highlighting.** The launcher makes the screen with no highlighting context. The chat view therefore shows no syntax colors and no diff tints. The keys `ui.chat.highlight.*` have no effect.
-- **Chat selection and copy.** `ChatRegion`, `Selection`, and `Clipboard` (OSC 52) exist. The chat view has no text selection. The action `copySelection` does nothing. The key `ui.mouse.copyOnSelect` has no effect. Click handlers for tool results and file paths (`LineClick`) are not connected.
-- **Follow mode and older lines.** `ChatScroll` and `TranscriptOlderLines` implement the follow mode, the notice `N new lines - Ctrl-X b or click here to follow`, and the loading of older lines from `transcript.jsonl`. The chat view does not use them. The action `follow` scrolls the view to the bottom.
-- **Key bindings of the file browser.** The pane reads fixed keys. The `browser*` actions do not change it.
-- **Completion.** `SlashCommands.complete` is not connected to the input line.
-- **Editor clipboard.** The editor uses an in-memory clipboard and does not set `copyOnSelect`.
+- **Editor clipboard.** The editor uses an in-memory clipboard. It does not send copied text to the clipboard of the terminal, and it does not set `copyOnSelect`. The key `ui.mouse.copyOnSelect` acts in the chat view only.

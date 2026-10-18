@@ -5,7 +5,8 @@ Jeorje is a coding agent written in Java, built to work in a swarm.
 ## Swarm
 
 - Jeorje instances discover each other with a gossip protocol (SWIM style, over TCP).
-- An instance can be given a well-known-address (WKA) list on startup.
+- An instance can be given a well-known-address (WKA) list on startup (`--peer host:port`). Instances on one host can also find each other with discovery files (`swarm.discovery`).
+- A shared token (`--swarm-token` or `JEORJE_SWARM_TOKEN`) protects the swarm. TLS is optional (`swarm.tls.keyStore`).
 - An agent can delegate a task to a subagent on a peer with `spawn_agent`.
 - Subagents spawned by an instance are first-class: you can switch into one, at which point it becomes the foreground chat and can be steered directly.
 
@@ -39,6 +40,7 @@ The full design is in [doc/design/index.md](doc/design/index.md).
 | `task_done`, `story_done`, `story_blocked`, `story_read` | Story tools of the workers of `/implement` |
 | `sync_done`, `sync_abort`, `worktree_merge`, `worktree_discard` | Resolve a sync, and manage the worktree of a subagent |
 | `plan_submit` | Check a plan and write it (plan mode only) |
+| `skill` | Load a skill from `.agents/skills/` |
 | `advisor` | Ask a second model for a review |
 
 [doc/design/tools.md](doc/design/tools.md) describes each tool.
@@ -50,11 +52,20 @@ The full design is in [doc/design/index.md](doc/design/index.md).
 
 [doc/design/planning.md](doc/design/planning.md) describes both commands.
 
+Both commands also run with no interface: `jeorje run "/plan <goal>"`, `jeorje run "/implement <plan>"`, and `jeorje run --plan <path>`. See [Headless runs](doc/design/planning.md#headless-runs).
+
 In a git repository, each subagent works in its own git worktree and branch. Results are merged back with `/merge` or by the `/implement` orchestrator. See [doc/design/subagents.md](doc/design/subagents.md#worktrees).
 
 ## Instructions and Skills
 
 Jeorje reads `AGENTS.md` files (user, project, and per directory) and the `.agents/` directory: skills (`.agents/skills/<name>/SKILL.md`), custom slash commands, and subagent definitions. See [doc/design/instructions-and-skills.md](doc/design/instructions-and-skills.md).
+
+## Running
+
+- `jeorje` opens the interactive interface. `jeorje resume` and `jeorje --resume` open an earlier session.
+- `jeorje run "<task>"` runs one task with no interface and prints the final answer. `jeorje resume --task "<text>"` continues a session the same way.
+- `jeorje index rebuild` embeds the stored history again. `jeorje config` shows the effective config.
+- Useful options: `--dir`, `--model`, `--peer`, `--swarm-token`, `--yes`, `--yolo`, `--trust`, `--config`, and `--no-mouse`.
 
 ## Models
 

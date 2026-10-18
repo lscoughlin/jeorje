@@ -39,6 +39,8 @@ Four tests run only when `JEORJE_LIVE=1` is set: `LiveSmokeTest` and `LivePlanIm
 - `TurnChunker` boundaries, overlap, and large tool results.
 - Compaction triggers, eviction order, and pinned items.
 - Protection classes: `PROTECTED` chunks never change, a resolved error becomes `AGGRESSIVE`, immediate file paths survive at every level, and `CAREFUL` chunks stop at level 2.
+- Concluded searches: a search result that a later edit, write, or answer used is pruned first and goes to level 3, and the todo list is pinned in every request.
+- Secret scrubbing: a key in a tool result does not reach the model, the transcript, the index chunks, or the audit log.
 - Decision notes: the note has structured bullets, every keyword and path is in the original chunk, and the note is shorter than the original.
 - Token-level pruning: the pruned text is always an ordered subsequence of the original text, and the kept share is inside the level target.
 - Rejection of invalid compactor answers (overlapping spans, a wrong ratio, a keyword that is not in the chunk), and the fallback pruner.
@@ -102,7 +104,55 @@ Four tests run only when `JEORJE_LIVE=1` is set: `LiveSmokeTest` and `LivePlanIm
 ### End-to-end tests
 
 - `jeorje run` with `ScriptedLlmClient` in a temporary workspace. The test checks the files, the transcript, and the index.
+- The pseudo-terminal harness in `scripts/e2e/` tests the real application. It is described in the next section.
 - A live smoke test with a real OpenRouter key is outside `mvn verify`. It runs only when `JEORJE_LIVE=1` is set. It reads the key from the environment variable `OPENROUTER_API_KEY` and uses the default model `~deepseek/deepseek-flash-latest`. The test checks a streamed answer, a tool call, and the usage values. It never prints the key. Offline tests never need a key.
+
+## Pseudo-terminal harness
+
+The directory `scripts/e2e/` holds a harness that starts the real application and drives it like a user. It is written in Python 3 with the library `pyte`.
+
+### How it works
+
+1. `harness.py` starts a local stub chat server. The server answers with scripted responses (text and tool calls). It records the body of every request.
+2. The harness starts `java -jar jeorje-cli/target/jeorje.jar` in a pseudo-terminal. The working directory is a temporary project directory.
+3. The harness sends keys and mouse events to the pseudo-terminal.
+4. The harness reads the screen through `pyte`. It reads the text and the color of every cell.
+5. A scenario checks the screen, the recorded requests, and the files of the project.
+
+### How to run
+
+1. Build the jar: `mvn -q -o -pl jeorje-cli -am package -DskipTests`.
+2. Run all scenarios: `python3 scripts/e2e/run.py`.
+3. Run some scenarios: `python3 scripts/e2e/run.py basic_chat trust`.
+
+`run.py` installs `pyte` into the virtual environment `.jeorje/venv` when the library is missing. When `pyte` is not available and the install fails, `run.py` prints `SKIPPED` and exits with code 0. A failed scenario gives exit code 1. A missing jar or an unknown scenario name gives exit code 2.
+
+### Switches
+
+| Variable | Effect |
+|----------|--------|
+| `JEORJE_PTY=1` | The test `PtySmokeTest` in `jeorje-cli` runs all scenarios through `run.py`. Without the variable, `mvn verify` skips it. The test is also skipped when Python 3, the script, or the jar is missing. |
+| `JEORJE_LIVE=1` | The live tests run against the real API. See "Live tests". The scenarios use the stub server and need no key. |
+
+### Scenarios
+
+Each scenario is a file in `scripts/e2e/scenarios/` with a function `run(check)`.
+
+| Scenario | What it checks |
+|----------|----------------|
+| `basic_chat` | A typed message, the stub answer, the recorded request, exit with `Ctrl-D`, and the restored terminal. |
+| `chat_highlight` | Colors of code and diffs in the chat view, and `NO_COLOR`. |
+| `chat_mouse` | Wheel scroll, the follow notice, the scroll bar, selection, and copy through OSC 52. |
+| `compaction` | The request size stops growing, recent file paths and the todo list stay in every request, a pruned chunk has a recall hint, and `recall` returns the original text. |
+| `completion` | Tab completion of commands, skills, custom commands, and file paths. |
+| `editor` | `/edit`, typing, selection, cut and paste, undo, find, save, syntax colors, injected colors in a Markdown fence, and the return to the chat. |
+| `instructions_skills` | `AGENTS.md` and the skill catalog in the system prompt, nested `AGENTS.md` in `read` results, the `skill` tool, `/<skill>`, and a custom command. |
+| `keys_config` | A project config rebinds hotkeys, and a conflict stops the start. |
+| `panes` | The agent switcher and the file browser. |
+| `secrets` | A secret from the environment appears in no project file, no log file, no index chunk, and no tool result sent to the model. |
+| `slash_help` | `/help` shows the commands. |
+| `trust` | The first start asks for trust, a stored answer is read at the next start, and an untrusted project does not list its skills. |
+| `worktree_isolation` | A subagent in a worktree cannot read the main working tree, and the parent gets its file by the merge back. |
 
 ## Determinism
 

@@ -15,7 +15,7 @@ The `PermissionPolicy` port decides if an action is allowed. The agent loop call
 - `ASK`: the UI shows the action and the user approves or rejects it.
 - `DENY`: the tool does not run. The model gets a `ToolResult` with `error = true` and the text `Permission denied: the call to <tool> did not run.` The text has no reason.
 
-The agent loop handles `ASK`. The tools themselves call the policy for the paths and commands that they use. A tool refuses a call only when the policy returns `DENY`. The search tools (`ls`, `glob`, and `grep`) cannot ask the user, so they skip each path that the policy does not allow with `ALLOW`.
+The agent loop handles `ASK`. The tools that Jeorje runs itself (`task_done`, `story_done`, `story_blocked`, `story_read`, `sync_done`, and `sync_abort`) never ask the user. The tools themselves call the policy for the paths and commands that they use. A tool refuses a call only when the policy returns `DENY`. The search tools (`ls`, `glob`, and `grep`) cannot ask the user, so they skip each path that the policy does not allow with `ALLOW`.
 
 ## Rules
 
@@ -45,7 +45,7 @@ The user can choose "always allow" in a prompt. Jeorje then saves a rule for the
 ## Plan mode and workers
 
 - **Plan mode.** The interactive session puts a gate around the policy. In plan mode the gate allows only these tools: `read`, `ls`, `glob`, `grep`, `recall`, `webfetch`, `skill`, `ask_user`, `advisor`, `todo`, `plan_submit`, and `bash`. It denies all other tools. `bash` runs only commands whose parts are all on the read-only allow list. The gate allows `plan_submit` only in plan mode. The gate comes before the normal rules, so `--yolo` does not change plan mode: plan mode never gets write tools. The policy class has a plan mode of its own (the builder option `planMode`, and `narrow` with the flag `readOnly`). In that mode the allowed tools also include `diff` and `agent_status`, and `plan_submit` is allowed only for a path inside the plan directory. `plan_submit` writes only inside the plan directory.
-- **Worktrees.** A subagent in a worktree uses the policy of its parent, and the sandbox of that policy has the working directory of the parent as workspace. The worktree directories are below `.jeorje/worktrees` in the workspace. The git calls that create and remove worktrees are internal actions, not tool calls. With `worktree.mergeBack: auto` (default), the sync and the merge back at completion are internal actions with no prompt. Manual merges (`worktree_merge`, `/merge`) and discards are `ASK`.
+- **Worktrees.** A subagent in a worktree gets a policy that has the same rules, extra directories, and read-only directories as the policy of its parent, but the worktree is its workspace. The main working tree is therefore outside the sandbox of the subagent, so a read or write of a path in the main working tree by absolute path is `DENY`. The subagent gets the work back only through the merge back. The worktree directories are below `.jeorje/worktrees` in the workspace of the parent. The git calls that create and remove worktrees are internal actions, not tool calls. With `worktree.mergeBack: auto` (default), the sync and the merge back at completion are internal actions with no prompt. Manual merges (`worktree_merge`, `/merge`) and discards are `ASK`.
 - **Workers.** A worker of `/implement` gets the policy of the orchestrator, never wider. In the interactive session, an `ASK` of a subagent or worker becomes a question to the user. With `--yolo`, workers run with no checks.
 
 ## Path sandbox
@@ -76,8 +76,8 @@ The user can choose "always allow" in a prompt. Jeorje then saves a rule for the
 ## Secrets
 
 - API keys come from environment variables. The config key `llm.apiKeyEnv` lists the names.
-- `SecretScrubber` removes key values. It knows the API key, the swarm token, and `OPENAI_API_KEY`, and it knows the patterns of common keys (`sk-`, `ghp_`, `AKIA`, `xox`, bearer tokens, and `name=value` pairs where the name has `key`, `token`, `secret`, or `password`). Log output shows `***` instead. Jeorje uses the scrubber for the debug log of permission decisions, for the audit log, for error texts of the config loader, and for error events of the run mode.
-- Jeorje does not scrub the text of chunks in the index and in the transcript. A key reaches them only if a tool prints it. The child processes of tools have no keys in their environment.
+- `SecretScrubber` removes key values. It knows the API key, the values of all variables in `llm.apiKeyEnv`, the swarm token (config and `JEORJE_SWARM_TOKEN`), and `OPENAI_API_KEY`, and it knows the patterns of common keys (`sk-`, `ghp_`, `AKIA`, `xox`, bearer tokens, and `name=value` pairs where the name has `api_key`, `token`, `secret`, `password`, or `passwd`). Log output shows `***` instead. Jeorje uses the scrubber for the debug log of permission decisions, for the audit log, for error texts of the config loader, for git output, and for error events of the run mode.
+- The application removes secrets from tool output before the output goes anywhere else. A key that a tool prints therefore never reaches the chat view, the transcript, the index, or the model. `ScrubbingContextStore` removes secrets from the text of each chunk before the chunk enters the index. `TranscriptWriter` removes secrets from each message before it writes the message to `transcript.jsonl`. The same scrubber also cleans the events that go to the UI. The child processes of tools have no keys in their environment.
 - Jeorje does not send the environment of the user to the model.
 
 ## Subagent and swarm limits

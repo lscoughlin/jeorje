@@ -37,7 +37,7 @@ Environment variables and command-line flags override file values. See [Preceden
 
 Jeorje treats a project as trusted at startup when its real path is in `trust.projects` (from the user config or the `--config` file), or when the flag `--trust` is set. The `/trust` command stores the answer in `${HOME}/.jeorje/trust.yaml`. See [instructions-and-skills.md](instructions-and-skills.md#trust). A project config cannot set `trust.projects`. Jeorje ignores the key and logs a warning.
 
-**Path values.** These keys are path values: `index.modelCache`, `logging.file`, `editor.syntax.dirs`, `skills.dirs`, `agents.dirs`, `instructions.userFiles`, `permissions.extraDirectories`, `plan.dir`, `trust.projects`, and the `file` of a prompt. Jeorje expands `~`, `${HOME}`, and `${CWD}` at the start of the value. It does not expand other variables in path values. Other keys that hold paths, such as `skills.compat`, are used as written. A relative `file` of a prompt starts at the directory of the config file that names it. Examples use `${HOME}` and `${CWD}`.
+**Path values.** These keys are path values: `index.modelCache`, `logging.file`, `editor.syntax.dirs`, `skills.dirs`, `skills.compat`, `agents.dirs`, `instructions.userFiles`, `permissions.extraDirectories`, `plan.dir`, `trust.projects`, and the `file` of a prompt. Jeorje expands `~`, `${HOME}`, and `${CWD}` at the start of the value. It does not expand other variables in path values. A relative `file` of a prompt starts at the directory of the config file that names it. Examples use `${HOME}` and `${CWD}`.
 
 ## Precedence
 
@@ -107,6 +107,10 @@ swarm:
   wka: []                            # list of host:port
   token: ""                          # prefer JEORJE_SWARM_TOKEN
   gossipIntervalMs: 1000
+  discovery: false                   # local discovery files in ${HOME}/.jeorje/peers/
+  tls:
+    keyStore: ""                     # PKCS12 key store that all peers share. Empty means no TLS.
+    passwordEnv: ""                  # name of the environment variable with the key store password
 tools:
   read:
     frontMatterScanLines: 25        # lines to scan for the opening marker
@@ -226,7 +230,7 @@ Rules for the keys:
 - `prompts` keys are described in [Prompts](#prompts).
 - `swarm` keys are described in [swarm.md](swarm.md).
 - `permissions` keys are described in [permissions-and-safety.md](permissions-and-safety.md).
-- `ui` and `editor` keys are described in [ui.md](ui.md). The interactive launcher reads `ui.keyboardProtocol`, `ui.mouse.enabled`, `ui.mouse.wheelLines`, `ui.keys`, `editor.keys`, and the `editor.syntax` keys. See [ui.md](ui.md#current-limits) for the keys that have no effect yet.
+- `ui` and `editor` keys are described in [ui.md](ui.md). The interactive launcher reads all `ui` and `editor` keys: `ui.keyboardProtocol`, `ui.chat.highlight`, `ui.mouse`, `ui.keys`, `editor.keys`, and `editor.syntax`. The key `ui.mouse.copyOnSelect` acts in the chat view only. See [ui.md](ui.md#known-limits).
 
 **Rules that Jeorje writes.** One answer to a permission prompt changes a config file. When the user answers "allow in the project", Jeorje adds a rule with `decision: allow` and no `pattern` for the tool to `${CWD}/.jeorje/config.yaml`. Jeorje creates the file when it is missing. It does this only in a trusted project. It does nothing if the same rule exists. It edits the text of the file, so comments stay. If the shape of the file does not allow a text edit, Jeorje writes the parsed data again, and the comments are lost. In an untrusted project, the rule holds for the session only, and the interface shows a notice.
 
@@ -274,7 +278,7 @@ Keys belong to three contexts: the chat screen, the file browser, and the editor
 
 - **Override.** A key that the config sets replaces the default keys of that action. An action that the config does not name keeps its default keys.
 - **Layers.** Jeorje merges the layers for each action. The project config overrides the user config for the actions that it names.
-- **Conflicts.** Jeorje checks conflicts for each context: the chat screen, the file browser, and the editor. Two actions in the same context cannot have the same key. A key also cannot be a complete binding and the first key of a chord at the same time. Actions in different contexts can share a key. For example, `send` and `browserEdit` both use `Enter`. If a rule fails, Jeorje reports an error that names the two actions and the key. The interactive interface shows the error as a notice and uses the default keys.
+- **Conflicts.** Jeorje checks conflicts for each context: the chat screen, the file browser, and the editor. Two actions in the same context cannot have the same key. A key also cannot be a complete binding and the first key of a chord at the same time. Actions in different contexts can share a key. For example, `send` and `browserEdit` both use `Enter`. If a rule fails, Jeorje reports an error that names the two actions and the key, and the start stops. The same holds for an unknown action id and for a key that Jeorje cannot read.
 - **Required actions.** The actions `send`, `interrupt`, and `exit` (chat) and `save` and `close` (editor) must keep at least one key. `none` for one of them is an error. This prevents a lockout. The slash command `/quit` and the editor menu always work.
 - **Fixed keys.** Some keys are not actions. `Enter` and `Esc` work in the editor and in the dialogs, and `Ctrl-C`, `Ctrl-V`, and `Ctrl-X` are aliases for copy, paste, and cut in the editor. A configured key wins over a fixed key. An alias runs only when it can act: copy and cut need a selection, and paste needs text in the clipboard.
 - **Aliases.** A terminal sends the same code for some keys: `Ctrl-I` and `Tab`, `Ctrl-M` and `Enter`, `Ctrl-[` and `Esc`, `Ctrl-H` and `Backspace`. Jeorje does not accept the `Ctrl-` form of these keys. The error tells the user to use the name.
@@ -305,9 +309,9 @@ Chat screen (`ui.keys`):
 | `copySelection` | `Ctrl-X c` | Copy the selected text in the chat view |
 | `scrollUp`, `scrollDown` | `PgUp`, `PgDn` | Scroll the chat view |
 
-The `copySelection` action is defined and has a key. The interactive chat view has no text selection yet, so the action does nothing there. See [ui.md](ui.md#current-limits).
+The `copySelection` action copies the text that the user selected in the chat view with the mouse. See [ui.md](ui.md#selecting-and-copying-text). The `files` and `agents` keys also close the pane that they opened.
 
-File browser (`ui.keys`). The browser pane reads fixed keys at this time (the defaults in this table, and the arrow keys). A change in the config does not affect the pane:
+File browser (`ui.keys`). The browser pane reads these keys. A key that the config sets replaces the default key of the action, also for the pane. The pane shows the current keys in its title row:
 
 | Action id | Default | Action |
 |-----------|---------|--------|
@@ -401,5 +405,5 @@ ${HOME}/.cache/jeorje/syntax/     # syntax files of the editor, one directory fo
 | `OPENAI_API_KEY` | API key for another OpenAI-compatible endpoint. Add its name to `llm.apiKeyEnv` to use it. Jeorje always removes its value from logs. |
 | `JEORJE_SWARM_TOKEN` | Shared swarm token. It sets `swarm.token`. |
 | `JEORJE_HOME` | Replaces the user directory `${HOME}/.jeorje` for the user config file |
-| `NO_COLOR` | Turns off colors |
+| `NO_COLOR` | Turns off colors in the chat view, the editor, and the diff tints. An empty value has no effect. |
 | `TERM` | The interface sends copied text with the OSC 52 sequence unless `TERM` is empty, `dumb`, `linux`, or starts with `screen` |

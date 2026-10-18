@@ -25,6 +25,19 @@ public interface SwarmHandlers {
 
         /** The answer to a question that the task sent with a {@code QUESTION} event. */
         void answer(String questionId, String text);
+
+        /** The delegating peer refuses a question of the task (for example with the reason {@code busy}). */
+        default void answerError(String questionId, String reason) {
+            answer(questionId, "[the question was refused: " + reason + "]");
+        }
+
+        /**
+         * A question from the delegating peer to the task. The stage finishes with the answer, or with an error
+         * whose message is the reason of a refusal. The default refuses.
+         */
+        default CompletionStage<String> ask(String questionId, String text) {
+            return CompletableFuture.failedFuture(new UnsupportedOperationException("unsupported"));
+        }
     }
 
     /** Thrown by {@link DelegateHost#accept} when the permission policy denies the task. */

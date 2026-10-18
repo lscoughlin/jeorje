@@ -34,6 +34,21 @@ public interface Pane<T> {
     /** The result, or empty when the user cancelled. */
     Optional<T> result();
 
+    /**
+     * The key context whose action keys the screen reads for this pane, or null when the pane reads only the plain
+     * key names. With a context, the screen turns the configured keys into {@link #action} calls.
+     */
+    default org.github.lscoughlin.jeorje.ui.keys.KeyContext keyContext() { return null; }
+
+    /** Whether the pane reads typed text now. While it does, the screen sends every key as a key name. */
+    default boolean textInput() { return false; }
+
+    /** Handles the action of a configured key of the {@link #keyContext()}, for example {@code browserEdit}. */
+    default void action(String actionId) {}
+
+    /** The id of the chat action that closes this pane when the user presses its key again, or null. */
+    default String toggleAction() { return null; }
+
     /** Runs before the first draw. */
     default void begin() {}
 

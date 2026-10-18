@@ -206,6 +206,9 @@ public final class FileBrowser implements Region {
         if (row != null) adder.accept(row.path());
     }
 
+    /** Starts the name filter. The next characters go into the filter. */
+    public void startFilter() { filtering = true; }
+
     public void toggleIgnored() {
         showIgnored = !showIgnored;
         select(selected);

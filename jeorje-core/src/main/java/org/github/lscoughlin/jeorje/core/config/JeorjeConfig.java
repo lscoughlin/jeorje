@@ -107,15 +107,28 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
         }
     }
 
-    public record Swarm(boolean enabled, String bind, List<String> wka, String token, long gossipIntervalMs) {
+    /** TLS for the swarm transport. An empty {@code keyStore} means no TLS. */
+    public record Tls(String keyStore, String passwordEnv) {
+        public Tls {
+            keyStore = keyStore == null ? "" : keyStore;
+            passwordEnv = passwordEnv == null ? "" : passwordEnv;
+        }
+
+        public boolean enabled() { return !keyStore.isBlank(); }
+    }
+
+    public record Swarm(boolean enabled, String bind, List<String> wka, String token, long gossipIntervalMs,
+                        boolean discovery, Tls tls) {
         public Swarm {
             wka = list(wka);
+            tls = tls == null ? new Tls("", "") : tls;
         }
 
         @Override
         public String toString() {
             return "Swarm[enabled=" + enabled + ", bind=" + bind + ", wka=" + wka + ", token="
-                    + (token == null || token.isEmpty() ? "" : "***") + ", gossipIntervalMs=" + gossipIntervalMs + "]";
+                    + (token == null || token.isEmpty() ? "" : "***") + ", gossipIntervalMs=" + gossipIntervalMs + ", discovery=" + discovery
+                    + ", tls=" + tls + "]";
         }
     }
 

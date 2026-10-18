@@ -33,6 +33,7 @@ import org.github.lscoughlin.jeorje.core.subagent.SubagentEvent;
 import org.github.lscoughlin.jeorje.core.subagent.SubagentRuntime;
 import org.github.lscoughlin.jeorje.swarm.DelegateEvent;
 import org.github.lscoughlin.jeorje.swarm.Messages;
+import org.github.lscoughlin.jeorje.swarm.LocalDiscovery;
 import org.github.lscoughlin.jeorje.swarm.PeerIdStore;
 import org.github.lscoughlin.jeorje.swarm.PeerRecord;
 import org.github.lscoughlin.jeorje.swarm.PeerState;
@@ -40,6 +41,7 @@ import org.github.lscoughlin.jeorje.swarm.SwarmConfig;
 import org.github.lscoughlin.jeorje.swarm.SwarmHandlers;
 import org.github.lscoughlin.jeorje.swarm.SwarmNode;
 import org.github.lscoughlin.jeorje.swarm.TcpTransport;
+import org.github.lscoughlin.jeorje.swarm.TlsSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
@@ -76,6 +78,7 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     private final AtomicInteger hostedCounter = new AtomicInteger();
     private volatile List<String> capabilities = List.of();
     private volatile SwarmNode node;
+    private volatile LocalDiscovery discovery;
     private volatile SubagentRuntime runtime;
     private volatile PermissionPolicy hostPolicy = action -> PermissionPolicy.Decision.ASK;
     private volatile Consumer<AgentInput> mainInput = input -> { };
@@ -107,23 +110,70 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
      */
     public static SwarmBridge forConfig(JeorjeConfig config, Path home, Path cwd, Consumer<String> notice,
                                         Runnable onChange) {
+        return forConfig(config, home, cwd, java.util.Map.of(), notice, onChange);
+    }
+
+    /**
+     * Makes the bridge with a TCP transport. The key {@code swarm.tls} wraps the transport in TLS. The key
+     * {@code swarm.discovery} writes and reads the discovery files in {@code ${HOME}/.jeorje/peers/}.
+     *
+     * @param environment the environment variables, for the password of the TLS key store
+     */
+    public static SwarmBridge forConfig(JeorjeConfig config, Path home, Path cwd,
+                                        java.util.Map<String, String> environment, Consumer<String> notice,
+                                        Runnable onChange) {
         var cfg = config.swarm();
         var base = SwarmConfig.defaults().withBind(cfg.bind()).withWka(cfg.wka()).withToken(cfg.token())
                 .withGossipIntervalMs(cfg.gossipIntervalMs());
-        var peerId = PeerIdStore.loadOrCreate(home.resolve(".jeorje"));
+        var stateDir = home.resolve(".jeorje");
+        LocalDiscovery discovery = cfg.discovery() ? new LocalDiscovery(LocalDiscovery.defaultDirectory(stateDir))
+                : null;
+        var savedId = PeerIdStore.loadOrCreate(stateDir);
+        // Another instance of the same user can be live and use the saved id. This instance takes its own id then.
+        var peerId = discovery != null && discovery.peers("").stream().anyMatch(e -> e.peerId().equals(savedId))
+                ? java.util.UUID.randomUUID().toString() : savedId;
+        var tls = tlsContext(cfg.tls(), cwd, environment);
         TcpTransport tcp;
         try {
-            tcp = new TcpTransport(base, peerId, null);
+            tcp = new TcpTransport(base, peerId, tls);
         } catch (RuntimeException e) {
             var failed = base.bind();
             var host = failed.substring(0, Math.max(0, failed.lastIndexOf(':')));
             log.atWarn().log(() -> "Cannot bind " + failed + ": " + e.getMessage() + ". Using a free port.");
             base = base.withBind(host + ":0");
-            tcp = new TcpTransport(base, peerId, null);
+            tcp = new TcpTransport(base, peerId, tls);
         }
         var name = cwd.getFileName() == null ? "jeorje" : cwd.getFileName().toString();
         var record = PeerRecord.of(peerId, tcp.address(), name);
-        return new SwarmBridge(base, tcp, record, Clock.systemUTC(), historyRule(config), notice, onChange);
+        return new SwarmBridge(base, tcp, record, Clock.systemUTC(), historyRule(config), notice, onChange)
+                .withDiscovery(discovery);
+    }
+
+    /** The TLS context of the config, or null when {@code swarm.tls.keyStore} is empty. */
+    static javax.net.ssl.SSLContext tlsContext(JeorjeConfig.Tls tls, Path cwd,
+                                               java.util.Map<String, String> environment) {
+        if (!tls.enabled()) return null;
+        var password = new char[0];
+        if (!tls.passwordEnv().isBlank()) {
+            var value = environment.get(tls.passwordEnv());
+            if (value == null) {
+                throw new CliException("swarm.tls.passwordEnv names the variable " + tls.passwordEnv()
+                        + ", but it is not set.");
+            }
+            password = value.toCharArray();
+        }
+        var path = cwd.resolve(tls.keyStore()).normalize();
+        try {
+            return TlsSupport.fromKeyStore(path, password);
+        } catch (IllegalArgumentException e) {
+            throw new CliException(e.getMessage());
+        }
+    }
+
+    /** Turns on local discovery. Call it before {@link #start}. */
+    public SwarmBridge withDiscovery(LocalDiscovery value) {
+        this.discovery = value;
+        return this;
     }
 
     /** The history rule of the config: only an explicit user rule for {@code history_query} allows a peer. */
@@ -147,7 +197,7 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         this.hostPolicy = policy;
         this.mainInput = mainInput;
         this.store = store;
-        runtime.registerRoot(HOST_ROOT, "remote", new CancellationToken(), hostTools, policy, input -> { },
+        runtime.registerRoot(HOST_ROOT, "remote", new CancellationToken(), hostTools, policy, this::onRootInput,
                 () -> 1);
         var caps = new ArrayList<String>();
         hostTools.forEach(t -> caps.add("tools:" + t.definition().name()));
@@ -156,7 +206,7 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
 
     /** Starts the node and joins the swarm. */
     public SwarmBridge start() {
-        var started = new SwarmNode(swarmConfig, self.withCapabilities(capabilities), transport, clock, this, null);
+        var started = new SwarmNode(swarmConfig, self.withCapabilities(capabilities), transport, clock, this, discovery);
         node = started.start();
         return this;
     }
@@ -192,6 +242,14 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
 
             @Override public void answer(String questionId, String text) { delegation.answer(questionId, text); }
 
+            @Override public void answerError(String questionId, String reason) {
+                delegation.answerError(questionId, reason);
+            }
+
+            @Override public java.util.concurrent.CompletableFuture<String> ask(String questionId, String text) {
+                return delegation.ask(questionId, text);
+            }
+
             @Override public java.util.concurrent.CompletableFuture<Event> completion() {
                 return delegation.completion().thenApply(SwarmBridge::convert);
             }
@@ -226,8 +284,13 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         var spawn = SpawnRequest.of(name, request.task()).withTools(tools.isEmpty() ? null : tools);
         AgentId id;
         var entry = new Hosted(request.taskId(), sink, new AtomicBoolean(), peerName);
+        var limit = request.limits();
+        // The limits of the delegating peer cap the task. The own limits of this peer still hold.
+        var calls = limit == null ? 0 : Math.max(0, limit.maxTurns());
+        var time = limit == null || limit.timeoutSeconds() <= 0 ? null
+                : java.time.Duration.ofSeconds(limit.timeoutSeconds());
         try {
-            id = rt.spawn(HOST_ROOT, spawn);
+            id = rt.spawn(HOST_ROOT, spawn, calls, time);
         } catch (SpawnException e) {
             throw new DelegateRejectedException(e.getMessage());
         }
@@ -235,7 +298,6 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         notice.accept("Peer " + peerName + " delegated a task: " + shorten(request.task()));
         // The task can end before the entry exists. Send the result now in that case.
         rt.completion(id).ifPresent(completion -> finishHosted(id, completion));
-        var limit = request.limits();
         log.atInfo().log(() -> "accepted task " + request.taskId() + " from " + peerName + " as " + id
                 + (limit == null ? "" : " (limits " + limit + ")"));
         return new RunningTask() {
@@ -244,9 +306,42 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
             @Override public void cancel() { rt.cancel(id.value()); }
 
             @Override public void answer(String questionId, String text) {
-                rt.steer(id, "[answer to question " + questionId + " from the delegating peer]\n" + text);
+                if (!rt.answer(HOST_ROOT, questionId, text).ok()) {
+                    rt.steer(id, "[answer to question " + questionId + " from the delegating peer]\n" + text);
+                }
+            }
+
+            @Override public void answerError(String questionId, String reason) {
+                if (!rt.answerFailure(HOST_ROOT, questionId, reason)) {
+                    rt.steer(id, "[the delegating peer refused the question " + questionId + ": " + reason + "]");
+                }
+            }
+
+            @Override public java.util.concurrent.CompletionStage<String> ask(String questionId, String text) {
+                return rt.askFromPeer(HOST_ROOT, id, text);
             }
         };
+    }
+
+    private static final java.util.regex.Pattern QUESTION_HEADER =
+            java.util.regex.Pattern.compile("\\[question from [^\\n]*?, id (q\\d+)\\]\\n");
+
+    /**
+     * The input of the hidden root agent. A hosted subagent sends here when it asks its parent or sends it a
+     * message. The bridge forwards a question to the delegating peer as a {@code QUESTION} event, and other text
+     * as progress.
+     */
+    private void onRootInput(AgentInput input) {
+        if (!(input instanceof AgentInput.PeerMessage message)) return;
+        var entry = hosted.get(message.from());
+        if (entry == null || entry.done().get()) return;
+        var matcher = QUESTION_HEADER.matcher(message.text());
+        if (matcher.find()) {
+            entry.sink().accept(DelegateEvent.question(entry.taskId(), matcher.group(1),
+                    message.text().substring(matcher.end())));
+        } else {
+            entry.sink().accept(DelegateEvent.progress(entry.taskId(), message.text()));
+        }
     }
 
     private void denyIfPolicyDenies(String tool) {

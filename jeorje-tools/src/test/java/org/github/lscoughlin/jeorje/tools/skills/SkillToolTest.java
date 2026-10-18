@@ -152,4 +152,47 @@ class SkillToolTest {
         assertEquals(List.of("demo"), loadedNames);
         assertEquals(1, tool.skills().size());
     }
+
+    private Chunk chunk(String id, String toolName, String text) {
+        return new Chunk("a1:" + id, "s1", "a1", 1, 1, Instant.EPOCH, "tool_result", toolName, text);
+    }
+
+    @Test
+    void releasePrunedLoadsTheSkillAgain() throws Exception {
+        var alpha = skill("alpha", "ALPHA-BODY", null);
+        var tool = SkillTool.create(List.of(alpha)).orElseThrow();
+        var input = JSON.readTree("{\"name\":\"alpha\"}");
+        var first = tool.execute(input, ctx("a1"));
+        assertTrue(first.output().contains("ALPHA-BODY"));
+        assertFalse(tool.execute(input, ctx("a1")).output().contains("ALPHA-BODY"), "short note without release");
+        tool.releasePruned("a1", List.of(chunk("1.1", "skill", first.output())));
+        assertTrue(tool.execute(input, ctx("a1")).output().contains("ALPHA-BODY"));
+    }
+
+    @Test
+    void releasePrunedReadsEverySkillInAMixedChunkAndKeepsOtherAgents() throws Exception {
+        var tool = SkillTool.create(List.of(skill("alpha", "ALPHA-BODY", null), skill("beta", "BETA-BODY", null),
+            skill("gamma", "GAMMA-BODY", null))).orElseThrow();
+        for (var agent : List.of("a1", "a2")) {
+            for (var name : List.of("alpha", "beta", "gamma")) {
+                tool.execute(JSON.readTree("{\"name\":\"" + name + "\"}"), ctx(agent));
+            }
+        }
+        var text = "turn text\n<skill_content name=\"alpha\">\nx\n</skill_content>\nmore\n"
+            + "<skill_content name=\"beta\">\ny\n</skill_content>";
+        tool.releasePruned("a1", List.of(chunk("2.1", null, text), chunk("2.2", "read", "no skill here")));
+        var body = (java.util.function.BiFunction<String, String, String>) (agent, name) -> {
+            try {
+                return tool.execute(JSON.readTree("{\"name\":\"" + name + "\"}"), ctx(agent)).output();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+        assertTrue(body.apply("a1", "alpha").contains("ALPHA-BODY"));
+        assertTrue(body.apply("a1", "beta").contains("BETA-BODY"));
+        assertFalse(body.apply("a1", "gamma").contains("GAMMA-BODY"), "gamma stays loaded");
+        assertFalse(body.apply("a2", "alpha").contains("ALPHA-BODY"), "another agent keeps its memory");
+        tool.releasePruned("a1", List.of());
+        tool.releasePruned(null, null);
+    }
 }

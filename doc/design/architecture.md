@@ -14,11 +14,11 @@ Jeorje is a multi-module Maven project. The base package is `org.github.lscoughl
 | `jeorje-core` | Domain model, ports, agent loop, compaction, config, sessions, subagent runtime, plan mode, plan parser and writer, `/implement` orchestrator, `WorktreeManager`, the loaders for `AGENTS.md` and `.agents/`, and the `TextDiff` facade | Jackson 3 (JSON and YAML), SLF4J, java-diff-utils |
 | `jeorje-index` | Lucene `ContextStore` and ONNX MiniLM embedder | core, Lucene, ONNX Runtime |
 | `jeorje-tools` | Built-in `Tool` implementations (including the agent, story, plan, and worktree tools) and the registry | core |
-| `jeorje-swarm` | Gossip membership, TCP transport, peer messages, remote subagents | core |
+| `jeorje-swarm` | Gossip membership, TCP transport with an optional TLS context, token handshake, peer messages, local discovery files, remote delegation messages | core |
 | `jeorje-llm` | `LlmClient` implementations. The first one uses the OpenAI-compatible Chat Completions API. The first target is OpenRouter. | core |
 | `jeorje-ui` | JLine terminal interface, file browser, editor, syntax highlighting, mouse and key handling | core, JLine |
 | `jeorje-testkit` | Test-scope stubs for each port. See [testing.md](testing.md). | core |
-| `jeorje-cli` | picocli entry point (`JeorjeMain`), wiring, the interactive session, the swarm bridge (`SwarmBridge`), shaded jar | all modules except testkit, picocli, Logback |
+| `jeorje-cli` | picocli entry point (`JeorjeMain`) with the commands `run`, `resume`, `index`, and `config`, wiring, the interactive session, the headless `/plan` and `/implement` runs (`HeadlessWork`), the swarm bridge (`SwarmBridge`) with TLS and discovery setup, shaded jar | all modules except testkit, picocli, Logback |
 
 Dependencies point inward. `jeorje-core` depends on no other module. Each other module depends on `jeorje-core`. Only `jeorje-cli` depends on all production modules. Other modules use `jeorje-testkit` in test scope only. The shaded jar does not include it. The parent `pom.xml` is the source of truth for all library versions. `jeorje-core` has no Lucene, JLine, or HTTP types. `java-diff-utils` is a small library with no dependencies, and only `TextDiff` uses it.
 
@@ -66,7 +66,7 @@ Each test can replace a port with a stub. See [testing.md](testing.md).
 - The jar includes the ONNX Runtime native libraries and the embedded syntax files of the editor (`jeorje-ui`).
 - The embedding model downloads one time at runtime. Jeorje caches it.
 - Worktree support needs the `git` program, version 2.17 or newer, on the path. Jeorje uses it only for worktrees and merges. Without it, subagents share the working directory.
-- Jeorje runs with `--add-modules jdk.incubator.vector` when the JDK has the module. Lucene then uses its SIMD path.
+- Tests run with `--add-modules jdk.incubator.vector` when the JDK has the module (Maven profile `jdk-vector`). Lucene then uses its SIMD path. The jar does not add the module by itself. To use the SIMD path at run time, start the program with `java --add-modules jdk.incubator.vector -jar jeorje.jar`.
 
 ## Design choices
 

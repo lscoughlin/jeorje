@@ -4,14 +4,21 @@ import java.util.concurrent.Callable;
 import org.github.lscoughlin.jeorje.core.model.Role;
 import org.github.lscoughlin.jeorje.core.model.Text;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 /** {@code jeorje run "<task>"}: runs one task with no interface and prints the final answer. */
 @Command(name = "run", mixinStandardHelpOptions = true, description = "Run a task with no interface.")
 public final class RunCommand implements Callable<Integer> {
 
-    @Parameters(index = "0", arity = "1", paramLabel = "<task>", description = "The task for the agent.")
+    @Parameters(index = "0", arity = "0..1", paramLabel = "<task>",
+            description = "The task for the agent. \"/plan <goal>\" writes a plan. "
+                    + "\"/implement <plan> [stories]\" implements a plan.")
     String task;
+
+    @Option(names = "--plan", paramLabel = "<path>",
+            description = "Implement the plan in this file. The task, if any, lists the story ids.")
+    String plan;
 
     private final CliEnvironment env;
     private final GlobalOptions options;
@@ -23,6 +30,12 @@ public final class RunCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        if (plan != null) return HeadlessWork.runPlan(env, options, plan, task);
+        if (task == null || task.isBlank()) {
+            env.err().println("Error: give a task, or use --plan <path>.");
+            return 1;
+        }
+        if (HeadlessWork.isCommand(task)) return HeadlessWork.runCommand(env, options, task);
         var loaded = Wiring.loadConfig(options, env);
         Wiring.configureLogging(loaded.config(), env, true);
         Wiring.warnUnattended(options, env);

@@ -24,6 +24,9 @@ public final class AgentSwitcherPane implements Pane<AgentId> {
     public String title() { return "Agents - Up/Down move, Enter switch, Esc cancel"; }
 
     @Override
+    public String toggleAction() { return "agents"; }
+
+    @Override
     public void begin() {
         cancelled = false;
         picked = null;

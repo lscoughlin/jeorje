@@ -56,6 +56,6 @@ All output is formatted in ASD-STE100 Simplified Technical English: short senten
 - Run `mvn verify` before considering a change finished.
 - `mvn verify` must pass offline. Tests never load real embedding model bytes or touch the network; they use a deterministic stub implementation of the `Embedder` interface.
 - The real ONNX embedder downloads its model once at runtime into `~/.cache/`, and degrades to text-only search if the model is unavailable.
-- Run with `--add-modules jdk.incubator.vector` when the JDK provides it, to enable Lucene's SIMD vector path.
+- Run with `--add-modules jdk.incubator.vector` when the JDK provides it, to enable Lucene's SIMD vector path. The Maven profile `jdk-vector` does this for the tests. For the jar, pass the flag to `java`.
 - Add or update tests under `src/test/java` for every behavior change.
 - A new dependency needs a clear justification in the commit message.

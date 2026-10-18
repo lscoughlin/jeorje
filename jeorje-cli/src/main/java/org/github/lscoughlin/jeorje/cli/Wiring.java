@@ -196,6 +196,16 @@ public final class Wiring {
     public static ToolRegistry registry(JeorjeConfig config, PermissionPolicy policy,
                                         org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy network,
                                         AgentState state, String sessionId) {
+        return registry(config, policy, network, state, sessionId, false);
+    }
+
+    /**
+     * The tools of the agent as a registry. With {@code yolo}, {@code webfetch} has no domain lists and no
+     * address blocks, as the design says for {@code --yolo}.
+     */
+    public static ToolRegistry registry(JeorjeConfig config, PermissionPolicy policy,
+                                        org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy network,
+                                        AgentState state, String sessionId, boolean yolo) {
         var builtInNames = BUILT_IN_NAMES;
         var read = config.tools().read();
         var nestedOn = config.instructions().enabled() && read.directoryDocs().contains("AGENTS.md");
@@ -219,8 +229,10 @@ public final class Wiring {
                 .register(new GrepTool(policy))
                 .register(new LsTool(policy))
                 .register(new BashTool(policy, shell, config.tools().bash().timeoutSeconds()))
-                .register(new WebFetchTool(network, false, WebFetchTool.DEFAULT_MAX_BYTES,
-                        Duration.ofSeconds(30)))
+                .register(yolo
+                        ? new WebFetchTool(new org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy(
+                                List.of(), List.of()), true, WebFetchTool.DEFAULT_MAX_BYTES, Duration.ofSeconds(30))
+                        : new WebFetchTool(network, false, WebFetchTool.DEFAULT_MAX_BYTES, Duration.ofSeconds(30)))
                 .register(new RecallTool(sessionId, id -> id))
                 .register(new TodoTool())
                 .registerAll(extensionTools(config, builtInNames))
@@ -484,12 +496,13 @@ public final class Wiring {
         var grants = new SkillGrantPolicy(basePolicy, config.skills().honorAllowedTools());
         PermissionPolicy policy = grants;
         var state = new AgentState();
-        var registry = registry(config, grants, basePolicy.network(), state, session.id());
+        var registry = registry(config, grants, basePolicy.network(), state, session.id(), options.yolo());
         var tools = new ArrayList<>(adapt(registry, state, scrubber));
         var window = contextWindow(loaded, roles.defaultModel());
         var skillRegistry = skills(config, env.home(), cwd, loaded.trusted());
         var visibleSkills = visibleSkills(skillRegistry, grants);
-        SkillTool.create(visibleSkills, grants::skillLoaded).ifPresent(tools::add);
+        var skillTool = SkillTool.create(visibleSkills, grants::skillLoaded);
+        skillTool.ifPresent(tools::add);
         var advisor = new AdvisorSupport(roles::advisorSet, () -> llmClient(config, env, roles.advisor()));
         if (roles.advisorToolEnabled()) tools.add(advisor.slot());
 
@@ -524,12 +537,13 @@ public final class Wiring {
         if (SwarmBridge.wanted(config)) {
             // The swarm is on: the run mode gets the subagent runtime, so a peer can delegate a task to it and
             // the agent can delegate a task to a peer.
-            bridge = SwarmBridge.forConfig(config, env.home(), cwd, text -> log.atInfo().log(() -> text), null);
+            bridge = SwarmBridge.forConfig(config, env.home(), cwd, env.env(), text -> log.atInfo().log(() -> text), null);
             bridgeRef.set(bridge);
             final var swarm = bridge;
             var builder = SubagentRuntime.builder(session.id(), settings, model -> llmClient(config, env,
                             model == null || model.isBlank() ? roles.defaultModel() : model))
                     .store(store).transcript(transcript::writeTurn).agentEvents(onEvent)
+                    .pruneListener((child, chunks) -> skillTool.ifPresent(t -> t.releasePruned(child.value(), chunks)))
                     .events(swarm::onSubagentEvent).remote(swarm).limits(SubagentLimits.defaults());
             subagents = builder.build();
             tools.addAll(PeerSpawnTool.wrap(AgentTools.install(subagents, session.id()), subagents));
@@ -538,6 +552,7 @@ public final class Wiring {
         var agent = new Agent(id, settings, advisor.tap(llm), tools, policy, store, transcript::writeTurn,
                 onEvent, Clock.systemUTC());
         self.set(agent);
+        skillTool.ifPresent(t -> agent.withPruneListener(chunks -> t.releasePruned(id.value(), chunks)));
         if (bridge != null) {
             var host = subagents;
             host.registerRoot(id, "root", new CancellationToken(), rootTools, policy, agent::submit,

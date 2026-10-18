@@ -26,7 +26,7 @@ An instance joins the swarm in one of two ways:
 1. **WKA list.** The user gives a list of well-known addresses with `--peer host:port` or with `swarm.wka` in the config. The instance contacts these addresses and starts the gossip exchange. It contacts them again in each round as long as it knows no reachable peer.
 2. **Gossip only.** An instance with no WKA list waits. Other peers that know its address can contact it. After the first contact, the instance learns the full membership by gossip.
 
-Local discovery on the same host is optional. The class `LocalDiscovery` writes a small file `<peerId>.json` to a peers directory (normally `${HOME}/.jeorje/peers/`). Other instances on the host read these files as extra WKA entries. The command line program does not turn local discovery on.
+Local discovery on the same host is optional. The config key `swarm.discovery` (default `false`) turns it on. The class `LocalDiscovery` then writes a small file `<peerId>.json` to the peers directory `${HOME}/.jeorje/peers/`. Other instances on the host read these files as extra WKA entries. If a live discovery file already uses the saved peer id, the new instance takes a new random id for this run.
 
 ## Transport
 
@@ -83,7 +83,7 @@ A shared token protects the swarm.
 - All peers in a swarm have the same token. It comes from `JEORJE_SWARM_TOKEN`, from `--swarm-token`, or from `swarm.token` in the config.
 - Both sides of a new connection send a random nonce. Each side proves the token with an HMAC-SHA256 over its role (`client` or `server`), both nonces, and its own peer id. The key is a SHA-256 hash of the token. Jeorje never sends the token over the network. A side that fails the proof gets a `reject` frame, and the connection closes.
 - Without a token, Jeorje binds the swarm port to loopback only. A bind address that is not loopback with no token is an error.
-- Transport encryption with TLS is optional in the `jeorje-swarm` module. `TlsSupport` builds the context from one PKCS12 key store that all peers share. The command line program does not set up TLS now, and the config has no TLS key.
+- Transport encryption with TLS is optional. The config key `swarm.tls.keyStore` names one PKCS12 key store that all peers share. A relative path starts at the working directory. The key `swarm.tls.passwordEnv` names the environment variable that holds the password of the store. `TlsSupport` builds the context from the store. If the key store is empty, the swarm does not use TLS. If `passwordEnv` names a variable that is not set, or the store cannot load, the program stops with an error.
 - A peer message cannot approve a tool run. See [permissions-and-safety.md](permissions-and-safety.md).
 
 ## Limits
@@ -95,4 +95,4 @@ A shared token protects the swarm.
 
 ## Configuration
 
-See [configuration.md](configuration.md) for `swarm.enabled`, `swarm.bind`, `swarm.wka`, `swarm.token`, and `swarm.gossipIntervalMs`.
+The `swarm` section of the config has these keys: `enabled`, `bind`, `wka`, `token`, `gossipIntervalMs`, `discovery`, `tls.keyStore`, and `tls.passwordEnv`. See [configuration.md](configuration.md) for the first five. The other limits in this document (ping timeout, suspect time, dead record time, swarm size, message size, handshake time, and request time) are fixed defaults of `SwarmConfig`. The config file does not set them.

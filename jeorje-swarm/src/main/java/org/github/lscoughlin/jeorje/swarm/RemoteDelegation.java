@@ -21,6 +21,15 @@ public interface RemoteDelegation {
     /** Answers a question that the remote subagent sent. */
     void answer(String questionId, String text);
 
+    /** Refuses a question that the remote subagent sent (for example with the reason {@code busy}). */
+    void answerError(String questionId, String reason);
+
+    /**
+     * Asks the remote subagent a question with a question id. The future finishes with the answer. It finishes with
+     * an error when the peer refuses the question (the message is the reason) or when the peer is lost.
+     */
+    CompletableFuture<String> ask(String questionId, String text);
+
     /** The last event of the task. */
     CompletableFuture<DelegateEvent> completion();
 }

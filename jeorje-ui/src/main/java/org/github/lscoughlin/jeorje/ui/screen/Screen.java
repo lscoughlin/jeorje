@@ -464,6 +464,7 @@ public final class Screen implements AutoCloseable {
     /** Draws the screen. Display writes only the lines that changed. */
     public void draw() {
         synchronized (drawLock) {
+            if (suspended) return;
             var rows = rows();
             var cols = columns();
             syncNotices();
@@ -494,6 +495,29 @@ public final class Screen implements AutoCloseable {
                 input.redraw();
             }
         }
+    }
+
+    private volatile boolean suspended;
+
+    /**
+     * Stops all drawing while another full-screen program, such as the editor, owns the terminal. The method
+     * {@link #repaint} ends the pause and draws the whole screen again.
+     */
+    public void suspendDrawing() {
+        synchronized (drawLock) {
+            suspended = true;
+        }
+    }
+
+    /** Ends a pause of {@link #suspendDrawing} and draws every row again, as the terminal content is unknown. */
+    public void repaint() {
+        synchronized (drawLock) {
+            suspended = false;
+            display.reset();
+            drawnRows = -1;
+            draw();
+        }
+        if (Thread.currentThread() == inputThread && input != null) input.resetDisplay();
     }
 
     /** Puts the follow notice of the foreground chat and the notices of the highlighter in the status line. */
@@ -621,17 +645,52 @@ public final class Screen implements AutoCloseable {
     // ---- key actions ----
 
     private void bindActions() {
-        for (var binding : options.keyBindings().bindings(KeyContext.CHAT)) {
+        // First free the default keys that the config moved. A freed key does nothing, not even a typed character.
+        var bindings = options.keyBindings().bindings(KeyContext.CHAT);
+        var taken = bindings.stream().flatMap(b -> sequencesOf(b.keys()).stream()).collect(java.util.stream.Collectors.toSet());
+        var freed = new ArrayList<String>();
+        for (var binding : bindings) {
+            var sequences = sequencesOf(binding.keys());
+            sequencesOf(binding.action().defaults()).stream()
+                    .filter(d -> !sequences.contains(d) && !taken.contains(d)).forEach(freed::add);
+        }
+        input.unbind(freed);
+        if (!freed.isEmpty()) input.bindWidget("jeorje-noop", () -> true, freed);
+        for (var binding : bindings) {
             var action = binding.action();
             var sequences = sequencesOf(binding.keys());
             var defaults = sequencesOf(action.defaults());
-            input.unbind(defaults.stream().filter(d -> !sequences.contains(d)).toList());
             var id = action.id();
             var defaultKey = defaults.contains("\u0004");
             input.bindWidget("jeorje-" + id, () -> runAction(id, defaultKey && sequences.contains("\u0004")),
                     sequences);
         }
+        input.bindWidget("jeorje-complete", this::completeInput, List.of("\t"));
         input.afterEachWidget(this::afterInput);
+    }
+
+    private volatile org.github.lscoughlin.jeorje.ui.commands.InputCompletion completion;
+
+    /** Sets the completion that the {@code Tab} key of the input line uses. */
+    public void setCompletion(org.github.lscoughlin.jeorje.ui.commands.InputCompletion completion) {
+        this.completion = completion;
+    }
+
+    /** {@code Tab}: completes the text before the cursor. Several candidates go to the chat view as a notice. */
+    private boolean completeInput() {
+        var active = completion;
+        if (active == null) return true;
+        var before = input.beforeCursor();
+        var result = active.complete(before);
+        if (!result.line().equals(before)) input.replaceBeforeCursor(result.line());
+        if (!result.shown().isEmpty()) {
+            var chat = chat(foreground);
+            chat.appendNotice(result.shown().size() + " matches:");
+            result.shown().forEach(line -> chat.appendNotice("  " + line));
+            draw();
+            input.resetDisplay();
+        }
+        return true;
     }
 
     private List<String> sequencesOf(List<org.github.lscoughlin.jeorje.ui.keys.KeySpec> keys) {
@@ -774,15 +833,20 @@ public final class Screen implements AutoCloseable {
             log.atDebug().log(() -> "Cannot track the mouse: " + e);
         }
         var clicks = new ClickCounter(System::currentTimeMillis);
+        var matcher = new PaneKeys(pane);
+        var toggled = false;
         try {
             pane.begin();
             draw();
-            while (!pane.done() && !paneAbort) {
-                var in = readPaneInput();
+            while (!pane.done() && !paneAbort && !toggled) {
+                var in = readPaneInput(pane, matcher);
                 if (in == null) continue;
                 if (in.eof()) break;
                 if (in.mouse() != null) paneMouse(pane, in.mouse(), clicks);
-                else if (!in.key().isEmpty()) pane.key(in.key());
+                else if (in.action() != null) {
+                    if (in.action().startsWith(PaneKeys.TOGGLE)) toggled = true;
+                    else pane.action(in.action());
+                } else if (!in.key().isEmpty()) pane.key(in.key());
                 draw();
             }
         } finally {
@@ -795,7 +859,62 @@ public final class Screen implements AutoCloseable {
             draw();
             if (Thread.currentThread() == inputThread && input != null) input.resetDisplay();
         }
-        return pane.done() ? pane.result() : Optional.empty();
+        return pane.done() && !toggled ? pane.result() : Optional.empty();
+    }
+
+    /**
+     * The configured keys that a pane reads: the toggle key of the pane and the action keys of its context. It
+     * matches raw key sequences, also the chords, against the keys.
+     */
+    private final class PaneKeys {
+        static final String TOGGLE = "toggle:";
+        private final java.util.Map<String, String> full = new java.util.HashMap<>();
+        private final java.util.Set<String> prefixes = new java.util.HashSet<>();
+        private String pending = "";
+
+        PaneKeys(Pane<?> pane) {
+            var keys = options.keyBindings() == null ? KeyBindings.defaults() : options.keyBindings();
+            var toggle = pane.toggleAction();
+            if (toggle != null) {
+                keys.binding(org.github.lscoughlin.jeorje.ui.keys.KeyScope.UI, toggle)
+                        .ifPresent(b -> add(b.keys(), TOGGLE + toggle));
+            }
+            var context = pane.keyContext();
+            if (context != null) {
+                for (var binding : keys.bindings(context)) add(binding.keys(), binding.action().id());
+            }
+        }
+
+        private void add(List<org.github.lscoughlin.jeorje.ui.keys.KeySpec> specs, String id) {
+            for (var spec : specs) {
+                for (var sequence : spec.sequences(kittyOn)) full.put(sequence, id);
+                for (var n = 1; n < spec.keys().size(); n++) {
+                    prefixes.addAll(new org.github.lscoughlin.jeorje.ui.keys.KeySpec(spec.keys().subList(0, n))
+                            .sequences(kittyOn));
+                }
+            }
+        }
+
+        boolean empty() { return full.isEmpty(); }
+
+        /** Feeds one key. Returns the action id, "" while a chord is open or broken, or null for a plain key. */
+        String feed(String raw) {
+            var candidate = pending + raw;
+            var id = full.get(candidate);
+            if (id != null) {
+                pending = "";
+                return id;
+            }
+            if (prefixes.contains(candidate)) {
+                pending = candidate;
+                return "";
+            }
+            var broken = !pending.isEmpty();
+            pending = "";
+            return broken ? "" : null;
+        }
+
+        void reset() { pending = ""; }
     }
 
     private void paneMouse(Pane<?> pane, MouseEvent event, ClickCounter clicks) {
@@ -810,20 +929,35 @@ public final class Screen implements AutoCloseable {
         if (relative.isWheel() || area.contains(event.getX(), event.getY())) pane.mouse(relative);
     }
 
-    private record PaneInput(String key, MouseEvent mouse, boolean eof) {}
+    private record PaneInput(String key, MouseEvent mouse, boolean eof, String raw, String action) {
+        PaneInput(String key, MouseEvent mouse, boolean eof, String raw) { this(key, mouse, eof, raw, null); }
+    }
 
-    private PaneInput readPaneInput() {
+    private PaneInput readPaneInput(Pane<?> pane, PaneKeys matcher) {
+        var in = readPaneToken();
+        if (in == null || in.eof() || in.mouse() != null) return in;
+        if (matcher.empty() || pane.textInput()) {
+            matcher.reset();
+            return in;
+        }
+        var result = matcher.feed(in.raw());
+        if (result == null) return in;
+        if (result.isEmpty()) return null;
+        return new PaneInput("", null, false, in.raw(), result);
+    }
+
+    private PaneInput readPaneToken() {
         try {
             NonBlockingReader reader = terminal.reader();
             var c = reader.read(100);
             if (c == NonBlockingReader.READ_EXPIRED) return null;
-            if (c < 0) return new PaneInput("", null, true);
+            if (c < 0) return new PaneInput("", null, true, "");
+            var raw = new String(Character.toChars(c));
             return switch (c) {
-                case '\r', '\n' -> new PaneInput("ENTER", null, false);
-                case 127, 8 -> new PaneInput("BACKSPACE", null, false);
+                case '\r', '\n' -> new PaneInput("ENTER", null, false, raw);
+                case 127, 8 -> new PaneInput("BACKSPACE", null, false, raw);
                 case 27 -> readEscape(reader);
-                default -> c < 32 ? new PaneInput("", null, false)
-                        : new PaneInput(new String(Character.toChars(c)), null, false);
+                default -> c < 32 ? new PaneInput("", null, false, raw) : new PaneInput(raw, null, false, raw);
             };
         } catch (IOException | IOError e) {
             return null;
@@ -831,18 +965,20 @@ public final class Screen implements AutoCloseable {
     }
 
     private PaneInput readEscape(NonBlockingReader reader) throws IOException {
-        var esc = new PaneInput("ESC", null, false);
         var next = reader.peek(50);
-        if (next != '[' && next != 'O') return esc;
+        if (next != '[' && next != 'O') return new PaneInput("ESC", null, false, "\u001b");
         reader.read(50);
         var code = reader.read(50);
-        if (code == '<') return new PaneInput("", terminal.readMouseEvent("\u001b[<"), false);
-        if (code == 'M' && next == '[') return new PaneInput("", terminal.readMouseEvent("\u001b[M"), false);
+        if (code == '<') return new PaneInput("", terminal.readMouseEvent("\u001b[<"), false, "");
+        if (code == 'M' && next == '[') return new PaneInput("", terminal.readMouseEvent("\u001b[M"), false, "");
+        var raw = new StringBuilder("\u001b").append((char) next);
         var params = new StringBuilder();
         while (code >= 0x20 && code < 0x40) {
             params.append((char) code);
+            raw.append((char) code);
             code = reader.read(50);
         }
+        if (code >= 0) raw.append((char) code);
         var key = switch (code) {
             case 'A' -> "UP";
             case 'B' -> "DOWN";
@@ -856,6 +992,6 @@ public final class Screen implements AutoCloseable {
             };
             default -> "";
         };
-        return new PaneInput(key, null, false);
+        return new PaneInput(key, null, false, raw.toString());
     }
 }

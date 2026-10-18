@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -116,6 +117,26 @@ public final class SwarmNode implements AutoCloseable {
         @Override
         public void answer(String questionId, String text) {
             sendTo(address, Messages.AGENT_MESSAGE, new AgentPayload("answer", null, taskId, null, questionId, text));
+        }
+
+        @Override
+        public void answerError(String questionId, String reason) {
+            sendTo(address, Messages.AGENT_MESSAGE,
+                    new AgentPayload("answer_error", null, taskId, null, questionId, reason));
+        }
+
+        @Override
+        public CompletableFuture<String> ask(String questionId, String text) {
+            var future = new CompletableFuture<String>();
+            questions.put(questionId, new PendingQuestion(peerId, future));
+            future.whenComplete((v, e) -> questions.remove(questionId));
+            sendTo(address, Messages.AGENT_MESSAGE, new AgentPayload("ask", null, taskId, questionId, null, text))
+                    .whenComplete((v, e) -> {
+                        if (e != null) {
+                            future.completeExceptionally(e);
+                        }
+                    });
+            return future;
         }
 
         @Override
@@ -728,6 +749,10 @@ public final class SwarmNode implements AutoCloseable {
             case "ask" -> {
                 var from = message.fromAddr();
                 var questionId = payload.questionId();
+                if (payload.taskId() != null) {
+                    askTask(message, payload);
+                    return;
+                }
                 handlers.onAgentAsk(message.from(), payload.toAgent(), payload.text()).whenComplete((answer, error) -> {
                     var reply = error == null
                             ? new AgentPayload("answer", null, null, null, questionId, answer)
@@ -738,7 +763,11 @@ public final class SwarmNode implements AutoCloseable {
             case "answer", "answer_error" -> {
                 var task = payload.taskId() == null ? null : ownedTask(message, payload.taskId());
                 if (task != null) {
-                    task.answer(payload.answerTo(), payload.text());
+                    if (kind.equals("answer")) {
+                        task.answer(payload.answerTo(), payload.text());
+                    } else {
+                        task.answerError(payload.answerTo(), payload.text());
+                    }
                     return;
                 }
                 var question = questions.get(payload.answerTo());
@@ -760,6 +789,33 @@ public final class SwarmNode implements AutoCloseable {
             case "cancel" -> cancelQuietly(ownedTask(message, payload.taskId()));
             default -> log.atDebug().log(() -> "unknown agent_message kind ignored: " + kind);
         }
+    }
+
+    /** A question from the delegating peer to a hosted task. The answer or the refusal goes back with the same id. */
+    private void askTask(Message message, AgentPayload payload) {
+        var from = message.fromAddr();
+        var questionId = payload.questionId();
+        var task = ownedTask(message, payload.taskId());
+        if (task == null) {
+            sendQuietly(from, Messages.AGENT_MESSAGE,
+                    new AgentPayload("answer_error", null, null, null, questionId, "unknown agent"));
+            return;
+        }
+        CompletionStage<String> stage;
+        try {
+            stage = task.ask(questionId, payload.text());
+        } catch (RuntimeException e) {
+            stage = CompletableFuture.failedFuture(e);
+        }
+        stage.whenComplete((answer, error) -> {
+            var cause = error instanceof java.util.concurrent.CompletionException && error.getCause() != null
+                    ? error.getCause() : error;
+            var reply = error == null
+                    ? new AgentPayload("answer", null, null, null, questionId, answer)
+                    : new AgentPayload("answer_error", null, null, null, questionId,
+                            cause.getMessage() == null ? "ended" : cause.getMessage());
+            sendQuietly(from, Messages.AGENT_MESSAGE, reply);
+        });
     }
 
     /** Returns the running task if the message comes from the peer that started it. */

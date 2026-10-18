@@ -66,6 +66,7 @@ class SwarmBridgeTest {
     @TempDir Path dir;
     private final InMemoryNetwork network = new InMemoryNetwork();
     private final List<Instance> instances = new ArrayList<>();
+    private final java.util.Map<String, SubagentLimits> limitsByName = new java.util.HashMap<>();
 
     @AfterEach
     void close() {
@@ -187,7 +188,8 @@ class SwarmBridgeTest {
                         subagentEvents.add(e);
                         bridge.onSubagentEvent(e);
                     })
-                    .limits(SubagentLimits.defaults().withAskTimeout(Duration.ofSeconds(5)))
+                    .limits(limitsByName.getOrDefault(name,
+                            SubagentLimits.defaults().withAskTimeout(Duration.ofSeconds(5))))
                     .remote(bridge).build();
             runtime.registerRoot(main, "main", new CancellationToken(), tools, policy, mainInput::add, () -> 1);
             bridge.attach(runtime, tools, policy, mainInput::add, () -> store);
@@ -396,6 +398,138 @@ class SwarmBridgeTest {
         var input = p[1].mainInput.getFirst();
         assertTrue(input instanceof AgentInput.PeerMessage);
         assertTrue(input.text().contains("please look at the build"));
+    }
+
+    /** A tool that runs a body with the context of the call. */
+    interface ContextBody { String run(ToolContext context) throws Exception; }
+
+    static Tool contextTool(String name, ContextBody body) {
+        return new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition(name, "Tool " + name, MAPPER.createObjectNode().put("type", "object"));
+            }
+
+            @Override
+            public boolean readOnly() { return false; }
+
+            @Override
+            public ToolResultData execute(tools.jackson.databind.JsonNode input, ToolContext context) throws Exception {
+                return ToolResultData.ok(body.run(context));
+            }
+        };
+    }
+
+    private static final java.util.regex.Pattern QUESTION_ID = java.util.regex.Pattern.compile(", id (q\\d+)\\]");
+
+    @Test
+    void aLocalAgentAsksARemoteSubagentAndGetsTheAnswerWithTheSameRules() throws Exception {
+        var release = new CountDownLatch(1);
+        var answered = new java.util.concurrent.atomic.AtomicBoolean();
+        var holder = new Instance[1];
+        var probe = tool("probe", () -> {
+            release.await(30, TimeUnit.SECONDS);
+            return "probed";
+        });
+        var model = new Model(new Model.CallTool("c1", "probe"), new Model.CallTool("c2", "answerq"),
+                new Model.CallTool("c3", "answerq"), new Model.CallTool("c4", "answerq"), new Model.Say("done"));
+        var answerq = contextTool("answerq", context -> {
+            var matcher = QUESTION_ID.matcher(model.allRequestText());
+            if (answered.get() || !matcher.find()) return "none";
+            var result = holder[0].runtime.answer(context.agent(), matcher.group(1), "42");
+            answered.set(result.ok());
+            return result.ok() ? "answered" : "failed " + result.reason();
+        });
+        var p = pair(model, List.of(probe, answerq), x -> false, ALLOW);
+        holder[0] = p[1];
+        var local = p[0];
+        local.runtime.spawn(local.main, SpawnRequest.of("worker", "work").withPeer("remote")
+                .withTools(List.of("probe", "answerq")));
+        await(() -> model.requests.size() == 1, "the remote agent made its first call");
+        var reply = java.util.concurrent.CompletableFuture.supplyAsync(
+                () -> local.runtime.ask(local.main, "worker", "what is 6 x 7", new CancellationToken()));
+        Thread.sleep(300);
+        release.countDown();
+        var result = reply.get(20, TimeUnit.SECONDS);
+        assertTrue(result.ok(), String.valueOf(result.reason()));
+        assertEquals("42", result.answer());
+        assertTrue(model.allRequestText().contains("what is 6 x 7"), "the question reached the remote agent");
+    }
+
+    @Test
+    void aRemoteSubagentAsksItsParentAndTheAnswerGoesBack() throws Exception {
+        var holder = new Instance[1];
+        var seen = new java.util.concurrent.atomic.AtomicReference<org.github.lscoughlin.jeorje.core.subagent.AskResult>();
+        var askParent = contextTool("askparent", context -> {
+            var result = holder[0].runtime.ask(context.agent(), SwarmBridge.HOST_ROOT.value(), "need a hint",
+                    context.cancel());
+            seen.set(result);
+            return result.ok() ? result.answer() : "failed " + result.reason();
+        });
+        var model = new Model(new Model.CallTool("c1", "askparent"), new Model.Say("done"));
+        var p = pair(model, List.of(askParent), x -> false, ALLOW);
+        holder[0] = p[1];
+        var local = p[0];
+        local.runtime.spawn(local.main, SpawnRequest.of("worker", "work").withPeer("remote")
+                .withTools(List.of("askparent")));
+        await(() -> local.mainInput.stream().anyMatch(i -> i.text().contains("need a hint")),
+                "the question reaches the parent");
+        var text = local.mainInput.stream().filter(i -> i.text().contains("need a hint")).findFirst().orElseThrow()
+                .text();
+        var matcher = QUESTION_ID.matcher(text);
+        assertTrue(matcher.find(), text);
+        assertTrue(local.runtime.answer(local.main, matcher.group(1), "hint-1").ok());
+        await(() -> seen.get() != null, "the remote agent got the answer");
+        assertTrue(seen.get().ok(), String.valueOf(seen.get().reason()));
+        assertEquals("hint-1", seen.get().answer());
+    }
+
+    @Test
+    void aQuestionFromARemoteSubagentToAParentThatWaitsForItIsADeadlock() throws Exception {
+        var holder = new Instance[1];
+        var seen = new java.util.concurrent.atomic.AtomicReference<org.github.lscoughlin.jeorje.core.subagent.AskResult>();
+        var askParent = contextTool("askparent", context -> {
+            var result = holder[0].runtime.ask(context.agent(), SwarmBridge.HOST_ROOT.value(), "need a hint",
+                    context.cancel());
+            seen.set(result);
+            return String.valueOf(result.reason());
+        });
+        var model = new Model(new Model.CallTool("c1", "askparent"), new Model.Say("done"));
+        var p = pair(model, List.of(askParent), x -> false, ALLOW);
+        holder[0] = p[1];
+        var local = p[0];
+        var id = local.runtime.spawn(local.main, SpawnRequest.of("worker", "work").withPeer("remote")
+                .withMode(org.github.lscoughlin.jeorje.core.subagent.SpawnMode.WAIT)
+                .withTools(List.of("askparent")));
+        await(() -> seen.get() != null, "the remote agent got a reply");
+        assertEquals("deadlock", seen.get().reason());
+        assertEquals(Completion.Outcome.COMPLETED, local.runtime.await(id, new CancellationToken()).outcome());
+    }
+
+    @Test
+    void theHostEnforcesTheCallLimitOfTheDelegation() throws Exception {
+        var steps = new Model.Step[10];
+        java.util.Arrays.fill(steps, new Model.CallTool("c", "build"));
+        var p = pair(new Model(steps), List.of(tool("build", () -> "built")), x -> false, ALLOW);
+        var events = new CopyOnWriteArrayList<org.github.lscoughlin.jeorje.swarm.DelegateEvent>();
+        var delegation = p[0].bridge.node().delegate("remote", "build forever", List.of("build"),
+                new org.github.lscoughlin.jeorje.swarm.Messages.Limits(2, 0), events::add);
+        var last = delegation.completion().get(20, TimeUnit.SECONDS);
+        assertEquals("failed", last.outcome());
+        assertTrue(remote(p).runtime.status().stream().anyMatch(i -> i.name().startsWith("peer-local-")
+                && i.state() == org.github.lscoughlin.jeorje.core.subagent.AgentLifecycle.FAILED));
+        assertTrue(remote(p).model.requests.size() <= 3, "the model got " + remote(p).model.requests.size() + " calls");
+    }
+
+    @Test
+    void theHostEnforcesTheTimeLimitOfTheDelegation() throws Exception {
+        var started = new CountDownLatch(1);
+        var p = pair(new Model(new Model.WaitForCancel(started)), List.of(), x -> false, ALLOW);
+        var delegation = p[0].bridge.node().delegate("remote", "wait forever", List.of(),
+                new org.github.lscoughlin.jeorje.swarm.Messages.Limits(0, 1), event -> { });
+        var last = delegation.completion().get(20, TimeUnit.SECONDS);
+        assertEquals("failed", last.outcome());
+        assertTrue(last.summary().contains("Time limit"), last.summary());
     }
 
     private JeorjeConfigHolder configWithRules(String yaml) throws Exception {

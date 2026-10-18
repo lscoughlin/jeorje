@@ -182,6 +182,7 @@ public final class InteractiveSession implements AutoCloseable {
     private volatile long branchCheckedAt;
     private volatile String lastStatus = "";
     private volatile boolean uiStarted;
+    private volatile org.github.lscoughlin.jeorje.ui.keys.KeyBindings keys;
     private volatile int window;
     private AdvisorSupport advisor;
     private Pruner pruner;
@@ -211,6 +212,7 @@ public final class InteractiveSession implements AutoCloseable {
     private volatile AgentState toolState;
     private volatile SkillGrantPolicy skillGrants;
     private volatile List<org.github.lscoughlin.jeorje.core.instructions.Skill> toolSkills = List.of();
+    private volatile SkillTool skillTool;
     private volatile QEditor activeEditor;
     private final Map<String, String> startedTools = new ConcurrentHashMap<>();
     private boolean screenStarted;
@@ -321,6 +323,7 @@ public final class InteractiveSession implements AutoCloseable {
         Wiring.configureLogging(config, env, false);
         Wiring.warnUnattended(options, env);
         loaded.warnings().forEach(w -> startupNotices.add("Warning: " + w));
+        keys = resolveKeys();
         cwd = Wiring.workDir(options, env);
         home = env.home();
         trusted = loaded.trusted();
@@ -357,7 +360,7 @@ public final class InteractiveSession implements AutoCloseable {
         var highlight = ChatHighlighting.build(config, env.env(), cwd, home, colors);
         screen = new Screen(proxyOf(realTerminal), new Screen.Options(config.ui().keyboardProtocol(),
                 hooks.historyFile() != null ? hooks.historyFile() : home.resolve(".jeorje").resolve("history"),
-                this::onSubmit, this::onDecision, this::onInterrupt, resolveKeys(), new Actions()), highlight);
+                this::onSubmit, this::onDecision, this::onInterrupt, keys, new Actions()), highlight);
         clipboard = new org.github.lscoughlin.jeorje.ui.mouse.Clipboard(realTerminal,
                 org.github.lscoughlin.jeorje.ui.mouse.Clipboard.osc52Likely(env.env()));
         screen.status().model(roles.defaultModel()).yolo(options.yolo());
@@ -385,6 +388,7 @@ public final class InteractiveSession implements AutoCloseable {
         commands = new SessionCommands(this);
         slash = new SlashCommands(new Backend());
         commands.register(slash);
+        screen.setCompletion(new org.github.lscoughlin.jeorje.ui.commands.InputCompletion(slash, cwd));
         rescanRegistries();
     }
 
@@ -458,7 +462,7 @@ public final class InteractiveSession implements AutoCloseable {
         var state = new AgentState();
         if (toolState == null) toolState = state;
         var grants = skillGrants();
-        var registry = Wiring.registry(config, grants, policy.network(), state, session.id());
+        var registry = Wiring.registry(config, grants, policy.network(), state, session.id(), options.yolo());
         var out = new ArrayList<Tool>();
         for (var name : registry.names()) {
             var tool = registry.find(name).orElseThrow();
@@ -480,7 +484,10 @@ public final class InteractiveSession implements AutoCloseable {
             });
         }
         toolSkills = Wiring.visibleSkills(skills, grants);
-        SkillTool.create(toolSkills, grants::skillLoaded).ifPresent(out::add);
+        SkillTool.create(toolSkills, grants::skillLoaded).ifPresent(t -> {
+            skillTool = t;
+            out.add(t);
+        });
         return out;
     }
 
@@ -512,7 +519,7 @@ public final class InteractiveSession implements AutoCloseable {
 
         if (SwarmBridge.wanted(config)) {
             try {
-                bridge = SwarmBridge.forConfig(config, home, cwd, text -> notice(MAIN, text), this::refreshStatus);
+                bridge = SwarmBridge.forConfig(config, home, cwd, env.env(), text -> notice(MAIN, text), this::refreshStatus);
             } catch (RuntimeException e) {
                 log.atWarn().log(() -> "The swarm did not start: " + e);
                 startupNotices.add("The swarm did not start: " + e.getMessage());
@@ -520,6 +527,7 @@ public final class InteractiveSession implements AutoCloseable {
         }
         var runtimeBuilder = SubagentRuntime.builder(session.id(), settings, model -> clientFor(model))
                 .store(store).transcript(transcript::writeTurn).agentEvents(this::onEvent)
+                .pruneListener((child, chunks) -> releaseSkills(child.value(), chunks))
                 .events(event -> {
                     if (bridge != null) bridge.onSubagentEvent(event);
                     if (finisher != null) finisher.accept(event);
@@ -553,6 +561,7 @@ public final class InteractiveSession implements AutoCloseable {
         agent = new Agent(MAIN, settings, llm, List.copyOf(tools.values()), mainPolicy, store, transcript::writeTurn,
                 this::onEvent, Clock.systemUTC());
         self.set(agent);
+        agent.withPruneListener(chunks -> releaseSkills(MAIN.value(), chunks));
         var compaction = config.context().compaction();
         pruner = new Pruner(compactorClient, store, TermStats.of(store, countingStore::appendedCount),
                 new Pruner.Config(compaction.levels(), compaction.batchChunks(), compaction.batchTokens(),
@@ -571,6 +580,11 @@ public final class InteractiveSession implements AutoCloseable {
      * Restores the main agent from the manifest and the transcript of the resumed session. It also shows the end of
      * the earlier conversation in the chat.
      */
+    private void releaseSkills(String agentId, List<org.github.lscoughlin.jeorje.core.model.Chunk> chunks) {
+        var skills = skillTool;
+        if (skills != null) skills.releasePruned(agentId, chunks);
+    }
+
     private void restoreAgent() {
         var transcriptTurns = TranscriptReader.read(session.transcriptPath());
         var source = Wiring.rootAgentOf(session.manifest());
@@ -1024,17 +1038,14 @@ public final class InteractiveSession implements AutoCloseable {
 
     // ---- keys, panes, and editor ----
 
-    /** The key bindings from the config. A config error gives a notice and the default keys. */
+    /** The key bindings from the config. A config error stops the start with a clear message. */
     private org.github.lscoughlin.jeorje.ui.keys.KeyBindings resolveKeys() {
         try {
             return org.github.lscoughlin.jeorje.ui.keys.KeyBindings.resolve(List.of(
                     new org.github.lscoughlin.jeorje.ui.keys.KeyLayer("config", config.ui().keys(),
                             config.editor().keys())));
         } catch (org.github.lscoughlin.jeorje.ui.keys.KeyConfigException e) {
-            var text = "The key config has an error: " + e.getMessage();
-            if (uiStarted) notice(screen.foreground(), text);
-            else startupNotices.add(text);
-            return org.github.lscoughlin.jeorje.ui.keys.KeyBindings.defaults();
+            throw new CliException("The key config has an error: " + e.getMessage());
         }
     }
 
@@ -1108,7 +1119,7 @@ public final class InteractiveSession implements AutoCloseable {
             attachments.add(cwd.relativize(path.toAbsolutePath().normalize()).toString());
             screen.status().notice("Added " + path.getFileName() + " to the next message.");
         });
-        var picked = screen.runPane(new FileBrowserPane(browser));
+        var picked = screen.runPane(new FileBrowserPane(browser, keys));
         picked.ifPresent(this::editFile);
     }
 
@@ -1172,9 +1183,9 @@ public final class InteractiveSession implements AutoCloseable {
      */
     void editFile(Path file) {
         prepareSyntax();
-        var keys = resolveKeys();
         var hooks = new org.github.lscoughlin.jeorje.ui.editor.EditorHooks(this::fileSaved, flatConfig(), keys,
                 text -> screen.status().notice(text), highlight, catalog, null, false);
+        screen.suspendDrawing();
         if (mouse != null) mouse.suspend();
         try {
             var editor = newEditor(hooks);
@@ -1189,7 +1200,7 @@ public final class InteractiveSession implements AutoCloseable {
             realTerminal.puts(org.jline.utils.InfoCmp.Capability.clear_screen);
             realTerminal.flush();
             if (mouse != null) mouse.resume();
-            screen.draw();
+            screen.repaint();
         }
     }
 
@@ -1405,7 +1416,7 @@ public final class InteractiveSession implements AutoCloseable {
         }
 
         @Override
-        public org.github.lscoughlin.jeorje.ui.keys.KeyBindings keys() { return resolveKeys(); }
+        public org.github.lscoughlin.jeorje.ui.keys.KeyBindings keys() { return keys; }
 
         @Override
         public List<InstructionsLoader.Instruction> instructions() {

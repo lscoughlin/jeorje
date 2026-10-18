@@ -80,4 +80,68 @@ class FileBrowserPaneTest {
             assertFalse(screen.paneActive());
         }
     }
+
+    private static org.github.lscoughlin.jeorje.ui.keys.KeyBindings keys(java.util.Map<String, Object> ui) {
+        return org.github.lscoughlin.jeorje.ui.keys.KeyBindings.resolve(java.util.List.of(
+                new org.github.lscoughlin.jeorje.ui.keys.KeyLayer("test", ui, java.util.Map.of())));
+    }
+
+    @Test
+    void configuredBrowserKeysReplaceTheDefaults(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var keys = keys(java.util.Map.of("browserEdit", "Ctrl-O", "browserExit", "q"));
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults().keyBindings(keys));
+            screen.draw(); // the first draw probes the terminal modes and reads the reply
+            // Enter and Esc do nothing now. Down moves to README.md and Ctrl-O picks it.
+            ft.type("\r\u001b[B\u000f");
+            var result = screen.runPane(new FileBrowserPane(browser, keys));
+            assertEquals("README.md", result.orElseThrow().getFileName().toString());
+        }
+    }
+
+    @Test
+    void theConfiguredExitKeyClosesTheBrowserAndEscDoesNot(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var keys = keys(java.util.Map.of("browserExit", "q"));
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults().keyBindings(keys));
+            screen.draw(); // the first draw probes the terminal modes and reads the reply
+            ft.type("\u001b\u001bq");
+            assertTrue(screen.runPane(new FileBrowserPane(browser, keys)).isEmpty());
+            assertFalse(browser.isOpen());
+        }
+    }
+
+    @Test
+    void theConfiguredFilterKeyStartsTheFilterAndTypedTextGoesIntoIt(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var keys = keys(java.util.Map.of("browserFilter", "Ctrl-G", "browserExit", "q"));
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults().keyBindings(keys));
+            screen.draw(); // the first draw probes the terminal modes and reads the reply
+            // The slash does nothing. After Ctrl-G the letters q and a go into the filter, not to the actions.
+            ft.type("/\u0007qa\r\u001bq");
+            var pane = new FileBrowserPane(browser, keys);
+            // Enter ends the filter. Esc is not the exit key now, so only the last q closes the browser.
+            assertTrue(screen.runPane(pane).isEmpty());
+            assertEquals("qa", browser.filter());
+            assertFalse(browser.isFiltering());
+        }
+    }
+
+    @Test
+    void theTitleShowsTheConfiguredKeys(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var pane = new FileBrowserPane(browser, keys(java.util.Map.of("browserExit", "q", "browserHidden", "none")));
+        assertTrue(pane.title().contains("q cancel"), pane.title());
+        assertTrue(pane.title().contains("- ignored"), pane.title());
+    }
+
+    @Test
+    void aPaneWithoutBindingsReadsTheFixedKeys(@TempDir Path root) throws Exception {
+        var pane = new FileBrowserPane(browser(root));
+        assertEquals(null, pane.keyContext());
+        assertEquals(null, pane.toggleAction());
+    }
 }

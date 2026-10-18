@@ -17,7 +17,7 @@ import org.github.lscoughlin.jeorje.core.port.PermissionPolicy;
  * {@code ASK} of a worker, so the check blocks on the worker thread until the user answers. The runtime names
  * the thread of a subagent {@code subagent-<id>}. The gate reads the agent id from that name.
  */
-final class GatedPolicy implements PermissionPolicy {
+public final class GatedPolicy implements PermissionPolicy {
     /** Tools that Jeorje runs itself. They never ask the user. */
     static final Set<String> INTERNAL = Set.of("task_done", "story_done", "story_blocked", "story_read", "sync_done",
             "sync_abort");
@@ -32,7 +32,7 @@ final class GatedPolicy implements PermissionPolicy {
      * @param plan the plan mode service, or null when plan mode does not apply
      * @param prompter asks the user for a worker, or null to return {@code ASK} as it is
      */
-    GatedPolicy(PermissionPolicy base, PlanMode plan, BiFunction<AgentId, ToolUse, Decision> prompter) {
+    public GatedPolicy(PermissionPolicy base, PlanMode plan, BiFunction<AgentId, ToolUse, Decision> prompter) {
         this.base = base;
         this.plan = plan;
         this.prompter = prompter;

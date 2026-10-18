@@ -2372,6 +2372,8 @@ public final class QEditor {
             terminal.puts(InfoCmp.Capability.enter_ca_mode);
         }
         terminal.puts(InfoCmp.Capability.keypad_xmit);
+        // The editor display draws only the cells that differ from an empty screen. Clear what the caller left.
+        terminal.puts(InfoCmp.Capability.clear_screen);
         terminal.flush();
         var mouseInput = new MouseInput(terminal, new MouseConfig(true, options.wheelLines(), false),
                 new RegionRegistry(), text -> notice = text);

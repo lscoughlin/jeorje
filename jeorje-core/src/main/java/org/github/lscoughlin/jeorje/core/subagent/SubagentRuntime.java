@@ -2,6 +2,7 @@ package org.github.lscoughlin.jeorje.core.subagent;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -68,6 +69,7 @@ public final class SubagentRuntime implements AutoCloseable {
     private final ContextStore store;
     private final TranscriptSink transcript;
     private final Consumer<AgentEvent> agentEvents;
+    private final java.util.function.BiConsumer<AgentId, List<Chunk>> pruneListener;
     private final Consumer<SubagentEvent> events;
     private final Clock clock;
     private final AgentTypeRegistry types;
@@ -97,6 +99,7 @@ public final class SubagentRuntime implements AutoCloseable {
         this.store = b.store;
         this.transcript = b.transcript == null ? TranscriptSink.none() : b.transcript;
         this.agentEvents = b.agentEvents == null ? e -> { } : b.agentEvents;
+        this.pruneListener = b.pruneListener;
         this.events = b.events == null ? e -> { } : b.events;
         this.clock = b.clock == null ? Clock.systemUTC() : b.clock;
         this.types = b.types;
@@ -119,6 +122,7 @@ public final class SubagentRuntime implements AutoCloseable {
         private ContextStore store;
         private TranscriptSink transcript;
         private Consumer<AgentEvent> agentEvents;
+        private java.util.function.BiConsumer<AgentId, List<Chunk>> pruneListener;
         private Consumer<SubagentEvent> events;
         private Clock clock;
         private AgentTypeRegistry types;
@@ -140,6 +144,12 @@ public final class SubagentRuntime implements AutoCloseable {
         public Builder store(ContextStore value) { this.store = value; return this; }
 
         public Builder transcript(TranscriptSink value) { this.transcript = value; return this; }
+
+        /** Receives the chunks that compaction newly pruned in a subagent, with the id of the subagent. */
+        public Builder pruneListener(java.util.function.BiConsumer<AgentId, List<Chunk>> value) {
+            this.pruneListener = value;
+            return this;
+        }
 
         /** Receives the events of all subagent loops. */
         public Builder agentEvents(Consumer<AgentEvent> value) { this.agentEvents = value; return this; }
@@ -210,7 +220,15 @@ public final class SubagentRuntime implements AutoCloseable {
 
     /** Starts a subagent for the parent agent. */
     public AgentId spawn(AgentId parentId, SpawnRequest request) {
-        if (request.remote()) return spawnRemote(parentId, request);
+        return spawn(parentId, request, 0, null);
+    }
+
+    /**
+     * Starts a subagent with caps from a delegating peer. The task runs under the smaller of the own limit and the
+     * cap. A cap of 0 (calls) or null (time) means no cap.
+     */
+    public AgentId spawn(AgentId parentId, SpawnRequest request, int maxModelCallsCap, Duration maxDurationCap) {
+        if (request.remote()) return spawnRemote(parentId, request, maxModelCallsCap, maxDurationCap);
         if (request.name() == null || request.name().isBlank()) throw new SpawnException("The name is empty.");
         if (request.task() == null || request.task().isBlank()) throw new SpawnException("The task is empty.");
         var type = request.type() == null ? null : Optional.ofNullable(types)
@@ -262,6 +280,8 @@ public final class SubagentRuntime implements AutoCloseable {
             var policy = PolicyNarrowing.narrow(basePolicy, null, Set.copyOf(chosen.keySet()));
             node = new AgentNode(id, request.name(), parent, effective, new CancellationToken(),
                 List.copyOf(chosen.values()), policy, null, null, Set.copyOf(dropped), false);
+            node.callCap = Math.max(0, maxModelCallsCap);
+            node.timeCap = maxDurationCap;
             var self = node;
             node.input = in -> deliver(self, new AgentNode.InboxItem(in.text(), null));
             nodes.put(id, node);
@@ -281,7 +301,7 @@ public final class SubagentRuntime implements AutoCloseable {
 
     // ---- remote subagents ----
 
-    private AgentId spawnRemote(AgentId parentId, SpawnRequest request) {
+    private AgentId spawnRemote(AgentId parentId, SpawnRequest request, int callCap, Duration timeCap) {
         if (request.name() == null || request.name().isBlank()) throw new SpawnException("The name is empty.");
         if (request.task() == null || request.task().isBlank()) throw new SpawnException("The task is empty.");
         if (remote == null) {
@@ -323,9 +343,13 @@ public final class SubagentRuntime implements AutoCloseable {
         var started = node;
         var tools = request.tools() == null ? List.<String>of() : request.tools();
         try {
-            var task = remote.start(peer, request.task(), tools, limits.maxModelCalls(),
-                (int) Math.min(Integer.MAX_VALUE, limits.maxDuration().toSeconds()), event -> onRemoteEvent(started, event));
+            var calls = callCap > 0 ? Math.min(limits.maxModelCalls(), callCap) : limits.maxModelCalls();
+            var duration = timeCap != null && timeCap.compareTo(limits.maxDuration()) < 0 ? timeCap
+                : limits.maxDuration();
+            var task = remote.start(peer, request.task(), tools, calls,
+                (int) Math.min(Integer.MAX_VALUE, duration.toSeconds()), event -> onRemoteEvent(started, event));
             started.remote = task;
+            started.remoteTask.complete(task);
             task.completion().whenComplete((last, error) -> {
                 if (error != null) {
                     var cause = error.getCause() == null ? error : error.getCause();
@@ -334,7 +358,7 @@ public final class SubagentRuntime implements AutoCloseable {
                 }
             });
             started.token.onCancel(task::cancel);
-            var maxDuration = limits.maxDuration();
+            var maxDuration = duration;
             scheduler.schedule(() -> {
                 if (started.ended()) return;
                 started.token.cancel();
@@ -366,11 +390,63 @@ public final class SubagentRuntime implements AutoCloseable {
             + event.questionId() + "] " : "";
         var line = prefix + (event.text() == null ? "" : event.text()) + "\n";
         trackOutput(n, line);
+        if (event.kind() == RemoteSpawner.Kind.QUESTION && event.questionId() != null) remoteQuestion(n, event);
         try {
             agentEvents.accept(new AgentEvent.TokenDelta(n.id, line));
         } catch (RuntimeException e) {
             log.atWarn().log(() -> "An event consumer failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * A question of a remote subagent for its parent. The parent gets it like a question of a local subagent, with
+     * the same rules (limit, open ask, deadlock, busy, timeout). The answer of the parent goes back to the peer.
+     */
+    private void remoteQuestion(AgentNode n, RemoteSpawner.Event event) {
+        var remoteId = event.questionId();
+        var text = event.text() == null ? "" : event.text();
+        var parent = n.parent;
+        String refusal = null;
+        Question q = null;
+        synchronized (lock) {
+            if (n.ended() || parent.ended()) refusal = AskResult.ENDED;
+            else if (n.asks >= limits.maxAsks()) refusal = AskResult.LIMIT;
+            else if (n.openAsk != null && n.openAsk.open()) refusal = AskResult.OPEN_ASK;
+            else if (reaches(parent, n)) refusal = AskResult.DEADLOCK;
+            else if (!parent.internalWaits.isEmpty()) refusal = AskResult.BUSY;
+            else {
+                q = new Question("q" + questionCounter.incrementAndGet(), n.id, parent.id, text);
+                n.openAsk = q;
+                n.asks++;
+                questions.put(q.id, q);
+            }
+        }
+        if (refusal != null) {
+            var reason = refusal;
+            n.remoteTask.thenAccept(task -> task.answerError(remoteId, reason));
+            return;
+        }
+        var question = q;
+        var timeout = scheduler.schedule(() -> question.reply.complete(AskResult.failure(AskResult.TIMEOUT)),
+            Math.max(1, limits.askTimeout().toMillis()), TimeUnit.MILLISECONDS);
+        question.reply.whenComplete((result, error) -> {
+            timeout.cancel(false);
+            synchronized (lock) {
+                if (n.openAsk == question) n.openAsk = null;
+                questions.remove(question.id);
+                parent.inbox.removeIf(item -> item.question() == question);
+            }
+            n.remoteTask.thenAccept(task -> {
+                try {
+                    if (result != null && result.ok()) task.answer(remoteId, result.answer());
+                    else task.answerError(remoteId, result == null ? AskResult.CANCELLED : result.reason());
+                } catch (RuntimeException e) {
+                    log.atDebug().log(() -> "Cannot send the answer to the peer: " + e.getMessage());
+                }
+            });
+        });
+        var body = "[question from " + n.name + " (" + label(n) + "), id " + question.id + "]\n" + text;
+        if (!send(n, parent, body, question)) question.reply.complete(AskResult.ended(null));
     }
 
     private void endRemote(AgentNode n, Completion.Outcome outcome, String reason, String finalText) {
@@ -403,8 +479,9 @@ public final class SubagentRuntime implements AutoCloseable {
         LlmClient plain = null;
         try {
             plain = llm.forModel(model);
-            var limited = new LimitedLlm(plain, limits.maxModelCalls(),
-                () -> fail(n, "Model call limit reached: " + limits.maxModelCalls() + " calls."));
+            var maxCalls = n.callCap > 0 ? Math.min(limits.maxModelCalls(), n.callCap) : limits.maxModelCalls();
+            var limited = new LimitedLlm(plain, maxCalls,
+                () -> fail(n, "Model call limit reached: " + maxCalls + " calls."));
             var workdir = n.request.workdir() != null ? n.request.workdir() : settings.workingDirectory();
             var suffix = new StringBuilder();
             suffix.append("You are the subagent \"").append(n.name).append("\" of the agent \"")
@@ -415,7 +492,7 @@ public final class SubagentRuntime implements AutoCloseable {
             var fixed = base.isEmpty() ? suffix.toString() : base + "\n\n" + suffix;
             var childSettings = new AgentSettings(sessionId, workdir, settings.contextWindowTokens(),
                 settings.budgetPercent(), settings.maxOutputTokens(), settings.recentTurns(),
-                limits.maxModelCalls(), settings.retry(), settings.systemPrompt(), fixed,
+                maxCalls, settings.retry(), settings.systemPrompt(), fixed,
                 settings.sleeper(), null, settings.maxProtectedTokens());
             if (settings.hasInstructionsSource()) {
                 childSettings = childSettings.withInstructionsSource(dir -> {
@@ -429,10 +506,12 @@ public final class SubagentRuntime implements AutoCloseable {
                 var pending = takeInbox(n);
                 return pending.isEmpty() ? List.of() : List.of(pending);
             });
+            if (pruneListener != null) agent.withPruneListener(chunks -> pruneListener.accept(n.id, chunks));
             n.agent = agent;
             n.turn = () -> agent.turns().size() + 1;
             n.token.onCancel(agent::cancel);
-            var maxDuration = limits.maxDuration();
+            var maxDuration = n.timeCap != null && n.timeCap.compareTo(limits.maxDuration()) < 0 ? n.timeCap
+                : limits.maxDuration();
             watchdog = scheduler.schedule(() -> fail(n, "Time limit reached: " + maxDuration.toMillis() + " ms."),
                 maxDuration.toMillis(), TimeUnit.MILLISECONDS);
             transition(n, AgentLifecycle.RUNNING, null);
@@ -899,7 +978,6 @@ public final class SubagentRuntime implements AutoCloseable {
                     : AskResult.failure(AskResult.UNKNOWN);
             }
             if (target == from) return AskResult.failure("self");
-            if (target.remote != null && !target.ended()) return AskResult.failure("remote");
             if (target.state == AgentLifecycle.CREATED) return AskResult.failure(AskResult.NOT_STARTED);
             if (!target.ended()) {
                 if (from.asks >= limits.maxAsks()) return AskResult.failure(AskResult.LIMIT);
@@ -917,7 +995,11 @@ public final class SubagentRuntime implements AutoCloseable {
         enterWait(from, AgentLifecycle.WAITING_AGENT, target.name);
         try {
             var body = "[question from " + from.name + " (" + label(from) + "), id " + question.id + "]\n" + text;
-            if (!send(from, target, body, question)) question.reply.complete(AskResult.ended(null));
+            if (target.request != null && target.request.remote()) {
+                askRemote(target, question);
+            } else if (!send(from, target, body, question)) {
+                question.reply.complete(AskResult.ended(null));
+            }
             cancel.onCancel(() -> question.reply.complete(AskResult.failure(AskResult.CANCELLED)));
             try {
                 var result = question.reply.get(Math.max(1, limits.askTimeout().toMillis()), TimeUnit.MILLISECONDS);
@@ -941,6 +1023,74 @@ public final class SubagentRuntime implements AutoCloseable {
             }
             leaveWait(from, AgentLifecycle.WAITING_AGENT);
         }
+    }
+
+    /** Sends a question to a remote subagent. The answer or the refusal of the peer finishes the question. */
+    private void askRemote(AgentNode target, Question question) {
+        target.remoteTask.thenCompose(task -> task.ask(question.id, question.text)).whenComplete((text, error) -> {
+            if (error == null) {
+                question.reply.complete(AskResult.answer(text == null ? "" : text));
+                return;
+            }
+            var cause = error instanceof java.util.concurrent.CompletionException && error.getCause() != null
+                ? error.getCause() : error;
+            if (cause instanceof CancellationException) return;
+            var message = cause.getMessage();
+            question.reply.complete(AskResult.failure(message == null || message.isBlank() ? AskResult.ENDED : message));
+        });
+    }
+
+    /**
+     * Delivers a question of the delegating peer to a hosted subagent. The future finishes with the answer. It
+     * finishes with an error (the message is the reason) when the rules refuse the question, on a timeout, or when
+     * the subagent ends. The rules are the rules of {@code agent_ask}.
+     *
+     * @param root the hidden root agent of the delegated tasks
+     * @param target the hosted subagent
+     */
+    public java.util.concurrent.CompletableFuture<String> askFromPeer(AgentId root, AgentId target, String text) {
+        Question q;
+        AgentNode node;
+        synchronized (lock) {
+            node = nodes.get(target);
+            if (node == null) return refused(AskResult.UNKNOWN);
+            if (node.ended()) return refused(AskResult.ENDED);
+            if (node.state == AgentLifecycle.CREATED) return refused(AskResult.NOT_STARTED);
+            if (reaches(node, nodes.get(root))) return refused(AskResult.DEADLOCK);
+            if (!node.internalWaits.isEmpty()) return refused(AskResult.BUSY);
+            q = new Question("q" + questionCounter.incrementAndGet(), root, target, text);
+            questions.put(q.id, q);
+            node.inbox.add(new AgentNode.InboxItem("[question from the delegating peer, id " + q.id + "]\n" + text, q));
+        }
+        var question = q;
+        var timeout = scheduler.schedule(() -> question.reply.complete(AskResult.failure(AskResult.TIMEOUT)),
+            Math.max(1, limits.askTimeout().toMillis()), TimeUnit.MILLISECONDS);
+        var future = new java.util.concurrent.CompletableFuture<String>();
+        question.reply.whenComplete((result, error) -> {
+            timeout.cancel(false);
+            synchronized (lock) {
+                questions.remove(question.id);
+                node.inbox.removeIf(item -> item.question() == question);
+            }
+            if (result != null && result.ok()) future.complete(result.answer());
+            else future.completeExceptionally(new IllegalStateException(result == null ? AskResult.CANCELLED
+                : result.reason()));
+        });
+        return future;
+    }
+
+    private static java.util.concurrent.CompletableFuture<String> refused(String reason) {
+        return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException(reason));
+    }
+
+    /** Refuses a question of a hosted subagent that the delegating peer cannot answer. */
+    public boolean answerFailure(AgentId from, String questionId, String reason) {
+        Question q;
+        synchronized (lock) {
+            q = questions.get(questionId);
+            if (q == null || !q.to.equals(from)) return false;
+        }
+        return q.reply.complete(AskResult.failure(reason));
     }
 
     /** Answers a question that is in the inbox of the caller. */
