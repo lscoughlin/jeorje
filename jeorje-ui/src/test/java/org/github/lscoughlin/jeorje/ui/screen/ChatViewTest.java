@@ -107,4 +107,18 @@ class ChatViewTest {
         chat.scrollToEnd();
         assertEquals("> l9", plain(chat.visible(80, 3)).get(2));
     }
+
+    @Test
+    void clearRemovesTheLinesAndTheScrollPosition() {
+        var chat = new ChatView();
+        chat.appendUser("hello");
+        chat.apply(new AgentEvent.TokenDelta(A, "Hi"));
+        chat.scrollUp(1);
+        chat.clear();
+        assertEquals(0, chat.lineCount());
+        assertTrue(plain(chat.logicalLines()).isEmpty());
+        assertTrue(chat.following());
+        chat.appendUser("again");
+        assertEquals(List.of("> again"), plain(chat.logicalLines()));
+    }
 }

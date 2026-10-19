@@ -27,7 +27,7 @@ class KeyBindingsTest {
     @Test
     void registryHasAllDocumentedActions() {
         var registry = ActionRegistry.defaults();
-        for (var id : List.of("send", "newline", "interrupt", "exit", "agents", "files", "expandResult", "redraw",
+        for (var id : List.of("send", "newline", "interrupt", "agents", "files", "expandResult", "redraw",
                 "follow", "copySelection", "scrollUp", "scrollDown")) {
             assertEquals(KeyContext.CHAT, registry.find(KeyScope.UI, id).orElseThrow().context(), id);
         }
@@ -140,7 +140,7 @@ class KeyBindingsTest {
 
     @Test
     void requiredActionsMustKeepAKey() {
-        for (var id : List.of("send", "interrupt", "exit")) {
+        for (var id : List.of("send", "interrupt")) {
             var message = error(List.of(ui("user config", Map.of(id, "none"))));
             assertTrue(message.contains("'" + id + "'") && message.contains("at least one key"), message);
         }
@@ -202,7 +202,7 @@ class KeyBindingsTest {
         assertEquals("send", map.getBound("\r"));
         assertEquals("newline", map.getBound("\033\r"));
         assertEquals("interrupt", map.getBound("\003"));
-        assertEquals("exit", map.getBound("\004"));
+        assertEquals("interrupt", map.getBound("\004"));
         assertEquals("scrollUp", map.getBound("\033[5~"));
         assertEquals("redraw", map.getBound("\014"));
     }

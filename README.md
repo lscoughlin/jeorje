@@ -73,7 +73,7 @@ Jeorje uses the OpenAI-compatible API. The first target is OpenRouter, and the d
 
 - `/model` sets the default model.
 - `/compactor` sets the model that prunes the context.
-- `/advisor` sets the model that the `advisor` tool calls.
+- `/advisor` sets the model that the `advisor` tool calls. With no slug, it sets `~deepseek/deepseek-pro-latest`. `/advisor none` turns the advisor off.
 
 ## User Interface
 
@@ -81,7 +81,8 @@ The terminal UI is built on JLine and includes:
 
 - a chat view for the foreground agent, with mouse-wheel and scroll-bar scrolling in every scrolling region (chat, editor, file browser, lists),
 - syntax highlighting of code and diffs in the chat view and the editor,
-- a small file browser,
+- a file browser app in the chat region, with arrow-key movement, `Right` to open a directory, `Left` to close it or to move to the parent, `Enter` to edit a file or to expand a directory, and a keys row; `Ctrl-X f` and `/files` open it, and `/files list [filter]` prints the tree,
+- an `@path` mention: a word that starts with `@` and names a path in the working directory adds the file to the next message, with a `Files: <paths>` line,
 - a modeless, menu-driven text editor in the style of the MS-DOS QBasic editor, built on JLine.
 
 ## Tech Stack

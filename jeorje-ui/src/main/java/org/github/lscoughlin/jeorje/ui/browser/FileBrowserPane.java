@@ -1,6 +1,7 @@
 package org.github.lscoughlin.jeorje.ui.browser;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.github.lscoughlin.jeorje.ui.keys.KeyBindings;
@@ -18,6 +19,7 @@ import org.github.lscoughlin.jeorje.ui.screen.Pane;
  * bindings reads the fixed default keys.
  */
 public final class FileBrowserPane implements Pane<Path> {
+    private static final int RESERVED_ROWS = 1;
     private final FileBrowser browser;
     private final KeyBindings bindings;
     private Path picked;
@@ -63,10 +65,26 @@ public final class FileBrowserPane implements Pane<Path> {
     }
 
     @Override
-    public void resize(Rect bounds) { browser.setBounds(bounds); }
+    public void resize(Rect bounds) {
+        browser.setReservedRows(RESERVED_ROWS);
+        browser.setBounds(bounds);
+    }
 
     @Override
-    public List<String> render() { return browser.render(); }
+    public List<String> render() {
+        var tree = browser.render();
+        var height = Math.max(1, browser.bounds().height());
+        var rows = new ArrayList<>(tree.subList(0, Math.min(tree.size(), height - RESERVED_ROWS)));
+        while (rows.size() < height - RESERVED_ROWS) rows.add("");
+        rows.add(keysRow());
+        return rows;
+    }
+
+    private String keysRow() {
+        return "Up/Down move  " + shown("browserOpen", "Right") + "  " + shown("browserClose", "Left") + "  "
+                + shown("browserEdit", "Enter") + "  " + shown("browserAdd", "a") + "  "
+                + shown("browserFilter", "/") + "  " + shown("browserExit", "Esc");
+    }
 
     @Override
     public KeyContext keyContext() { return bindings == null ? null : KeyContext.BROWSER; }

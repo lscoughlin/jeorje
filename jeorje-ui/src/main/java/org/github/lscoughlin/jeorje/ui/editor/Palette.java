@@ -2,7 +2,10 @@ package org.github.lscoughlin.jeorje.ui.editor;
 
 import org.jline.utils.AttributedStyle;
 
-/** The styles of the editor. The dark palette is light text on a dark blue ground. The mono palette has no colors. */
+/**
+ * The styles of the editor. The dark palette paints no background, so the editor shows the terminal ground exactly
+ * like the chat. The dark palette shows the highlights in reverse video. The mono palette has no colors.
+ */
 record Palette(
         AttributedStyle text,
         AttributedStyle selection,
@@ -36,36 +39,37 @@ record Palette(
     private static final int CYAN = 6;
     private static final int WHITE = 7;
     private static final int BRIGHT_WHITE = 15;
-    private static final int GRAY = 8;
 
     private static AttributedStyle style(int fg, int bg) {
         return AttributedStyle.DEFAULT.foreground(fg).background(bg);
     }
 
     static Palette dark() {
+        var plain = AttributedStyle.DEFAULT;
+        var inverse = AttributedStyle.DEFAULT.inverse();
         return new Palette(
-                style(WHITE, BLUE),
+                plain,
+                inverse,
+                plain,
+                AttributedStyle.DEFAULT.foreground(RED).bold(),
+                inverse,
+                plain,
+                AttributedStyle.DEFAULT.faint(),
+                plain,
                 style(BLUE, WHITE),
-                style(BLACK, WHITE),
-                style(RED, WHITE).bold(),
-                style(WHITE, BLACK),
-                style(BLACK, WHITE),
-                style(GRAY, WHITE),
-                style(BRIGHT_WHITE, BLUE),
-                style(BLUE, WHITE),
-                style(BLACK, CYAN),
-                style(BLACK, YELLOW),
-                style(BLACK, WHITE),
-                style(WHITE, BLACK),
-                style(BLACK, GRAY),
-                style(WHITE, BLACK).bold(),
-                style(GRAY, BLUE),
-                style(GRAY, BLUE),
+                inverse,
+                inverse.bold(),
+                plain,
+                AttributedStyle.DEFAULT.underline(),
+                plain,
+                inverse.bold(),
+                AttributedStyle.DEFAULT.faint(),
+                AttributedStyle.DEFAULT.faint(),
                 style(BRIGHT_WHITE, GREEN),
                 style(BRIGHT_WHITE, RED),
                 style(BLACK, YELLOW),
                 style(BLACK, WHITE).bold(),
-                style(CYAN, BLUE),
+                AttributedStyle.DEFAULT.foreground(CYAN),
                 true);
     }
 
@@ -103,6 +107,6 @@ record Palette(
         if (!colors) {
             return s;
         }
-        return s.background(BLUE);
+        return s.backgroundDefault();
     }
 }

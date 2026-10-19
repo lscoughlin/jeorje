@@ -85,7 +85,8 @@ loop:
 - For `ASK`, the agent publishes a `ConfirmationRequested` event and waits. The UI answers with `confirm(toolUseId, approved)`. A rejected call gives a `ToolResult` with `error = true` and the text `Permission denied: the call to <tool> did not run.`. A `DENY` gives the same text. A tool name that the agent does not know gives an error result.
 - The agent loop applies the state updates of the tool results (see [tools.md](tools.md#read)) in order, after the calls end.
 - A step boundary hook can add texts to the context. The agent calls it before each model call, which is also after each tool call. A text joins the last user message, so a tool result always follows its tool use. The hook never runs inside a tool. Peer messages and questions use this hook.
-- A turn ends in one of four cases: the model returns a message with no tool use, the user interrupts, the step limit occurs, or a model call fails. The default step limit is 100 model calls for each turn. A turn that reaches the limit publishes an `Error` event.
+- A turn ends in one of four cases: the model returns a message with no tool use, the user interrupts, the step limit occurs, or a model call fails. The default step limit is 200 model calls for each turn, from the key `agents.stepLimit`. A turn that reaches the limit publishes an `Error` event.
+- The step limit counts the model calls since the last text of the user. A text that the user steers into the running turn starts a new count, so the turn continues with a full budget. The step limit protects against a model that loops with no input from the user. The result of `runTurn` is the number of model calls of the whole turn, so it can be above the limit.
 - When a turn ends, the agent writes it to the `ContextStore` and to the transcript. The agent then starts compaction. See [context-and-compaction.md](context-and-compaction.md).
 
 ## Events to the UI

@@ -189,7 +189,7 @@ final class AgentTestSupport {
         final List<Duration> sleeps = new CopyOnWriteArrayList<>();
         final Agent agent;
 
-        Rig(Scripted llm, PermissionPolicy policy, AgentSettings settings, Tool... tools) {
+        Rig(LlmClient llm, PermissionPolicy policy, AgentSettings settings, Tool... tools) {
             var withSleep = settings.withSleeper(sleeps::add);
             agent = new Agent(new org.github.lscoughlin.jeorje.core.model.AgentId("a1"), withSleep, llm,
                 List.of(tools), policy, store, (turn, ts) -> transcript.add(turn), events::add, CLOCK);

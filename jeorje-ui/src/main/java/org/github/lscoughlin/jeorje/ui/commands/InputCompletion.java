@@ -10,7 +10,7 @@ import java.util.stream.Stream;
 
 /**
  * Tab completion for the input line. It completes slash command names (built-in commands, custom commands, and
- * skills), the fixed arguments of some commands, and file paths for {@code /edit}, {@code /files add}, and
+ * skills), the fixed arguments of some commands, and file paths for {@code /edit}, {@code /files list}, and
  * {@code /implement}.
  */
 public final class InputCompletion {
@@ -69,11 +69,16 @@ public final class InputCompletion {
         var arg = line.substring(space + 1);
         return switch (name) {
             case "edit" -> paths("/edit ", arg);
-            case "files" -> arg.startsWith("add ") ? paths("/files add ", arg.substring(4))
-                    : slash.complete(line).stream().map(c -> new Match(c.text(), c.text(), false)).toList();
+            case "files" -> files(arg);
             case "implement" -> arg.indexOf(' ') < 0 ? paths("/implement ", arg) : List.of();
             default -> slash.complete(line).stream().map(c -> new Match(c.text(), c.text(), false)).toList();
         };
+    }
+
+    private List<Match> files(String arg) {
+        if (arg.startsWith("list ")) return paths("/files list ", arg.substring(5));
+        if ("list".startsWith(arg)) return List.of(new Match("/files list", "list", false));
+        return List.of();
     }
 
     private List<Match> paths(String head, String typed) {

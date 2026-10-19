@@ -29,7 +29,7 @@ class InputCompletionTest {
         Files.createDirectories(project.resolve("docs"));
         var slash = new SlashCommands(new FakeBackend(project, Set.of()));
         slash.register("edit", "/edit <path>", "Open a file in the editor", a -> CommandResult.ok(""));
-        slash.register("files", "/files [filter|add <path>]", "Show the files", a -> CommandResult.ok(""));
+        slash.register("files", "/files [list [filter]]", "Open the file browser, or print the tree", a -> CommandResult.ok(""));
         slash.register("implement", "/implement [plan]", "Implement", a -> CommandResult.ok(""));
         completion = new InputCompletion(slash, project);
     }
@@ -76,9 +76,11 @@ class InputCompletionTest {
     }
 
     @Test
-    void filesAddCompletesPathsButFilesAloneDoesNot() {
-        assertEquals("/files add alpha.txt ", completion.complete("/files add al").line());
-        assertEquals("/files al", completion.complete("/files al").line());
+    void filesCompletesTheListWordAndThePathsAfterIt() {
+        assertEquals("/files list ", completion.complete("/files l").line());
+        assertEquals("/files x", completion.complete("/files x").line());
+        assertEquals("/files list alpha.txt ", completion.complete("/files list al").line());
+        assertEquals("/files list src/", completion.complete("/files list sr").line());
     }
 
     @Test

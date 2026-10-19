@@ -111,22 +111,17 @@ class ScreenKeysTest {
     }
 
     @Test
-    void ctrlDOnAnEmptyLineEndsTheSession() throws Exception {
+    void ctrlDInterruptsAndNeverEndsTheSession() throws Exception {
         try (var ft = new FakeTerminal(60, 12)) {
             var rec = new Recorder();
-            var lines = new CopyOnWriteArrayList<String>();
-            var opts = new Screen.Options("off", null, lines::add, null, null).actionHandler(rec);
+            var opts = new Screen.Options("off", null, null, null, null).actionHandler(rec);
             var screen = new Screen(ft.terminal, opts);
             screen.start();
             try {
-                ft.type("ab\u0004\r");
-                await(() -> lines.size() == 1);
-                assertEquals("ab", lines.getFirst());
+                ft.type("\u0004");
+                await(() -> rec.actions.contains("interrupt"));
                 assertFalse(rec.exited.get());
                 assertTrue(screen.isRunning());
-                ft.type("\u0004");
-                await(rec.exited::get);
-                assertFalse(screen.isRunning());
             } finally {
                 screen.close();
             }

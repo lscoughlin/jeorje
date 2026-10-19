@@ -21,8 +21,7 @@ public final class ActionRegistry {
     private ActionRegistry() {
         chat("send", "Send the input", true, "Enter");
         chat("newline", "New line in the input", false, "Alt-Enter");
-        chat("interrupt", "Interrupt the foreground agent. Two presses in 1 s exit.", true, "Ctrl-C");
-        chat("exit", "Exit, on an empty input line", true, "Ctrl-D");
+        chat("interrupt", "Interrupt the foreground agent. Two presses in 1 s exit.", true, "Ctrl-C", "Ctrl-D");
         chat("agents", "Open or close the agent switcher", false, "Ctrl-X a");
         chat("files", "Open the file browser", false, "Ctrl-X f");
         chat("expandResult", "Expand or collapse the last tool result", false, "Ctrl-X o");
@@ -32,8 +31,8 @@ public final class ActionRegistry {
         chat("scrollUp", "Scroll the chat view up", false, "PgUp");
         chat("scrollDown", "Scroll the chat view down", false, "PgDn");
 
-        browser("browserOpen", "Open a directory", "Right");
-        browser("browserClose", "Close a directory", "Left");
+        browser("browserOpen", "Open a directory and move into it", "Right");
+        browser("browserClose", "Close a directory or move to the parent", "Left");
         browser("browserEdit", "Open the file in the editor", "Enter");
         browser("browserAdd", "Add the path to the prompt", "a");
         browser("browserFilter", "Filter by name", "/");

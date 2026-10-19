@@ -1,0 +1,10 @@
+version: '3'
+
+tasks:
+  dist:
+    desc: Build the jars and copy them into bin/ for the launcher
+    cmds:
+      - mvn -q -pl jeorje-cli -am package -DskipTests
+      # Copy to a new file, then rename. A running Jeorje keeps its old jar open.
+      - cp jeorje-cli/target/jeorje.jar bin/jeorje.jar.new
+      - mv -f bin/jeorje.jar.new bin/jeorje.jar

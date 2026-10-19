@@ -319,4 +319,32 @@ class ConfigLoaderTest {
         assertTrue(assertThrows(ConfigException.class, () -> ConfigLoader.load(opts())).getMessage()
                 .contains("context.windows.m/x"));
     }
+
+    @Test
+    void stepLimitKeysDefaultTo200AndLoad() throws IOException {
+        var defaults = ConfigLoader.load(opts());
+        assertEquals(200, defaults.config().agents().stepLimit());
+        assertEquals(200, defaults.config().subagents().stepLimit());
+        assertEquals(ConfigSource.Kind.DEFAULT, defaults.sourceOf("agents.stepLimit").kind());
+        assertEquals(ConfigSource.Kind.DEFAULT, defaults.sourceOf("subagents.stepLimit").kind());
+
+        write(home.resolve(".jeorje"), "config.yaml", "agents:\n  stepLimit: 50\n");
+        write(cwd.resolve(".jeorje"), "config.yaml", "subagents:\n  stepLimit: 75\n");
+        var loaded = ConfigLoader.load(opts().withTrusted(true));
+        assertEquals(50, loaded.config().agents().stepLimit());
+        assertEquals(75, loaded.config().subagents().stepLimit());
+        assertEquals(ConfigSource.Kind.USER, loaded.sourceOf("agents.stepLimit").kind());
+        assertEquals(ConfigSource.Kind.PROJECT, loaded.sourceOf("subagents.stepLimit").kind());
+    }
+
+    @Test
+    void aStepLimitThatIsNotPositiveIsAnError() throws IOException {
+        for (var key : new String[] {"agents", "subagents"}) {
+            for (var bad : new String[] {"0", "-5"}) {
+                write(home.resolve(".jeorje"), "config.yaml", key + ":\n  stepLimit: " + bad + "\n");
+                var e = assertThrows(ConfigException.class, () -> ConfigLoader.load(opts()), key + " " + bad);
+                assertTrue(e.getMessage().contains(key + ".stepLimit"), e.getMessage());
+            }
+        }
+    }
 }

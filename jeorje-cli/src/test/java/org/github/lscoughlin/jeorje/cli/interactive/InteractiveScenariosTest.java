@@ -156,7 +156,7 @@ class InteractiveScenariosTest {
             await("screen up", () -> rig.session.screen() != null && rig.session.slash() != null
                     && rig.terminalText().contains("ready"));
             assertTrue(rig.session.slash().execute("/peers").output().contains("swarm is off"));
-            assertTrue(rig.session.slash().execute("/files").output().contains("README.md"));
+            assertTrue(rig.session.slash().execute("/files list").output().contains("README.md"));
             assertTrue(rig.session.slash().execute("/worktrees").output().contains("No worktrees"));
             assertTrue(rig.session.slash().execute("/implement status").output().contains("No run"));
             assertTrue(rig.session.slash().execute("/plan cancel").error());

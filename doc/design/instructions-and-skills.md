@@ -261,6 +261,7 @@ trust:
   projects: []                     # user config and --config file only: paths of trusted projects
 agents:
   dirs: []                         # more directories, each with skills/, commands/, agents/
+  stepLimit: 200                   # model calls in one agent turn. See agent-loop.md.
 ```
 
 The keys `skills.dirs`, `skills.compat`, `agents.dirs`, `instructions.userFiles`, and `trust.projects` expand `~`, `${HOME}`, and `${CWD}` at the start of a value. See [configuration.md](configuration.md).

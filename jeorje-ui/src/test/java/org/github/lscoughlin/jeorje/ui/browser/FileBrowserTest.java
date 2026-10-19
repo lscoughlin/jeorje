@@ -61,22 +61,65 @@ class FileBrowserTest {
         assertFalse(names().contains(".git"));
     }
 
-    @Test
-    void rightOpensAndLeftCloses() {
-        fb.handleKey("RIGHT");
-        assertEquals(List.of("src", "util", "Main.java", ".gitignore", "README.md"), names());
-        fb.handleKey("LEFT");
-        assertEquals(List.of("src", ".gitignore", "README.md"), names());
+    private String selectedName() {
+        return fb.selectedRow() == null ? null : fb.selectedRow().path().getFileName().toString();
     }
 
     @Test
-    void leftOnFileSelectsParent() {
+    void rightOnAClosedDirectoryOpensItAndSelectsTheFirstChild() {
+        fb.handleKey("RIGHT");
+        assertEquals(List.of("src", "util", "Main.java", ".gitignore", "README.md"), names());
+        assertEquals("util", selectedName());
+    }
+
+    @Test
+    void rightTwiceOpensNestedDirectoriesAndKeepsTheParentOpen() {
+        fb.handleKey("RIGHT");
+        fb.handleKey("RIGHT");
+        // The second Right acts on the new selection: it opens src/util and moves to Helper.java.
+        assertEquals(List.of("src", "util", "Helper.java", "Main.java", ".gitignore", "README.md"), names());
+        assertEquals("Helper.java", selectedName());
+        assertTrue(fb.rows().get(0).expanded());
+        assertTrue(fb.rows().get(1).expanded());
+    }
+
+    @Test
+    void rightOnAFileChangesNoRowAndNoSelection() {
+        fb.handleKey("DOWN");
+        fb.handleKey("DOWN");
+        assertEquals("README.md", selectedName());
+        var before = names();
+        fb.handleKey("RIGHT");
+        assertEquals(before, names());
+        assertEquals("README.md", selectedName());
+    }
+
+    @Test
+    void leftOnAnOpenDirectoryClosesItAndKeepsTheSelection() {
+        fb.handleKey("RIGHT");
+        fb.handleKey("UP");
+        assertEquals("src", selectedName());
+        fb.handleKey("LEFT");
+        assertEquals("src", selectedName());
+        assertEquals(List.of("src", ".gitignore", "README.md"), names());
+        assertFalse(fb.rows().get(0).expanded());
+    }
+
+    @Test
+    void leftOnTheClosedTopLevelDirectoryKeepsTheSelectionAndTheRows() {
+        var before = names();
+        fb.handleKey("LEFT");
+        assertEquals(before, names());
+        assertEquals("src", selectedName());
+    }
+
+    @Test
+    void leftOnAFileSelectsTheParentRow() {
         fb.handleKey("RIGHT");
         fb.handleKey("DOWN");
-        fb.handleKey("DOWN");
-        assertEquals("Main.java", fb.selectedRow().path().getFileName().toString());
+        assertEquals("Main.java", selectedName());
         fb.handleKey("LEFT");
-        assertEquals("src", fb.selectedRow().path().getFileName().toString());
+        assertEquals("src", selectedName());
     }
 
     @Test

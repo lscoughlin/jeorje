@@ -47,7 +47,8 @@ class FileBrowserPaneTest {
         try (var ft = new FakeTerminal(60, 12)) {
             var screen = new Screen(ft.terminal, Screen.Options.defaults());
             screen.draw(); // the first draw probes the terminal modes and reads the reply
-            ft.type("\u001b[C\u001b[B\r");
+            // Right opens src and moves to Main.java, the only child. Enter picks it.
+            ft.type("\u001b[C\r");
             var result = screen.runPane(new FileBrowserPane(browser));
             assertEquals(root.toAbsolutePath().normalize().resolve("src/Main.java"), result.orElseThrow());
         }
@@ -143,5 +144,64 @@ class FileBrowserPaneTest {
         var pane = new FileBrowserPane(browser(root));
         assertEquals(null, pane.keyContext());
         assertEquals(null, pane.toggleAction());
+    }
+
+    @Test
+    void theLastRowNamesTheFixedKeys(@TempDir Path root) throws Exception {
+        var pane = new FileBrowserPane(browser(root));
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults());
+            screen.draw(); // the first draw probes the terminal modes and reads the reply
+            ft.type("\u001b[B\u001b[D\u001b[C\r\u001b");
+            screen.runPane(pane);
+            var last = pane.render().getLast();
+            assertTrue(last.contains("Up/Down move"), last);
+            assertTrue(last.contains("Right"), last);
+            assertTrue(last.contains("Left"), last);
+            assertTrue(last.contains("Enter"), last);
+            assertTrue(last.contains(" a "), last);
+            assertTrue(last.contains(" / "), last);
+            assertTrue(last.contains("Esc"), last);
+        }
+    }
+
+    @Test
+    void theLastRowNamesTheConfiguredKeys(@TempDir Path root) throws Exception {
+        var keys = keys(java.util.Map.of("browserEdit", "Ctrl-O", "browserExit", "q"));
+        var pane = new FileBrowserPane(browser(root), keys);
+        var last = pane.render().getLast();
+        assertTrue(last.contains("Ctrl-O"), last);
+        assertTrue(last.contains(" q"), last);
+    }
+
+    @Test
+    void renderGivesTheTreeRowsAndOneKeysRow(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var pane = new FileBrowserPane(browser);
+        // The tree has src/ and README.md.
+        assertEquals(2, browser.rows().size());
+        pane.resize(new Rect(0, 1, 60, 5));
+        assertEquals(5, pane.render().size());
+        assertTrue(pane.render().get(0).contains("src/"), pane.render().get(0));
+        assertFalse(pane.render().get(4).contains("README.md"));
+        assertTrue(pane.render().get(4).contains("Up/Down move"));
+        pane.resize(new Rect(0, 1, 60, 1));
+        assertEquals(1, pane.render().size());
+        assertTrue(pane.render().getFirst().contains("Up/Down move"));
+    }
+
+    @Test
+    void enterOnADirectoryExpandsItAndKeepsThePaneOpen(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var pane = new FileBrowserPane(browser);
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults());
+            screen.draw(); // the first draw probes the terminal modes and reads the reply
+            // Enter expands src. Esc then closes the pane.
+            ft.type("\r\u001b");
+            assertTrue(screen.runPane(pane).isEmpty());
+            assertTrue(browser.rows().stream().anyMatch(r -> r.path().getFileName().toString().equals("Main.java")));
+            assertFalse(browser.isOpen());
+        }
     }
 }

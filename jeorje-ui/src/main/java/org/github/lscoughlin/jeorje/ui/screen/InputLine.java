@@ -46,8 +46,7 @@ public final class InputLine {
      *
      * @param initial text to put in the buffer, or null
      * @throws UserInterruptException on {@code Ctrl-C} or when another thread interrupts the read
-     * @throws EndOfFileException on {@code Ctrl-D} at an empty line
-     */
+         */
     public String readLine(String prompt, String initial) throws UserInterruptException, EndOfFileException {
         return reader.readLine(prompt, null, (Character) null, initial);
     }

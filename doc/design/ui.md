@@ -151,8 +151,8 @@ The keys `ui.mouse.enabled` and `ui.mouse.wheelLines` control the mouse. See [co
 
 `Tab` completes the text before the cursor in the input line. `InputCompletion` does the work. It acts only on a line that starts with `/`. Text that is not a command stays as typed.
 
-- **Command names.** It completes the names of the built-in commands, the custom commands, and the skills. It also completes the fixed arguments of some commands, for example `/trust revoke` and `off` for `/compactor` and `/advisor`.
-- **Paths.** It completes file and directory names for `/edit`, for `/files add`, and for the first argument of `/implement`. Paths are relative to the working directory. Names that start with a dot show only when the typed part starts with a dot. A directory gets a trailing `/`.
+- **Command names.** It completes the names of the built-in commands, the custom commands, and the skills. It also completes the fixed arguments of some commands, for example `/trust revoke` and `off` for `/compactor` and `none` for `/advisor`.
+- **Paths.** It completes file and directory names for `/edit`, for `/files list`, and for the first argument of `/implement`. Paths are relative to the working directory. Names that start with a dot show only when the typed part starts with a dot. A directory gets a trailing `/`.
 - **One match.** Jeorje completes the text. A command name or a file gets a trailing space. A directory does not.
 - **Several matches.** Jeorje inserts the common prefix. It then prints the notice `N matches:` and one line for each candidate in the chat view. A list has at most 200 candidates.
 - **No match.** The line does not change.
@@ -183,15 +183,21 @@ The up and down keys move the mark, and `Enter` chooses the marked line. The age
 
 ## File browser
 
-`Ctrl-X f` opens the file browser as a pane in the chat region. It starts at the working directory.
+The file browser is a small file app in the chat region. It shows the tree of the working directory and one keys row at the bottom. `Ctrl-X f` opens it as a pane. `/files` opens it too.
 
-- The browser shows a tree with directory names and file names. The up and down keys move. The right key opens a directory. The left key closes it. `Enter` on a directory opens or closes it.
-- `Enter` on a file opens it in the editor. A double click on a file does the same.
+- The up and down keys select a row.
+- The right key opens a directory and moves into it. On an open directory, the right key moves into it and keeps it open. On a file, the right key does nothing.
+- The left key closes an open directory and keeps the selection. On a file or on a closed directory, the left key moves to the parent row. With no parent row, the left key does nothing.
+- `Enter` on a directory expands or collapses it, and the pane stays open. `Enter` on a file opens the file in the editor. A double click on a file does the same.
+- `Esc` and the files key close the pane.
+- The last row of the pane names the keys.
 - `a` adds the selected path to the next prompt. The next message then starts with a line `Files: <paths>`.
 - `/` starts a filter by name. `Enter` ends the filter text, and `Esc` clears it.
 - `.` shows or hides the ignored paths.
-- `Esc` closes the browser.
-- `/files [filter]` prints the tree in the chat view. `/files add <path>` adds a path to the next prompt.
+
+`/files` opens the browser. `/files list` prints the tree in the chat view. `/files list <filter>` prints the tree of the paths that contain the filter text. The first line of the print names the working directory and the filter. The last line names `/edit`.
+
+**Path mentions.** A word that starts with `@` and names a file or a directory in the working directory adds that path to the next message. The message keeps the `@path` word. The message starts with a line `Files: <paths>`. A word ends at a space, a tab, a newline, or a comma. A word that does not name a path is plain text.
 
 The browser hides `.git/` and the paths in the `.gitignore` of the working directory unless the user presses `.`. It reads the names, the globs, a leading slash, and a trailing slash of the file. It does not read negation lines. This is a display filter. It is not a sandbox. The keys of the pane come from the `browser*` actions. See [configuration.md](configuration.md#key-bindings).
 
@@ -220,7 +226,7 @@ The JLine 4 nano editor (`org.jline.builtins.Nano`) has nano key bindings and no
 - **Menu bar** (top line): `File`, `Edit`, `Search`, `View`, `Options`, and `Help`. Each menu name has one highlighted letter.
 - **Text window** with a frame, the file name in the top border, and a vertical scroll bar on the right. A horizontal scroll bar shows when a line is wider than the window.
 - **Status bar** (bottom line): the most useful keys for the current state (the keys of the actions `save`, `help`, `repeatFind`, and `menu`), and on the right the name of the syntax, the line, and the column of the cursor. `OVR` shows when overwrite mode is on. During a menu, the status bar shows a one-line help text for the selected item. A notice, for example `Saved Main.java.`, replaces the key hints until the next key. The bar uses a notice color when the file changed on disk.
-- Colors are a light-on-dark scheme. The palette follows `NO_COLOR`. The menu `Options > Colors` switches to monochrome.
+- The editor paints no background, so it shows the terminal ground exactly like the chat. The highlights use reverse video: the selection, the selected menu item, the status bar, the notice, and the focused button. The palette follows `NO_COLOR`. The menu `Options > Colors` switches to monochrome.
 - The editor shows syntax colors. See [Syntax highlighting](#syntax-highlighting).
 
 ### Syntax highlighting
@@ -390,7 +396,7 @@ Dialogs, such as Find, Save As, and Go To Line, are boxes in the middle of the s
 | `Enter` | Send the input |
 | `Alt-Enter` | New line in the input |
 | `Ctrl-C` | Interrupt the foreground agent. Press it a second time within 2 s to exit. |
-| `Ctrl-D` on an empty line | Exit |
+| `Ctrl-D` | Interrupt the foreground agent. It is the same as `Ctrl-C`. |
 | `Ctrl-X a` | Open the agent switcher |
 | `Ctrl-X f` | Open the file browser |
 | `Ctrl-X o` | Expand or collapse the last tool result |
@@ -408,11 +414,11 @@ The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of li
 | `/agents [name\|number]` | Print the list of agents, or switch to one. `Ctrl-X a` opens the switcher pane. |
 | `/back` | Return to the parent agent |
 | `/cancel [name]` | Cancel the foreground agent or a named subagent |
-| `/files [filter\|add <path>]` | Print the file tree, or add a path to the next prompt. `Ctrl-X f` opens the browser pane. |
+| `/files [list [filter]]` | Open the file browser, or print the file tree. `Ctrl-X f` opens the browser pane. |
 | `/edit <path>` | Open a file in the editor |
 | `/compact` | Run compaction now |
 | `/compactor [slug\|off]` | Show or set the compactor model for this session |
-| `/advisor [slug\|off]` | Show or set the advisor model for this session |
+| `/advisor [slug\|none]` | Set the advisor model for this session. With no slug, it sets `~deepseek/deepseek-pro-latest`. `none` turns the advisor off |
 | `/plan [goal\|show\|edit\|done\|cancel]` | Enter, show, edit, or leave plan mode. See [planning.md](planning.md). |
 | `/implement [plan] [stories]` | Implement a plan with a team of subagents. Also `pause`, `resume`, `status`, and `stop`. See [planning.md](planning.md). |
 | `/worktrees [prune]`, `/merge <agent> [strategy]`, `/discard <agent>` | List, merge, and remove subagent worktrees. See [subagents.md](subagents.md#worktrees). |

@@ -18,4 +18,14 @@ public sealed interface AgentEvent {
     record Compacted(AgentId agent, int chunksPruned, int tokensFreed) implements AgentEvent {}
 
     record Error(AgentId agent, String message) implements AgentEvent {}
+
+    /**
+     * The user steered the turn of the agent with a text.
+     *
+     * @param running true when a turn runs and takes the text at its next step boundary
+     */
+    record Steered(AgentId agent, String text, boolean running) implements AgentEvent {}
+
+    /** The agent started a fresh conversation and forgot {@code turns} finished turns. */
+    record Cleared(AgentId agent, int turns) implements AgentEvent {}
 }

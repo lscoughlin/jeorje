@@ -82,6 +82,7 @@ class SlashCommandsTest {
         assertTrue(all.containsAll(List.of("/help", "/model", "/quit", "/review", "/pdf", "/team:ship")));
         var co = commands.complete("/co").stream().map(Candidate::text).toList();
         assertEquals(List.of("/commands", "/compact", "/compactor"), co);
+        assertEquals(List.of("/clear"), commands.complete("/cl").stream().map(Candidate::text).toList());
         var review = commands.complete("/rev").getFirst();
         assertEquals("/review", review.text());
         assertTrue(review.description().contains("Review the changes"));
@@ -93,7 +94,7 @@ class SlashCommandsTest {
     @Test
     void completesArguments() {
         assertEquals("/trust revoke", commands.complete("/trust r").getFirst().text());
-        assertEquals("/advisor off", commands.complete("/advisor ").getFirst().text());
+        assertEquals("/advisor none", commands.complete("/advisor ").getFirst().text());
         assertTrue(commands.complete("/model ").isEmpty());
     }
 
@@ -107,7 +108,7 @@ class SlashCommandsTest {
     @Test
     void helpListsEverything() {
         var out = commands.execute("/help").output();
-        for (var name : List.of("/help", "/model", "/compactor", "/advisor", "/compact", "/pin", "/recall",
+        for (var name : List.of("/help", "/model", "/compactor", "/advisor", "/compact", "/pin", "/clear", "/recall",
                 "/keys", "/init", "/instructions", "/skills", "/commands", "/agent-types", "/trust", "/cancel",
                 "/back", "/quit")) {
             assertTrue(out.contains(name), name);
@@ -132,11 +133,13 @@ class SlashCommandsTest {
 
     @Test
     void compactorAndAdvisorSetAndTurnOff() {
-        assertTrue(commands.execute("/advisor").output().contains("off"));
+        commands.execute("/advisor");
+        assertEquals("~deepseek/deepseek-pro-latest", backend.roles.advisor());
         commands.execute("/advisor vendor/smart");
         assertEquals("vendor/smart", backend.roles.advisor());
-        assertTrue(commands.execute("/advisor").output().contains("vendor/smart"));
-        commands.execute("/advisor off");
+        commands.execute("/advisor");
+        assertEquals("~deepseek/deepseek-pro-latest", backend.roles.advisor());
+        commands.execute("/advisor none");
         assertNull(backend.roles.advisor());
         commands.execute("/compactor off");
         assertNull(backend.roles.compactor());
@@ -154,6 +157,14 @@ class SlashCommandsTest {
         backend.hits = List.of("c1 turn 3 boom");
         assertEquals("c1 turn 3 boom", commands.execute("/recall build error").output());
         assertEquals(List.of("compact", "pin", "recall:build error", "recall:build error"), backend.calls);
+    }
+
+    @Test
+    void clearStartsAFreshConversation() {
+        assertEquals("Cleared.", commands.execute("/clear").output());
+        assertTrue(commands.execute("/clear now").error());
+        assertEquals(List.of("clear"), backend.calls);
+        assertTrue(backend.prompts.isEmpty());
     }
 
     @Test

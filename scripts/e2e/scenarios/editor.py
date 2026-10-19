@@ -35,6 +35,10 @@ def fg(s, row, col):
     return s.view.cell(row, col).fg
 
 
+def bg(s, row, col):
+    return s.view.cell(row, col).bg
+
+
 def run(check):
     env = harness.Env(mouse=True)
     try:
@@ -58,6 +62,11 @@ def run(check):
                  s.view.line(0))
         check.ok("the status bar shows the keys", s.view.find("Ctrl-S=Save") is not None, s.view.text())
         check.ok("the chat status line is gone", s.view.find("peers 0") is None, s.view.line(s.rows - 1))
+        check.ok("the text area shows the terminal ground", bg(s, 2, 1) == "default" and bg(s, 2, 20) == "default",
+                 (bg(s, 2, 1), bg(s, 2, 20)))
+        check.ok("the frame and the status bar show the terminal ground",
+                 bg(s, 1, 1) == "default" and bg(s, s.rows - 1, 1) == "default",
+                 (bg(s, 1, 1), bg(s, s.rows - 1, 1)))
 
         # --- syntax colors for Java ---
         check.ok("keyword color", fg(s, 2, 1) == "cyan", fg(s, 2, 1))
@@ -144,6 +153,7 @@ def run(check):
                  and (b"1006", b"h") in closed[last_alt:], closed)
         check.ok("the editor frame is gone", s.view.find("Ctrl-S=Save") is None, s.view.text())
         check.ok("the chat view is drawn again", s.view.find("Jeorje is ready") is not None, s.view.text())
+        check.ok("a chat cell shows the same terminal ground", bg(s, 1, 1) == "default", bg(s, 1, 1))
 
         # --- the chat works again ---
         s.send("/help")
@@ -165,10 +175,7 @@ def run(check):
         check.ok("ordinary text stays plain", fg(s, 4, 1) == "default", fg(s, 4, 1))
         s.key("Alt-x")
         check.ok("Alt-X leaves the Markdown file", s.wait_for("peers", 10), s.view.text())
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
         check.ok("terminal restored", s.terminal_restored())
     finally:
         env.close()

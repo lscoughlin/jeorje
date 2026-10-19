@@ -26,6 +26,13 @@ public interface CommandBackend {
     /** Pins the last message and returns a one-line result. */
     String pinLast();
 
+    /**
+     * Starts a fresh conversation in the foreground agent. The agent forgets its turns, its pinned items, and its
+     * pruned context, and the view of the chat drops its lines. The stored transcript and the index stay, so
+     * {@link #recall} still finds the earlier turns. Returns a one-line result.
+     */
+    String clearConversation();
+
     /** Searches the history and returns one line for each hit. */
     List<String> recall(String query);
 

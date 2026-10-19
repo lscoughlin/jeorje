@@ -18,10 +18,7 @@ def system_text(body):
 
 
 def quit_session(s):
-    s.key("Ctrl-D")
-    if s.exit_code(10) is None:
-        s.key("Ctrl-D")
-        s.exit_code(10)
+    s.exit_quit()
 
 
 def first_request_system(env, s, text="hello"):

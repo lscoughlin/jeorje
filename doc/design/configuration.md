@@ -145,11 +145,13 @@ trust:
   projects: []                     # user config only
 agents:
   dirs: []                         # more directories with skills/, commands/, agents/
+  stepLimit: 200                   # model calls in one agent turn
 plan:
   dir: plan                        # relative to the project directory
 subagents:
   askTimeoutSeconds: 120           # wait time for agent_ask
   maxAsks: 10                      # agent_ask calls for each task
+  stepLimit: 200                   # model calls of one subagent task
 worktree:
   isolation: auto                  # auto, always, or never
   base: head                       # head or snapshot
@@ -223,9 +225,9 @@ Rules for the keys:
 - `models` keys are described in [context-and-compaction.md](context-and-compaction.md#models). A slash command changes the value for the running session only. The command does not change the config file.
 - `context.window` and `context.windows` set the size of the context window. Each value is a positive whole number of tokens. A string such as `"128_000"` is also accepted. For a model, Jeorje uses the entry of `context.windows` for the slug of the model. If there is no entry, it uses `context.window`.
 - `ui.keys` and `editor.keys` are described in [Key bindings](#key-bindings).
-- `subagents` keys are described in [subagents.md](subagents.md#talking-to-other-agents).
+- `subagents` keys are described in [subagents.md](subagents.md#talking-to-other-agents). The key `subagents.stepLimit` sets the limit of the model calls of a subagent task.
 - `worktree` keys are described in [subagents.md](subagents.md#worktrees).
-- `instructions`, `skills`, and `agents` keys are described in [instructions-and-skills.md](instructions-and-skills.md#configuration).
+- `instructions`, `skills`, and `agents` keys are described in [instructions-and-skills.md](instructions-and-skills.md#configuration). The key `agents.stepLimit` sets the step limit of a turn. See [agent-loop.md](agent-loop.md#the-loop).
 - `plan` and `implement` keys are described in [planning.md](planning.md#configuration).
 - `prompts` keys are described in [Prompts](#prompts).
 - `swarm` keys are described in [swarm.md](swarm.md).
@@ -279,7 +281,7 @@ Keys belong to three contexts: the chat screen, the file browser, and the editor
 - **Override.** A key that the config sets replaces the default keys of that action. An action that the config does not name keeps its default keys.
 - **Layers.** Jeorje merges the layers for each action. The project config overrides the user config for the actions that it names.
 - **Conflicts.** Jeorje checks conflicts for each context: the chat screen, the file browser, and the editor. Two actions in the same context cannot have the same key. A key also cannot be a complete binding and the first key of a chord at the same time. Actions in different contexts can share a key. For example, `send` and `browserEdit` both use `Enter`. If a rule fails, Jeorje reports an error that names the two actions and the key, and the start stops. The same holds for an unknown action id and for a key that Jeorje cannot read.
-- **Required actions.** The actions `send`, `interrupt`, and `exit` (chat) and `save` and `close` (editor) must keep at least one key. `none` for one of them is an error. This prevents a lockout. The slash command `/quit` and the editor menu always work.
+- **Required actions.** The actions `send` and `interrupt` (chat) and `save` and `close` (editor) must keep at least one key. `none` for one of them is an error. This prevents a lockout. The slash command `/quit` and the editor menu always work.
 - **Fixed keys.** Some keys are not actions. `Enter` and `Esc` work in the editor and in the dialogs, and `Ctrl-C`, `Ctrl-V`, and `Ctrl-X` are aliases for copy, paste, and cut in the editor. A configured key wins over a fixed key. An alias runs only when it can act: copy and cut need a selection, and paste needs text in the clipboard.
 - **Aliases.** A terminal sends the same code for some keys: `Ctrl-I` and `Tab`, `Ctrl-M` and `Enter`, `Ctrl-[` and `Esc`, `Ctrl-H` and `Backspace`. Jeorje does not accept the `Ctrl-` form of these keys. The error tells the user to use the name.
 - **Keyboard protocol.** Jeorje calls `terminal.hasKittyKeyboardSupport()`. When the terminal supports the Kitty keyboard protocol, Jeorje turns it on with `setKittyKeyboardMode(...)` and turns it off at exit. The terminal then sends `Ctrl-Ins`, `Shift-Ins`, `Alt` combinations, and the modifiers of chord keys in a form that Jeorje can read. The key `ui.keyboardProtocol` is `auto` (default), `on`, or `off`. With `on`, Jeorje turns the protocol on without the support check. The `Ctrl-I`, `Ctrl-M`, and `Ctrl-[` forms stay rejected, so a config works in all terminals.
@@ -299,8 +301,7 @@ Chat screen (`ui.keys`):
 |-----------|---------|--------|
 | `send` | `Enter` | Send the input |
 | `newline` | `Alt-Enter` | New line in the input |
-| `interrupt` | `Ctrl-C` | Interrupt the foreground agent. A second press within 2 s exits. |
-| `exit` | `Ctrl-D` | Exit, on an empty input line |
+| `interrupt` | `Ctrl-C`, `Ctrl-D` | Interrupt the foreground agent. A second press within 2 s exits. |
 | `agents` | `Ctrl-X a` | Open or close the agent switcher |
 | `files` | `Ctrl-X f` | Open the file browser |
 | `expandResult` | `Ctrl-X o` | Expand or collapse the last tool result |
@@ -315,8 +316,8 @@ File browser (`ui.keys`). The browser pane reads these keys. A key that the conf
 
 | Action id | Default | Action |
 |-----------|---------|--------|
-| `browserOpen` | `Right` | Open a directory |
-| `browserClose` | `Left` | Close a directory |
+| `browserOpen` | `Right` | Open a directory and move into it |
+| `browserClose` | `Left` | Close a directory or move to the parent |
 | `browserEdit` | `Enter` | Open the file in the editor |
 | `browserAdd` | `a` | Add the path to the prompt |
 | `browserFilter` | `/` | Filter by name |

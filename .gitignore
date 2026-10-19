@@ -5,10 +5,11 @@ target/
 .jeorje/sessions/
 .jeorje/worktrees/
 .jeorje/stories/
-plan/
+/plan/
 .jeorje/snapshots/
 .jeorje/venv/
 .jeorje/*.log
 __pycache__/
 *.pyc
 .DS_Store
+bin/*.jar

@@ -175,7 +175,8 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
         }
     }
 
-    public record Agents(List<String> dirs) {
+    /** The agent keys. {@code stepLimit} is the number of model calls in one turn. */
+    public record Agents(List<String> dirs, int stepLimit) {
         public Agents {
             dirs = list(dirs);
         }
@@ -184,7 +185,8 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
     public record Plan(String dir) {
     }
 
-    public record Subagents(int askTimeoutSeconds, int maxAsks) {
+    /** The subagent keys. {@code stepLimit} is the number of model calls of one subagent task. */
+    public record Subagents(int askTimeoutSeconds, int maxAsks, int stepLimit) {
     }
 
     public record Sync(int maxRounds, int maxModelCalls, String verify) {
@@ -217,7 +219,8 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
         }
     }
 
-    public record Chat(Highlight highlight) {
+    /** The chat view keys. {@code verbosity} is quiet, normal, or verbose. */
+    public record Chat(String verbosity, Highlight highlight) {
     }
 
     public record Mouse(boolean enabled, int wheelLines, boolean copyOnSelect) {

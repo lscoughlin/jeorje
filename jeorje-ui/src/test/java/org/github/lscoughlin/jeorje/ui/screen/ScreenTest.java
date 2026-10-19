@@ -30,6 +30,12 @@ class ScreenTest {
         assertTrue(c.getAsBoolean(), "condition not reached in time");
     }
 
+    private static int count(String text, String part) {
+        var n = 0;
+        for (var i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + part.length())) n++;
+        return n;
+    }
+
     @Test
     void eventsRenderInOrderOnTheScreen() throws Exception {
         try (var ft = new FakeTerminal(60, 12)) {
@@ -46,6 +52,43 @@ class ScreenTest {
             assertTrue(rows.get(2).toString().contains("2 lines"));
             assertTrue(rows.get(11).toString().contains("main"));
             assertTrue(ft.output().contains("Hello world"));
+        }
+    }
+
+    @Test
+    void clearEmptiesTheScreenAndDrawsEveryRowAgain() throws Exception {
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults());
+            screen.enterTerminal();
+            try {
+                screen.apply(new AgentEvent.TokenDelta(MAIN, "first topic"));
+                var before = ft.output();
+                screen.apply(new AgentEvent.Cleared(MAIN, 3));
+                var output = ft.output().substring(before.length());
+                assertEquals(1, count(output, "\u001b[2J"), "the clear code once: " + output);
+                assertTrue(output.contains("New conversation."), "the screen is drawn again after the clear");
+                var rows = screen.renderScreen(12, 60);
+                assertTrue(rows.get(0).toString().contains("New conversation."), rows.get(0).toString());
+                assertEquals(12, rows.size());
+            } finally {
+                screen.close();
+            }
+        }
+    }
+
+    @Test
+    void aClearOfAnotherAgentKeepsTheScreen() throws Exception {
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults());
+            screen.enterTerminal();
+            try {
+                var before = ft.output();
+                screen.apply(new AgentEvent.Cleared(new AgentId("sub1"), 2));
+                assertFalse(ft.output().substring(before.length()).contains("\u001b[2J"));
+                assertTrue(screen.renderRegion(12, 60).get(0).toString().isBlank());
+            } finally {
+                screen.close();
+            }
         }
     }
 

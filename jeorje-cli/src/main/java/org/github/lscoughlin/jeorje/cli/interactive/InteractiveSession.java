@@ -445,7 +445,7 @@ public final class InteractiveSession implements AutoCloseable {
 
     private AgentSettings agentSettings() {
         return new AgentSettings(session.id(), cwd, window, config.context().budgetPercent(),
-                config.llm().maxOutputTokens(), config.context().recentTurns(), AgentSettings.DEFAULT_STEP_LIMIT,
+                config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(Wiring.promptInstructions(config, cwd, () -> toolSkills)::text)
                 .withMaxProtectedTokens(config.skills().maxProtectedTokens());
@@ -454,7 +454,8 @@ public final class InteractiveSession implements AutoCloseable {
     private SubagentLimits limits() {
         return SubagentLimits.defaults()
                 .withAskTimeout(Duration.ofSeconds(config.subagents().askTimeoutSeconds()))
-                .withMaxAsks(config.subagents().maxAsks());
+                .withMaxAsks(config.subagents().maxAsks())
+                .withMaxModelCalls(config.subagents().stepLimit());
     }
 
     /** The tools of the coding agent as agent tools. */
@@ -965,6 +966,7 @@ public final class InteractiveSession implements AutoCloseable {
                 screen.draw();
                 return;
             }
+            SessionMentions.addPaths(line, cwd, attachments);
             var text = line;
             if (!attachments.isEmpty()) {
                 text = "Files: " + String.join(", ", attachments) + "\n" + line;
@@ -973,7 +975,8 @@ public final class InteractiveSession implements AutoCloseable {
             var target = screen.foreground();
             if (target.equals(MAIN)) {
                 mainBusy = true;
-                agent.submit(new AgentInput.UserInput(text));
+                // A text during a turn joins that turn. A text when the agent has no turn starts a turn.
+                if (!agent.steer(text)) agent.submit(new AgentInput.UserInput(text));
             } else {
                 roster.steer(target, text);
             }
@@ -1056,7 +1059,7 @@ public final class InteractiveSession implements AutoCloseable {
             try {
                 switch (actionId) {
                     case "agents" -> openSwitcherPane();
-                    case "files" -> openBrowserPane();
+                    case "files" -> openBrowser();
                     case "copySelection" -> copyChatSelection();
                     default -> { }
                 }
@@ -1111,7 +1114,7 @@ public final class InteractiveSession implements AutoCloseable {
     }
 
     /** Shows the file browser in the chat region. Enter on a file opens the file in the editor. */
-    void openBrowserPane() {
+    void openBrowser() {
         var size = realTerminal.getSize();
         var browser = new FileBrowser(cwd, new org.github.lscoughlin.jeorje.ui.mouse.Rect(0, 1,
                 Math.max(1, size.getColumns()), Math.max(1, size.getRows() - 3)), config.ui().mouse().wheelLines());
@@ -1371,6 +1374,34 @@ public final class InteractiveSession implements AutoCloseable {
         return new ContextCompactor(pruner, hard, who);
     }
 
+    // ---- clear ----
+
+    /**
+     * Starts a fresh conversation in the foreground agent. The agent forgets its turns, its pinned items, and its
+     * pruned context, and the chat view of the foreground agent drops its lines. The transcript and the index keep
+     * the earlier turns, so {@code /recall} still finds them. A setting that a turn produced, such as the todo list,
+     * goes back to its start value. The chat view reports the clear when the event arrives.
+     *
+     * @return the result for the user, or an empty string when the chat view reports the clear
+     */
+    String clearForeground() {
+        var target = screen.foreground();
+        if (!target.equals(MAIN)) {
+            var child = Agent.live(target).orElse(null);
+            if (child == null) return "The agent of this view is not running. There is nothing to clear.";
+            return child.clear() < 0 ? inTurn() : "";
+        }
+        if (agent.clear() < 0) return inTurn();
+        if (toolState != null) toolState = new AgentState();
+        attachments.clear();
+        saveManifest("idle");
+        return "";
+    }
+
+    private static String inTurn() {
+        return "The agent is in a turn. Run /clear again when the turn ends.";
+    }
+
     // ---- the backend of the slash commands ----
 
     private final class Backend implements org.github.lscoughlin.jeorje.ui.commands.CommandBackend {
@@ -1387,6 +1418,9 @@ public final class InteractiveSession implements AutoCloseable {
         public String compactNow() {
             return compactForeground();
         }
+
+        @Override
+        public String clearConversation() { return clearForeground(); }
 
         @Override
         public String pinLast() {

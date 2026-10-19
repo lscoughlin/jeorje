@@ -58,10 +58,7 @@ def run(check):
         s.key("Esc")
         s.wait_idle(0.6)
         check.ok("Esc closes the browser", s.view.find("open/close, ") is None, s.view.text())
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
         check.ok("terminal restored", s.terminal_restored())
     finally:
         env.close()

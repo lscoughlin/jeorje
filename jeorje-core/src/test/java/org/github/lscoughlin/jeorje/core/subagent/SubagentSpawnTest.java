@@ -115,7 +115,7 @@ class SubagentSpawnTest {
         var limits = SubagentLimits.defaults();
         assertEquals(8, limits.maxConcurrent());
         assertEquals(2, limits.maxDepth());
-        assertEquals(100, limits.maxModelCalls());
+        assertEquals(200, limits.maxModelCalls());
         assertEquals(Duration.ofMinutes(30), limits.maxDuration());
         assertEquals(Duration.ofSeconds(120), limits.askTimeout());
         assertEquals(10, limits.maxAsks());

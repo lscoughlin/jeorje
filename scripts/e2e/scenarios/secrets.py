@@ -70,10 +70,7 @@ def run(check):
                  recall_result[-400:])
         check.ok("the screen never shows the key", KEY not in s.stream_text(), "")
 
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
         s.close()
 
         # The files: the key is in no file under the project directory and the home directory (logs, sessions,

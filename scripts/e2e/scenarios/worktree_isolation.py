@@ -93,9 +93,6 @@ def run(check):
         check.ok("no worktree directory is left", not any(os.path.exists(os.path.join(p, "sub.txt")) or
                                                           os.path.exists(os.path.join(p, ".git")) for p in left), left)
         check.ok("the main file is unchanged", env.project.read("main.txt") == MARKER + "\n")
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
     finally:
         env.close()

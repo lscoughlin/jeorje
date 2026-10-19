@@ -448,7 +448,7 @@ public final class HeadlessWork implements AutoCloseable {
     private AgentSettings settings() {
         return new AgentSettings(session.id(), cwd, Wiring.contextWindow(loaded, roles.defaultModel()),
                 config.context().budgetPercent(), config.llm().maxOutputTokens(), config.context().recentTurns(),
-                AgentSettings.DEFAULT_STEP_LIMIT, null, config.prompts().system(), "", null)
+                config.agents().stepLimit(), null, config.prompts().system(), "", null)
                 .withInstructionsSource(Wiring.promptInstructions(config, cwd, () -> toolSkills)::text)
                 .withMaxProtectedTokens(config.skills().maxProtectedTokens());
     }
@@ -456,7 +456,8 @@ public final class HeadlessWork implements AutoCloseable {
     private SubagentLimits limits() {
         return SubagentLimits.defaults()
                 .withAskTimeout(Duration.ofSeconds(config.subagents().askTimeoutSeconds()))
-                .withMaxAsks(config.subagents().maxAsks());
+                .withMaxAsks(config.subagents().maxAsks())
+                .withMaxModelCalls(config.subagents().stepLimit());
     }
 
     /** The tools of the coding agent as agent tools. */

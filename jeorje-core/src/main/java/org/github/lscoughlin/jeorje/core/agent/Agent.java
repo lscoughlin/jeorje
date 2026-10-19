@@ -7,15 +7,18 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.lang.ref.WeakReference;
 import java.util.Optional;
@@ -97,6 +100,11 @@ public final class Agent implements AutoCloseable {
     private final Map<String, CompletableFuture<Boolean>> confirmations = new ConcurrentHashMap<>();
     private final List<Turn> completed = new ArrayList<>();
     private final List<String> pinned = new ArrayList<>();
+    /** The texts of the user for the running turn. {@link #steeringOpen} says whether a turn takes them. */
+    private final Queue<String> steering = new ConcurrentLinkedQueue<>();
+    private final Object steeringLock = new Object();
+    /** True from the start of a turn to its end, so that a text of the user never waits in the queue. */
+    private boolean steeringOpen;
     private List<ContextEntry> older = List.of();
     private ContextCompactor compactor;
     private ContextCompactor hardCompactor;
@@ -130,6 +138,9 @@ public final class Agent implements AutoCloseable {
         var ref = LIVE.get(id);
         return ref == null ? Optional.empty() : Optional.ofNullable(ref.get());
     }
+
+    /** The settings that the agent uses, including the step limit of a turn. */
+    public AgentSettings settings() { return settings; }
 
     public AgentId id() { return id; }
 
@@ -259,6 +270,113 @@ public final class Agent implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Starts a fresh conversation in this agent. It forgets the finished turns, the pinned items, and the pruned
+     * working context, so that the next request holds only the new input and the system prompt. The turn counter
+     * stays where it is, because the transcript and the index keep the earlier turns: the next turn has a number
+     * above every number on disk, so a chunk id is never used twice. It leaves the plan-mode section and the
+     * compactor in place, and it publishes an {@link AgentEvent.Cleared} event.
+     *
+     * <p>When a turn runs, the call waits for the turn and its compaction to end, then clears. The wait is at most
+     * {@code timeoutMs}. A turn that is still running after the timeout keeps the clear out: the call changes
+     * nothing and returns -1.
+     *
+     * @param timeoutMs the longest time to wait for a running turn, in milliseconds
+     * @return the number of turns that the agent forgot, or -1 when a turn was still running
+     * @throws InterruptedException when the thread is interrupted while it waits
+     */
+    public int clear(long timeoutMs) throws InterruptedException {
+        if (!turnLock.tryLock(timeoutMs, TimeUnit.MILLISECONDS)) return -1;
+        try {
+            int forgotten;
+            synchronized (this) {
+                forgotten = completed.size();
+                completed.clear();
+                pinned.clear();
+                older = List.of();
+            }
+            steering.clear();
+            publish(new AgentEvent.Cleared(id, forgotten));
+            return forgotten;
+        } finally {
+            turnLock.unlock();
+        }
+    }
+
+    /** {@link #clear(long)} with a wait of one second. */
+    public int clear() {
+        try {
+            return clear(1_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        }
+    }
+
+    /**
+     * Adds a text that the running turn takes at its next step boundary. The user steers a turn this way: the
+     * text reaches the model before its next model call, and the turn continues. The agent publishes an
+     * {@link AgentEvent.Steered} event that shows the text as a message of the user.
+     *
+     * <p>A text that arrives after the last step boundary of a turn is not lost: when the turn ended on its own,
+     * the text runs as a new turn (see {@link #runTurn(String, int)}). A text that arrives when the turn is
+     * cancelled waits for the first step boundary of the next turn. A text that arrives when no turn runs is not
+     * queued: the call returns false, and the caller starts a turn with the text. This keeps a text from waiting
+     * in the queue for a turn that may never come.
+     *
+     * <p>A turn that takes a text at a step boundary starts a new count of model calls, so the step limit gives
+     * the turn a new budget. The user can therefore steer a turn that used its budget to its end.
+     *
+     * @return true when a turn runs and takes the text at its next step boundary
+     */
+    public boolean steer(String text) {
+        if (text == null || text.isBlank()) return false;
+        var clean = text.strip();
+        boolean running;
+        synchronized (steeringLock) {
+            running = steeringOpen;
+            if (running) steering.add(clean);
+        }
+        if (!running) return false;
+        publish(new AgentEvent.Steered(id, clean, true));
+        return true;
+    }
+
+    /**
+     * True while a turn can take a text of the user at its next step boundary. The input of the interface uses it
+     * to decide between steering a turn and starting a turn.
+     */
+    public boolean turnActive() {
+        synchronized (steeringLock) {
+            return steeringOpen;
+        }
+    }
+
+    private void openSteering() {
+        synchronized (steeringLock) {
+            steeringOpen = true;
+        }
+    }
+
+    /**
+     * Closes the steering window of a turn and returns the texts that no step boundary took.
+     */
+    private List<String> closeSteering() {
+        synchronized (steeringLock) {
+            steeringOpen = false;
+            var late = new ArrayList<String>();
+            for (var text = steering.poll(); text != null; text = steering.poll()) late.add(text);
+            return late;
+        }
+    }
+
+    /** Puts texts back in the queue, so that the first step boundary of the next turn takes them. */
+    private void requeue(List<String> texts) {
+        synchronized (steeringLock) {
+            steering.addAll(texts);
+        }
+    }
+
     /** Sets the plan-mode section of the system prompt, or null to leave plan mode. */
     public synchronized Agent planMode(String section) {
         this.planMode = section;
@@ -327,73 +445,116 @@ public final class Agent implements AutoCloseable {
     /**
      * Runs one turn on the calling thread with a budget of model calls.
      *
-     * @return the number of model calls that the turn made. A result equal to {@code maxModelCalls} means that
-     *         the budget was used up. The turn may have ended on its own at the same time.
+     * <p>The budget counts the model calls since the last text of the user that the turn took at a step
+     * boundary. A text of the user therefore starts a new count and the turn continues with a full budget. The
+     * budget stays a guard against a model that loops with no input from the user.
+     *
+     * <p>A text of the user that arrives after the last step boundary of a turn runs as a new turn, so no text
+     * is lost. That turn runs in the same call.
+     *
+     * @return the number of model calls that the turn made in all. A result equal to {@code maxModelCalls} means
+     *         that the turn used a full budget up. The result is above {@code maxModelCalls} when a text of the
+     *         user started a new count. The turn may have ended on its own at the same time.
      */
     public int runTurn(String input, int maxModelCalls) {
         turnLock.lock();
         try {
-            return runTurnLocked(input, maxModelCalls);
+            var limit = Math.min(maxModelCalls, settings.stepLimit());
+            var total = 0;
+            var pending = input;
+            while (true) {
+                var outcome = runOneTurn(pending, limit);
+                total += outcome.calls();
+                if (outcome.late().isEmpty()) return total;
+                if (outcome.cancelled()) {
+                    // The user ended the turn. The texts wait for the first step boundary of the next turn.
+                    requeue(outcome.late());
+                    return total;
+                }
+                pending = String.join("\n", outcome.late());
+            }
         } finally {
             turnLock.unlock();
         }
     }
 
-    private int runTurnLocked(String input, int maxModelCalls) {
-        var limit = Math.min(maxModelCalls, settings.stepLimit());
+    /**
+     * The result of one turn.
+     *
+     * @param calls the model calls of the turn
+     * @param cancelled true when the user cancelled the turn
+     * @param late the texts of the user that arrived after the last step boundary of the turn
+     */
+    private record TurnOutcome(int calls, boolean cancelled, List<String> late) {}
+
+    private TurnOutcome runOneTurn(String input, int limit) {
         var token = new CancellationToken();
         current = token;
         token.onCancel(() -> confirmations.values().forEach(f -> f.cancel(false)));
-        var number = ++turnNumber;
-        var messages = new ArrayList<Message>();
-        messages.add(Message.user(input));
-        var calls = 0;
-        while (true) {
-            if (token.isCancelled()) break;
-            if (calls >= limit) {
-                publish(new AgentEvent.Error(id, "Step limit reached: " + limit
-                    + " model calls in one turn. The turn ends."));
-                break;
+        openSteering();
+        try {
+            var number = ++turnNumber;
+            var messages = new ArrayList<Message>();
+            messages.add(Message.user(input));
+            var calls = 0;
+            var total = 0;
+            while (true) {
+                if (token.isCancelled()) break;
+                // A text of the user starts a new count, so the step limit gives the turn a new budget.
+                if (addBoundaryMessages(messages)) calls = 0;
+                if (calls >= limit) {
+                    publish(new AgentEvent.Error(id, "Step limit reached: " + limit
+                        + " model calls in one turn. The turn ends."));
+                    break;
+                }
+                calls++;
+                total++;
+                var built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
+                    olderEntries(), recentTurns(), messages, definitions()));
+                var assistant = callModel(built, token);
+                if (assistant.error() != null) {
+                    publish(new AgentEvent.Error(id, assistant.error()));
+                    break;
+                }
+                if (!assistant.content().isEmpty()) messages.add(new Message(Role.ASSISTANT, assistant.content()));
+                var uses = assistant.content().stream().filter(ToolUse.class::isInstance).map(ToolUse.class::cast)
+                    .toList();
+                if (token.isCancelled()) {
+                    closeOpenCalls(messages, uses, List.of());
+                    break;
+                }
+                if (uses.isEmpty()) break;
+                var results = dispatch(uses, token);
+                messages.add(new Message(Role.USER, List.copyOf(results)));
+                if (token.isCancelled()) break;
             }
-            addBoundaryMessages(messages);
-            calls++;
-            var built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages), olderEntries(),
-                recentTurns(), messages, definitions()));
-            var assistant = callModel(built, token);
-            if (assistant.error() != null) {
-                publish(new AgentEvent.Error(id, assistant.error()));
-                break;
-            }
-            if (!assistant.content().isEmpty()) messages.add(new Message(Role.ASSISTANT, assistant.content()));
-            var uses = assistant.content().stream().filter(ToolUse.class::isInstance).map(ToolUse.class::cast).toList();
-            if (token.isCancelled()) {
-                closeOpenCalls(messages, uses, List.of());
-                break;
-            }
-            if (uses.isEmpty()) break;
-            var results = dispatch(uses, token);
-            messages.add(new Message(Role.USER, List.copyOf(results)));
-            if (token.isCancelled()) break;
+            finishTurn(new Turn(id, number, messages));
+            return new TurnOutcome(total, token.isCancelled(), closeSteering());
+        } catch (RuntimeException | Error e) {
+            closeSteering();
+            throw e;
         }
-        finishTurn(new Turn(id, number, messages));
-        return calls;
     }
 
     /**
      * Asks the step boundary hook for messages. A message joins the last user message, so that a tool result
-     * always follows its tool use directly. Otherwise it becomes a new user message.
+     * always follows its tool use directly. Otherwise it becomes a new user message. The texts of the user that
+     * arrived while the turn runs come first, as one user message.
+     *
+     * @return true when the turn took at least one text of the user, which starts a new count of model calls
      */
-    private void addBoundaryMessages(List<Message> messages) {
+    private boolean addBoundaryMessages(List<Message> messages) {
+        var steered = addSteeringTexts(messages);
         List<String> extra;
         try {
             extra = stepBoundary.messages();
         } catch (RuntimeException e) {
             log.atWarn().log(() -> "The step boundary hook failed: " + message(e));
-            return;
+            return steered;
         }
-        if (extra == null || extra.isEmpty()) return;
+        if (extra == null || extra.isEmpty()) return steered;
         var texts = extra.stream().filter(t -> t != null && !t.isEmpty()).<Content>map(Text::new).toList();
-        if (texts.isEmpty()) return;
+        if (texts.isEmpty()) return steered;
         var last = messages.isEmpty() ? null : messages.getLast();
         if (last != null && last.role() == Role.USER) {
             var merged = new ArrayList<>(last.content());
@@ -402,6 +563,28 @@ public final class Agent implements AutoCloseable {
         } else {
             messages.add(new Message(Role.USER, texts));
         }
+        return steered;
+    }
+
+    /**
+     * Moves the texts that the user typed while the turn runs into the context. They go last, so the model reads
+     * them after the tool results of the step that just ended.
+     *
+     * @return true when there was at least one text
+     */
+    private boolean addSteeringTexts(List<Message> messages) {
+        var texts = new ArrayList<Content>();
+        for (var next = steering.poll(); next != null; next = steering.poll()) texts.add(new Text(next));
+        if (texts.isEmpty()) return false;
+        var last = messages.isEmpty() ? null : messages.getLast();
+        if (last != null && last.role() == Role.USER && last.content().stream().allMatch(ToolResult.class::isInstance)) {
+            var merged = new ArrayList<>(last.content());
+            merged.addAll(texts);
+            messages.set(messages.size() - 1, new Message(Role.USER, merged));
+        } else {
+            messages.add(new Message(Role.USER, texts));
+        }
+        return true;
     }
 
     private void closeOpenCalls(List<Message> messages, List<ToolUse> uses, List<ToolResult> done) {

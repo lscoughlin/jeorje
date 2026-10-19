@@ -141,7 +141,8 @@ public final class SlashCommands {
         var argPrefix = line.substring(space + 1);
         var options = switch (name) {
             case "trust" -> List.of("revoke");
-            case "compactor", "advisor" -> List.of("off");
+            case "compactor" -> List.of("off");
+            case "advisor" -> List.of("none");
             default -> List.<String>of();
         };
         return options.stream().filter(o -> o.startsWith(argPrefix))
@@ -183,9 +184,12 @@ public final class SlashCommands {
         register("model", "/model [slug]", "Show or set the default model", a -> role("model", a, false));
         register("compactor", "/compactor [slug|off]", "Show or set the compactor model",
                 a -> role("compactor", a, true));
-        register("advisor", "/advisor [slug|off]", "Show or set the advisor model", a -> role("advisor", a, true));
+        register("advisor", "/advisor [slug|none]", "Set the advisor model (default " + DEFAULT_ADVISOR + "). none turns it off", a -> role("advisor", a, true));
         register("compact", "/compact", "Run compaction now", a -> CommandResult.ok(backend.compactNow()));
         register("pin", "/pin", "Pin the last message", a -> CommandResult.ok(backend.pinLast()));
+        register("clear", "/clear", "Start a fresh conversation",
+                a -> a.isBlank() ? CommandResult.ok(backend.clearConversation())
+                        : CommandResult.fail("Usage: /clear"));
         register("recall", "/recall <query>", "Search the history and show the hits", this::recall);
         register("keys", "/keys", "Show the effective key bindings", a -> CommandResult.ok(KeyHelp.render(backend.keys())));
         register("init", "/init", "Ask the agent to write an AGENTS.md", a -> {
@@ -248,13 +252,20 @@ public final class SlashCommands {
         return s + " ".repeat(Math.max(0, width - s.length()));
     }
 
-    private CommandResult role(String which, String arg, boolean canTurnOff) {
+    /** The advisor model that {@code /advisor} sets when it has no argument. */
+    static final String DEFAULT_ADVISOR = "~deepseek/deepseek-pro-latest";
+
+    private CommandResult role(String which, String arg0, boolean canTurnOff) {
+        var arg = arg0;
         var roles = backend.roles();
         var current = switch (which) {
             case "model" -> roles.defaultModel();
             case "compactor" -> roles.compactor();
             default -> roles.advisor();
         };
+        if (which.equals("advisor") && arg.isBlank()) {
+            arg = DEFAULT_ADVISOR;
+        }
         if (arg.isBlank()) {
             var shown = current == null || current.isBlank() ? "off" : current;
             return CommandResult.ok("The " + label(which) + " is " + shown + ".");
@@ -263,7 +274,7 @@ public final class SlashCommands {
             return CommandResult.fail("A model slug has no spaces: " + arg);
         }
         String value;
-        if (arg.equalsIgnoreCase("off")) {
+        if (arg.equalsIgnoreCase(which.equals("advisor") ? "none" : "off")) {
             if (!canTurnOff) {
                 return CommandResult.fail("The default model cannot be off. Give a slug.");
             }

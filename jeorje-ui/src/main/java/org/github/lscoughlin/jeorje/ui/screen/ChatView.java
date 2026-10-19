@@ -10,6 +10,7 @@ import org.github.lscoughlin.jeorje.core.model.ToolResultData;
 import org.github.lscoughlin.jeorje.ui.chat.FenceHighlighter;
 import org.github.lscoughlin.jeorje.ui.chat.HighlightContext;
 import org.github.lscoughlin.jeorje.ui.chat.ResultRenderers;
+import org.github.lscoughlin.jeorje.ui.chat.Verbosity;
 import org.github.lscoughlin.jeorje.ui.mouse.OlderLines;
 import org.github.lscoughlin.jeorje.ui.mouse.Rect;
 import org.github.lscoughlin.jeorje.ui.mouse.ScrollBar;
@@ -115,6 +116,13 @@ public final class ChatView {
         @Override
         List<AttributedString> build() {
             var out = new ArrayList<AttributedString>();
+            if (verbosity == Verbosity.QUIET) {
+                // The user asked for no tool noise. Failures and approvals still show, because they need an answer.
+                if (result == null || !result.error()) return out;
+                var failed = result.output().split("\n", -1)[0];
+                out.add(new AttributedString("! " + tool + " " + oneLine(failed), ERROR));
+                return out;
+            }
             var head = new AttributedStringBuilder();
             head.append("▶ ", TOOL).append(tool, TOOL.bold());
             if (summary != null && !summary.isBlank()) head.append(" ").append(oneLine(summary), DIM);
@@ -122,7 +130,7 @@ public final class ChatView {
             if (result == null) return out;
             var style = result.error() ? ERROR : DIM;
             var all = result.output().split("\n", -1);
-            if (expanded) {
+            if (expanded || verbosity == Verbosity.VERBOSE) {
                 if (renderers != null && !result.error() && RENDERED_TOOLS.contains(tool)) {
                     for (var l : renderers.render(id, tool, pathOf(summary), result.output())) {
                         out.add(indent(l));
@@ -170,6 +178,7 @@ public final class ChatView {
     private final Deque<Entry> entries = new ArrayDeque<>();
     private final List<AttributedString> head = new ArrayList<>();
     private final Selection selection = new Selection();
+    private volatile Verbosity verbosity = Verbosity.NORMAL;
     private TextEntry streaming;
     private ToolEntry lastTool;
     private int scrollBack;
@@ -212,6 +221,34 @@ public final class ChatView {
         var before = measure();
         add(new TextEntry(text, false, DIM));
         grew(before);
+    }
+
+    /**
+     * Sets how much of the work of the agent the view shows. A change redraws the tool calls that the view already
+     * holds.
+     *
+     * @param level the new level, or null for {@link Verbosity#NORMAL}
+     */
+    public synchronized void verbosity(Verbosity level) {
+        verbosity = level == null ? Verbosity.NORMAL : level;
+        for (var entry : entries) entry.invalidate();
+    }
+
+    /** The level that the view shows. */
+    public Verbosity verbosity() { return verbosity; }
+
+    /**
+     * Removes all lines, together with the selection, the scroll position, and any partly streamed text. The source
+     * of older lines stays, because it holds the stored transcript and not the lines of the view.
+     */
+    public synchronized void clear() {
+        entries.clear();
+        head.clear();
+        streaming = null;
+        lastTool = null;
+        scrollBack = 0;
+        newLines = 0;
+        selection.clear();
     }
 
     /** Applies one agent event. */
@@ -260,6 +297,16 @@ public final class ChatView {
             case AgentEvent.Error e -> {
                 streaming = null;
                 add(new TextEntry("! " + e.message(), false, ERROR));
+            }
+            case AgentEvent.Steered s -> {
+                // The input line of the interface already shows the text of the user. A second line would repeat it.
+                streaming = null;
+            }
+            case AgentEvent.Cleared c -> {
+                clear();
+                var before = measure();
+                add(new TextEntry("New conversation. " + c.turns() + " earlier turns left the context.", false, DIM));
+                grew(before);
             }
         }
     }

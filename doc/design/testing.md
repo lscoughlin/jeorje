@@ -46,7 +46,7 @@ Four tests run only when `JEORJE_LIVE=1` is set: `LiveSmokeTest` and `LivePlanIm
 - Rejection of invalid compactor answers (overlapping spans, a wrong ratio, a keyword that is not in the chunk), and the fallback pruner.
 - Keyword hints: each keyword is in the original text, and the hint as a TEXT query finds the pruned chunk in the top 3 results.
 - Prompts: `text` and `file` both set is an error, `append` and `replace` build the right prompt, the project value overrides the user value, unknown variables are rejected, an edited prompt file takes effect on the next request, and the fixed parts and the output contract stay in a custom prompt.
-- Model roles: `/model`, `/compactor`, and `/advisor` change the right client. `/advisor off` removes the `advisor` tool.
+- Model roles: `/model`, `/compactor`, and `/advisor` change the right client. `/advisor none` removes the `advisor` tool.
 - Permission rule matching and the strictest-decision rule.
 - `--yes` and `--yolo`: `--yes` keeps `DENY` rules and the sandbox, `--yolo` allows every action, `--yolo` wins over `--yes`, secrets never reach logs or child processes in `--yolo`, and the audit log records the source `yolo`.
 - Path sandbox: symbolic links, `..` segments, and paths outside the workspace.
@@ -140,7 +140,7 @@ Each scenario is a file in `scripts/e2e/scenarios/` with a function `run(check)`
 
 | Scenario | What it checks |
 |----------|----------------|
-| `basic_chat` | A typed message, the stub answer, the recorded request, exit with `Ctrl-D`, and the restored terminal. |
+| `basic_chat` | A typed message, the stub answer, the recorded request, exit with `/quit`, and the restored terminal. |
 | `chat_highlight` | Colors of code and diffs in the chat view, and `NO_COLOR`. |
 | `chat_mouse` | Wheel scroll, the follow notice, the scroll bar, selection, and copy through OSC 52. |
 | `compaction` | The request size stops growing, recent file paths and the todo list stay in every request, a pruned chunk has a recall hint, and `recall` returns the original text. |

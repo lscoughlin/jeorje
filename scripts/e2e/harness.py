@@ -418,6 +418,13 @@ class Session:
         self.pump(0.3)
         return self.proc.poll()
 
+    def exit_quit(self, script_wait=1.0, timeout=15):
+        """/quit, then wait for the exit. Returns the exit code or None."""
+        self.send("/quit")
+        self.key("Enter")
+        self.wait_idle(script_wait)
+        return self.exit_code(timeout)
+
     def terminal_restored(self):
         try:
             after = termios.tcgetattr(self.master if sys.platform == "darwin" else self.slave)

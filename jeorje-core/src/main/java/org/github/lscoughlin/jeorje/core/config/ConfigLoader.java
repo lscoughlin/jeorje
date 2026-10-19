@@ -376,6 +376,10 @@ public final class ConfigLoader {
                 "must be advisor or none");
         require(Set.of("auto", "on", "off").contains(c.ui().keyboardProtocol()), "ui.keyboardProtocol",
                 "must be auto, on, or off");
+        require(Set.of("quiet", "normal", "verbose").contains(c.ui().chat().verbosity()), "ui.chat.verbosity",
+                "must be quiet, normal, or verbose");
+        require(c.agents().stepLimit() > 0, "agents.stepLimit", "must be a positive integer");
+        require(c.subagents().stepLimit() > 0, "subagents.stepLimit", "must be a positive integer");
         for (var rule : c.permissions().rules()) {
             require(rule.tool() != null && !rule.tool().isBlank(), "permissions.rules.tool", "is required");
             require(rule.decision() != null && Set.of("allow", "ask", "deny").contains(rule.decision()),

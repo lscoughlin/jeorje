@@ -88,10 +88,7 @@ def run(check):
         s.wait_idle()
         user = env.server.last_user_text(env.server.requests[6])
         check.ok("custom command expands the argument", "GREET-BODY-66 hello world" in user, user[-300:])
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
         check.ok("terminal restored", s.terminal_restored())
     finally:
         env.close()

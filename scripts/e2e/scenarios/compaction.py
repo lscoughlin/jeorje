@@ -139,10 +139,7 @@ def run(check):
             marker = "ORIGINALMARK%d" % state["recall_turn"]
             check.ok("recall returns the original text", any(marker in t for t in tool_msgs),
                      (state["recall_id"], [t[:120] for t in tool_msgs[-2:]]))
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
         check.ok("terminal restored", s.terminal_restored())
     finally:
         env.close()

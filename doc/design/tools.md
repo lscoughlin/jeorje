@@ -210,7 +210,7 @@ The advisor is a second model. It is usually stronger than the default model. Th
 - Input: an optional `question`. With no question, the advisor reviews the whole task.
 - Jeorje sends the working context of the calling agent to the advisor model. The pruned chunks in the context have their keyword hints. The advisor has no tools. The answer has at most 4,096 tokens.
 - Output: the advice as text. The calling agent receives it as a normal tool result.
-- The user sets the model with `/advisor <slug>`. `/advisor off` removes the model and the tool.
+- The user sets the model with `/advisor [slug]`. With no slug, it sets `~deepseek/deepseek-pro-latest`. `/advisor none` removes the model and the tool.
 - The advisor call is part of the turn of the calling agent. It is in the history as part of the chunk of that turn.
 
 ### Extension tools

@@ -1,0 +1,12 @@
+permissions:
+  rules:
+    - tool: webfetch
+      decision: allow
+    - tool: patch
+      decision: allow
+    - tool: write
+      decision: allow
+    - tool: edit
+      decision: allow
+    - tool: bash
+      decision: allow

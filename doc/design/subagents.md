@@ -65,7 +65,7 @@ The UI has one foreground agent. The user sees its chat and types to it. All oth
 
 - The user opens the agent list with `Ctrl-X a`, or runs `/agents`. The list shows each agent with its name, state, and the last output line.
 - The user selects a subagent. It becomes the foreground chat. The UI shows the full history of that subagent from `transcript.jsonl` and then streams new output.
-- Text that the user types goes to the foreground subagent as a user input. This is steering. The subagent handles it as the next input, or it interrupts the current step if the user presses `Ctrl-C` first.
+- Text that the user types goes to the foreground subagent as a user input. This is steering. The subagent handles it as the next input, or it interrupts the current step if the user presses `Ctrl-C` first. A text that reaches the running turn at a step boundary starts a new count of model calls, so the step limit of the turn gives it a new budget. See [agent-loop.md](agent-loop.md#the-loop).
 - `Ctrl-X a` or `/back` returns the user to the parent.
 - A background agent that needs input shows a notice in the status line. The user can switch to it.
 - A remote subagent behaves in the same way. The UI sends the steering text to the peer. See [swarm.md](swarm.md).
@@ -167,10 +167,12 @@ Cancel of a parent cancels all of its subagents. The user can cancel one subagen
 |-------|---------|
 | Subagents running at the same time for each instance | 8 |
 | Nesting depth (subagent that spawns a subagent) | 2 |
-| Model calls for each subagent task | 100 |
+| Model calls for each subagent task | 200 |
 | Wall-clock time for each subagent task | 30 minutes |
 
 When a limit is reached, the runtime stops the subagent. Its state becomes `FAILED` with the reason.
+
+The key `subagents.stepLimit` sets the limit of the model calls of a subagent task. It also sets the step limit of the turns of a subagent. The key `agents.stepLimit` sets the step limit of the turns of the main agent. See [agent-loop.md](agent-loop.md#the-loop).
 
 ## Worktrees
 

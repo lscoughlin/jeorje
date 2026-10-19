@@ -1,4 +1,4 @@
-"""Type a message, see the stub answer, check the recorded request, exit with Ctrl-D, terminal restored."""
+"""Type a message, see the stub answer, check the recorded request, exit with /quit, terminal restored."""
 import harness
 
 
@@ -21,12 +21,7 @@ def run(check):
         pos = s.view.find("say hello zebra") or (0, 0)
         cell = s.view.cell(*pos)
         check.ok("cell char and colors readable", cell.char != "" and cell.fg is not None and cell.bg is not None, cell)
-        code = None
-        for _ in range(2):
-            s.key("Ctrl-D")
-            code = s.exit_code(15)
-            if code is not None:
-                break
+        code = s.exit_quit()
         check.ok("exit code 0", code == 0, code)
         check.ok("alternate screen left", s.left_alt_screen())
         check.ok("terminal restored", s.terminal_restored())

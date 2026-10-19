@@ -105,10 +105,7 @@ def run(check):
             copied = osc52_texts(s.raw_output())
             check.ok("double click selects a word", "later06" in copied, copied)
 
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
         check.ok("mouse tracking turned off at exit", b"\x1b[?1000l" in s.raw or b"\x1b[?1002l" in s.raw)
     finally:
         env.close()

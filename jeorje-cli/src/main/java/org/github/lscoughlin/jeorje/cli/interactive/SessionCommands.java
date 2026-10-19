@@ -37,7 +37,7 @@ final class SessionCommands {
         slash.register("merge", "/merge <agent> [strategy]", "Merge the worktree of an agent", this::merge);
         slash.register("discard", "/discard <agent>", "Discard the worktree and the branch of an agent", this::discard);
         slash.register("agents", "/agents [name|number]", "List the agents, or switch to one", this::agents);
-        slash.register("files", "/files [filter|add <path>]", "Show the files of the project", this::files);
+        slash.register("files", "/files [list [filter]]", "Open the file browser, or print the tree", this::files);
         slash.register("edit", "/edit <path>", "Open a file in the editor", this::edit);
         slash.register("peers", "/peers", "List the peers of the swarm", a -> peers());
     }
@@ -247,22 +247,29 @@ final class SessionCommands {
 
     private CommandResult files(String args) {
         var arg = args.strip();
-        if (arg.startsWith("add ")) {
-            var path = arg.substring(4).strip();
-            if (path.isEmpty()) return CommandResult.fail("Usage: /files add <path>");
-            session.attachments().add(path);
-            return CommandResult.ok("Added " + path + " to the next message.");
+        if (arg.isEmpty()) {
+            session.openBrowser();
+            return CommandResult.ok("");
+        }
+        var filter = "";
+        if (arg.equals("list")) {
+            filter = "";
+        } else if (arg.startsWith("list ")) {
+            filter = arg.substring(5).strip();
+        } else {
+            return CommandResult.fail("Usage: /files [list [filter]]");
         }
         var size = session.realTerminal().getSize();
         var browser = new FileBrowser(session.cwd(), new Rect(0, 0, Math.max(1, size.getColumns()),
                 Math.max(1, size.getRows())), session.config().ui().mouse().wheelLines());
         browser.open();
-        if (!arg.isEmpty()) browser.setFilter(arg);
+        if (!filter.isEmpty()) browser.setFilter(filter);
+        // The text listing shows every row, so the bounds cover the whole tree.
+        browser.setBounds(new Rect(0, 0, Math.max(1, size.getColumns()), Math.max(1, browser.rows().size())));
         var lines = new ArrayList<String>();
-        lines.add("Files in " + session.cwd() + (arg.isEmpty() ? "" : " (filter: " + arg + ")"));
+        lines.add("Files in " + session.cwd() + (filter.isEmpty() ? "" : " (filter: " + filter + ")"));
         lines.addAll(browser.render());
-        lines.add("Use /edit <path> to open a file. Use /files add <path> to add a file to the next message. "
-                + "The key Ctrl-X f opens the file browser pane.");
+        lines.add("Use /edit <path> to open a file. The key Ctrl-X f opens the file browser pane.");
         return CommandResult.ok(String.join("\n", lines));
     }
 
@@ -285,7 +292,6 @@ final class SessionCommands {
             any = true;
             sb.append("  ").append(peer.name()).append(' ').append(peer.address()).append(' ').append(peer.state());
             if (!peer.workspace().isEmpty()) sb.append(' ').append(peer.workspace());
-            if (!peer.capabilities().isEmpty()) sb.append(" [").append(String.join(", ", peer.capabilities())).append(']');
             if (!peer.capabilities().isEmpty()) sb.append(" [").append(String.join(", ", peer.capabilities())).append(']');
             sb.append('\n');
         }

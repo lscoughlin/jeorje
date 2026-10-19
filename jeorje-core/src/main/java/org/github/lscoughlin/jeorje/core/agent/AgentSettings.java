@@ -14,7 +14,7 @@ import org.github.lscoughlin.jeorje.core.config.JeorjeConfig;
  * @param budgetPercent the share of the window for the working context (default 60)
  * @param maxOutputTokens the output limit for each model call
  * @param recentTurns turns that stay verbatim (default 6)
- * @param stepLimit the largest number of model calls in one turn (default 100)
+ * @param stepLimit the largest number of model calls in one turn (default 200)
  * @param retry the retry settings for model calls
  * @param systemPrompt the {@code prompts.system} config, or null for the built-in text
  * @param instructions the text of the {@code AGENTS.md} files and the skill list, or an empty string
@@ -45,8 +45,8 @@ public record AgentSettings(String sessionId, Path workingDirectory, int context
             stepLimit, retry, systemPrompt, instructions, sleeper, null, DEFAULT_MAX_PROTECTED_TOKENS);
     }
 
-    /** The default step limit. */
-    public static final int DEFAULT_STEP_LIMIT = 100;
+    /** The default step limit. The config key {@code agents.stepLimit} sets it. */
+    public static final int DEFAULT_STEP_LIMIT = 200;
 
     public AgentSettings {
         Objects.requireNonNull(sessionId, "sessionId");

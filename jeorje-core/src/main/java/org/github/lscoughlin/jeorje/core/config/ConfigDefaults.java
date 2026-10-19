@@ -87,11 +87,13 @@ final class ConfigDefaults {
               projects: []
             agents:
               dirs: []
+              stepLimit: 200
             plan:
               dir: plan
             subagents:
               askTimeoutSeconds: 120
               maxAsks: 10
+              stepLimit: 200
             worktree:
               isolation: auto
               base: head
@@ -125,6 +127,7 @@ final class ConfigDefaults {
             ui:
               keyboardProtocol: auto
               chat:
+                verbosity: normal
                 highlight:
                   enabled: true
                   maxLines: 2000

@@ -186,8 +186,9 @@ class AgentTest {
     }
 
     @Test
-    void defaultStepLimitIs100() {
-        assertEquals(100, Rig.settings(dir).stepLimit());
+    void defaultStepLimitIs200() {
+        assertEquals(200, Rig.settings(dir).stepLimit());
+        assertEquals(200, AgentSettings.DEFAULT_STEP_LIMIT);
     }
 
     @Test

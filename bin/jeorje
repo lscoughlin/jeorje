@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Start Jeorje from a source checkout.
+#
+# Usage: bin/jeorje [--rebuild] [jeorje options and commands]
+#
+#   bin/jeorje                      start the interactive interface in the current directory
+#   bin/jeorje run "fix the bug"    run one task with no interface
+#   bin/jeorje --resume             continue the latest session
+#   bin/jeorje --rebuild            build the jar again before the start
+#
+# The script runs bin/jeorje.jar. The command "task dist" makes that jar. The script builds it when it is missing. It passes all other arguments to Jeorje.
+# The API key comes from the environment variable that llm.apiKeyEnv names
+# (default OPENROUTER_API_KEY).
+#
+# Environment variables:
+#   JEORJE_JAR         path of the jar (default: bin/jeorje.jar in this checkout)
+#   JEORJE_JAVA        the java program to use (default: $JAVA_HOME/bin/java, then java in the path)
+#   JEORJE_JAVA_OPTS   extra options for the JVM
+#   JEORJE_NO_BUILD=1  never build; stop with an error when the jar is missing
+
+set -euo pipefail
+
+# Find the checkout, also when this script is started through a symbolic link.
+source_path="${BASH_SOURCE[0]}"
+while [ -h "$source_path" ]; do
+    link_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    source_path="$(readlink "$source_path")"
+    case "$source_path" in /*) ;; *) source_path="$link_dir/$source_path" ;; esac
+done
+root="$(cd -P "$(dirname "$source_path")/.." && pwd)"
+jar="${JEORJE_JAR:-$root/bin/jeorje.jar}"
+
+die() { echo "jeorje: $*" >&2; exit 1; }
+
+# The java program: Jeorje needs Java 25 or newer.
+if [ -n "${JEORJE_JAVA:-}" ]; then
+    java="$JEORJE_JAVA"
+elif [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    java="$JAVA_HOME/bin/java"
+else
+    java="$(command -v java || true)"
+fi
+[ -n "$java" ] || die "no java program found. Install Java 25 or set JEORJE_JAVA or JAVA_HOME."
+
+version_line="$("$java" -version 2>&1 | head -n 1)"
+major="$(printf '%s\n' "$version_line" | sed -E 's/^[^"]*"([0-9]+).*/\1/')"
+case "$major" in
+    ''|*[!0-9]*) die "cannot read the Java version from: $version_line" ;;
+esac
+[ "$major" -ge 25 ] || die "Jeorje needs Java 25 or newer. Found Java $major ($java)."
+
+# Build the jar when the user asks, or when it is missing.
+rebuild=0
+if [ "${1:-}" = "--rebuild" ]; then
+    rebuild=1
+    shift
+fi
+if [ "$rebuild" -eq 1 ] || [ ! -f "$jar" ]; then
+    [ "${JEORJE_NO_BUILD:-0}" != "1" ] || die "the jar is missing: $jar"
+    [ -f "$root/Taskfile.yaml" ] || die "no Taskfile.yaml in $root, so the jar cannot be built. Set JEORJE_JAR."
+    command -v task >/dev/null 2>&1 || die "Task (task) is not in the path, so the jar cannot be built."
+    echo "jeorje: building $jar ..." >&2
+    (cd "$root" && JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$java" 2>/dev/null || echo "$java")")")" \
+        task dist) >&2 \
+        || die "the build failed. Run 'task dist' in $root to see the errors."
+    [ -f "$jar" ] || die "the build did not make $jar"
+fi
+
+# JVM options: the vector module speeds up Lucene, and native access is needed by the terminal and Lucene.
+jvm_opts=(--enable-native-access=ALL-UNNAMED)
+if "$java" --list-modules 2>/dev/null | grep -q '^jdk.incubator.vector'; then
+    jvm_opts+=(--add-modules jdk.incubator.vector)
+fi
+if [ -n "${JEORJE_JAVA_OPTS:-}" ]; then
+    # shellcheck disable=SC2206 # the user writes the options as one string; word splitting is intended
+    jvm_opts+=($JEORJE_JAVA_OPTS)
+fi
+
+exec "$java" "${jvm_opts[@]}" -jar "$jar" "$@"

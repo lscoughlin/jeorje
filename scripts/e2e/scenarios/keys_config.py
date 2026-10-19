@@ -40,10 +40,7 @@ def run(check):
         s.key("F3")
         s.wait_idle(0.6)
         check.ok("F3 closes the browser", s.view.find("open/close, ") is None, s.view.text())
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
     finally:
         env.close()
 
@@ -73,10 +70,7 @@ def run(check):
         s.send("q")
         s.wait_idle(0.6)
         check.ok("q closes the browser", s.view.find("open/close, ") is None, s.view.text())
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
     finally:
         env.close()
 

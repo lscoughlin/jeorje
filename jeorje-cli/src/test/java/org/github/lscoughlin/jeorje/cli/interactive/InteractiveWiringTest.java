@@ -159,6 +159,72 @@ class InteractiveWiringTest {
     }
 
     @Test
+    void theFilesCommandListsTheTreeAndTheFilter() throws Exception {
+        var router = new SessionRig.Router(new ScriptedLlmClient());
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            var list = rig.session.slash().execute("/files list");
+            assertTrue(list.output().contains("README.md"), list.output());
+            var filtered = rig.session.slash().execute("/files list md");
+            assertTrue(filtered.output().lines().findFirst().orElseThrow().contains("(filter: md)"), filtered.output());
+            assertTrue(filtered.output().contains("README.md"), filtered.output());
+        }
+    }
+
+    @Test
+    void theFilesCommandRejectsTheOldAddFormAndOtherWords() throws Exception {
+        var router = new SessionRig.Router(new ScriptedLlmClient());
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            var add = rig.session.slash().execute("/files add README.md");
+            assertTrue(add.error(), add.output());
+            assertTrue(add.output().contains("Usage: /files [list [filter]]"), add.output());
+            assertTrue(rig.session.attachments().isEmpty(), rig.session.attachments().toString());
+            var nope = rig.session.slash().execute("/files nope");
+            assertTrue(nope.error(), nope.output());
+            assertTrue(nope.output().contains("Usage: /files [list [filter]]"), nope.output());
+        }
+    }
+
+    @Test
+    void theFilesCommandOpensThePaneAndEscClosesIt() throws Exception {
+        var router = new SessionRig.Router(new ScriptedLlmClient());
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            rig.type("/files\r");
+            await("browser pane", () -> rig.session.screen().paneActive());
+            assertTrue(rig.session.screen().paneActive());
+            rig.type("\u001b");
+            await("pane gone", () -> !rig.session.screen().paneActive());
+            assertFalse(rig.session.screen().paneActive());
+        }
+    }
+
+    @Test
+    void aMentionAddsTheFileToTheNextMessage() throws Exception {
+        var router = new SessionRig.Router(new ScriptedLlmClient(Response.text("Read it.")));
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            rig.type("read @README.md\r");
+            await("turn", () -> rig.session.agent().turns().size() == 1);
+            var first = router.mainRequests.getFirst();
+            var sent = new StringBuilder();
+            first.messages().forEach(m -> sent.append(SessionRig.text(m)).append('\n'));
+            assertTrue(sent.toString().contains("Files: README.md"), sent.toString());
+            assertTrue(sent.toString().contains("@README.md"), sent.toString());
+            assertTrue(rig.session.attachments().isEmpty(), rig.session.attachments().toString());
+        }
+    }
+
+    @Test
     void aRefusedTrustPromptKeepsTheProjectSkillsOut() throws Exception {
         var router = new SessionRig.Router(new ScriptedLlmClient());
         try (var rig = new SessionRig(tmp, router, null)) {

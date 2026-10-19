@@ -14,7 +14,7 @@ final class KeyBindings {
     static final Map<String, String> EDITOR = new LinkedHashMap<>();
 
     static {
-        put(CHAT, "send", "Enter", "newline", "Alt-Enter", "interrupt", "Ctrl-C", "exit", "Ctrl-D",
+        put(CHAT, "send", "Enter", "newline", "Alt-Enter", "interrupt", "Ctrl-C, Ctrl-D",
                 "agents", "Ctrl-X a", "files", "Ctrl-X f", "expandResult", "Ctrl-X o", "redraw", "Ctrl-L",
                 "follow", "Ctrl-X b", "copySelection", "Ctrl-X c", "scrollUp", "PgUp", "scrollDown", "PgDn",
                 "browserOpen", "Right", "browserClose", "Left", "browserEdit", "Enter", "browserAdd", "a",

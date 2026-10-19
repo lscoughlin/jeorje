@@ -507,7 +507,7 @@ public final class Wiring {
         if (roles.advisorToolEnabled()) tools.add(advisor.slot());
 
         var settings = new AgentSettings(session.id(), cwd, window, config.context().budgetPercent(),
-                config.llm().maxOutputTokens(), config.context().recentTurns(), AgentSettings.DEFAULT_STEP_LIMIT,
+                config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(promptInstructions(config, cwd, () -> visibleSkills)::text)
                 .withMaxProtectedTokens(config.skills().maxProtectedTokens());
@@ -544,7 +544,8 @@ public final class Wiring {
                             model == null || model.isBlank() ? roles.defaultModel() : model))
                     .store(store).transcript(transcript::writeTurn).agentEvents(onEvent)
                     .pruneListener((child, chunks) -> skillTool.ifPresent(t -> t.releasePruned(child.value(), chunks)))
-                    .events(swarm::onSubagentEvent).remote(swarm).limits(SubagentLimits.defaults());
+                    .events(swarm::onSubagentEvent).remote(swarm)
+                    .limits(SubagentLimits.defaults().withMaxModelCalls(config.subagents().stepLimit()));
             subagents = builder.build();
             tools.addAll(PeerSpawnTool.wrap(AgentTools.install(subagents, session.id()), subagents));
         }

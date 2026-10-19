@@ -79,10 +79,7 @@ def run(check):
                      a_bg != r_bg and (not_default(a_bg) or not_default(r_bg)), (a_bg, r_bg, a, r))
             check.ok("added line is tinted", not_default(a_bg), a_bg)
             check.ok("removed line is tinted", not_default(r_bg), r_bg)
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
     finally:
         env.close()
 
@@ -98,9 +95,6 @@ def run(check):
                 if c.char.strip() and (not_default(c.fg) or not_default(c.bg)):
                     colored.append((row, col, c))
         check.ok("NO_COLOR removes the colors from the chat view", not colored, colored[:3])
-        s.key("Ctrl-D")
-        if s.exit_code(10) is None:
-            s.key("Ctrl-D")
-            s.exit_code(10)
+        s.exit_quit()
     finally:
         env.close()

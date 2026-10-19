@@ -100,7 +100,7 @@ class SessionToolsTest {
             advisorRequest.messages().forEach(m -> all.append(SessionRig.text(m)));
             assertTrue(all.toString().contains("first"), "the advisor sees the working context");
 
-            assertTrue(rig.session.slash().execute("/advisor off").output().length() > 0);
+            assertTrue(rig.session.slash().execute("/advisor none").output().length() > 0);
             say(rig, "fourth", 4);
             var off = router.mainRequests.getLast();
             assertFalse(names(off).contains("advisor"), names(off).toString());
@@ -171,6 +171,66 @@ class SessionToolsTest {
             var requests = router.mainRequests;
             assertTrue(names(requests.getFirst()).contains("shout"), names(requests.getFirst()).toString());
             assertTrue(toolResults(requests.getLast()).contains("zebrafish"), toolResults(requests.getLast()));
+        }
+    }
+
+    @Test
+    void clearStartsAFreshConversationAndKeepsTheHistory() throws Exception {
+        var router = new SessionRig.Router(new ScriptedLlmClient(Response.text("one"), Response.text("two"),
+                Response.text("three")));
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            say(rig, "first topic", 1);
+            say(rig, "second topic", 2);
+            var pinned = rig.session.slash().execute("/pin");
+            assertTrue(pinned.output().contains("Pinned"), pinned.output());
+            assertFalse(rig.session.agent().pinnedTexts().isEmpty());
+            var before = router.mainRequests.size();
+            var transcript = rig.session.session().transcriptPath();
+            // A turn joins the finished turns before the transcript write, so the test waits for the write.
+            await("second turn on disk", () -> {
+                try {
+                    return Files.readString(transcript).contains("second topic");
+                } catch (java.io.IOException e) {
+                    return false;
+                }
+            });
+            var lines = Files.readAllLines(transcript).size();
+
+            var result = rig.session.slash().execute("/clear");
+            assertFalse(result.error(), result.output());
+            assertTrue(rig.session.agent().turns().isEmpty(), "turns " + rig.session.agent().turns().size()
+                    + " " + rig.session.agent().pinnedTexts());
+            assertTrue(rig.session.agent().pinnedTexts().isEmpty());
+            var view = chat(rig);
+            assertTrue(view.contains("New conversation."), view);
+            assertFalse(view.contains("first topic"), view);
+            assertEquals(lines, Files.readAllLines(transcript).size(), "the transcript stays");
+
+            say(rig, "new topic", 1);
+            var request = router.mainRequests.get(before);
+            var texts = new StringBuilder();
+            request.messages().forEach(m -> texts.append(SessionRig.text(m)).append('\n'));
+            assertTrue(texts.toString().contains("new topic"), texts.toString());
+            assertFalse(texts.toString().contains("first topic"), texts.toString());
+            assertFalse(texts.toString().contains("Pinned"), texts.toString());
+            assertTrue(rig.session.agent().turns().getFirst().number() > 2, "the turn numbers continue");
+        }
+    }
+
+    @Test
+    void clearTakesNoArguments() throws Exception {
+        var router = new SessionRig.Router(new ScriptedLlmClient(Response.text("one")));
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            say(rig, "a topic", 1);
+            assertTrue(rig.session.slash().execute("/clear now").error());
+            assertEquals(1, rig.session.agent().turns().size());
+            assertFalse(chat(rig).contains("New conversation."), chat(rig));
         }
     }
 

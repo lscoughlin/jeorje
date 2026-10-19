@@ -109,6 +109,7 @@ public final class Screen implements AutoCloseable {
     private final Deque<PermissionPrompt> prompts = new ArrayDeque<>();
     private final Object drawLock = new Object();
     private final AtomicInteger redraws = new AtomicInteger();
+    private final AtomicInteger clears = new AtomicInteger();
     private final AtomicBoolean entered = new AtomicBoolean();
     private final AtomicBoolean restored = new AtomicBoolean();
     private volatile boolean running;
@@ -124,6 +125,8 @@ public final class Screen implements AutoCloseable {
     private volatile boolean scrollBars;
     private volatile int wheelLines = 3;
     private volatile int chatRows;
+    private volatile org.github.lscoughlin.jeorje.ui.chat.Verbosity verbosity =
+            org.github.lscoughlin.jeorje.ui.chat.Verbosity.NORMAL;
     private final java.util.Queue<Runnable> inputTasks = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean exited = new AtomicBoolean();
 
@@ -180,6 +183,8 @@ public final class Screen implements AutoCloseable {
         var attrs = terminal.getAttributes();
         attrs.setInputFlag(Attributes.InputFlag.IXON, false);
         attrs.setInputFlag(Attributes.InputFlag.IXOFF, false);
+        // JLine ends the read on VEOF at an empty line before any widget runs. Ctrl-D must interrupt, so turn VEOF off.
+        attrs.setControlChar(Attributes.ControlChar.VEOF, 0);
         terminal.setAttributes(attrs);
         terminal.puts(InfoCmp.Capability.enter_ca_mode);
         terminal.puts(InfoCmp.Capability.clear_screen);
@@ -263,9 +268,24 @@ public final class Screen implements AutoCloseable {
     public ChatView chat(AgentId agent) {
         return chats.computeIfAbsent(agent, a -> {
             var view = new ChatView(highlight);
+            view.verbosity(verbosity);
             if (scrollBars) view.scrollBar(true, wheelLines);
             return view;
         });
+    }
+
+    /** The level of detail that the chat views show. */
+    public org.github.lscoughlin.jeorje.ui.chat.Verbosity verbosity() { return verbosity; }
+
+    /**
+     * Sets the level of detail for every chat view, and for the views that the screen makes later.
+     *
+     * @param level the new level, or null for {@link org.github.lscoughlin.jeorje.ui.chat.Verbosity#NORMAL}
+     */
+    public void setVerbosity(org.github.lscoughlin.jeorje.ui.chat.Verbosity level) {
+        verbosity = level == null ? org.github.lscoughlin.jeorje.ui.chat.Verbosity.NORMAL : level;
+        chats.values().forEach(c -> c.verbosity(verbosity));
+        draw();
     }
 
     /**
@@ -359,6 +379,10 @@ public final class Screen implements AutoCloseable {
                     prompts.addLast(new PermissionPrompt(c.agent(), c.toolUse()));
                 }
                 wakeInput();
+            }
+            case AgentEvent.Cleared cleared when event.agent().equals(foreground) -> {
+                // The event already reset the chat view. Clear the terminal and draw every row again.
+                resetScreen();
             }
             case AgentEvent.Error e when !e.agent().equals(foreground) ->
                     status.notice(e.agent() + ": " + e.message());
@@ -465,35 +489,68 @@ public final class Screen implements AutoCloseable {
     public void draw() {
         synchronized (drawLock) {
             if (suspended) return;
-            var rows = rows();
-            var cols = columns();
-            syncNotices();
-            var region = renderRegion(rows, cols);
-            var resized = rows != drawnRows || cols != drawnColumns || region.size() != drawnRegionRows;
-            Runnable body = () -> {
-                if (resized) {
-                    display.resize(region.size(), cols);
-                    display.reset();
-                }
-                // Display moves the cursor relative to the home cell. Other code moves the cursor, so go home first.
-                terminal.puts(InfoCmp.Capability.cursor_address, 0, 0);
-                display.update(region, 0);
-                terminal.puts(InfoCmp.Capability.cursor_address, rows - 1, 0);
-                terminal.writer().print(status.render(cols).toAnsi(terminal));
-                terminal.puts(InfoCmp.Capability.clr_eol);
-                terminal.puts(InfoCmp.Capability.cursor_address, Math.max(0, rows - 1 - inputRows), 0);
-                terminal.flush();
-            };
-            if (terminal.isModeSupported(Terminal.Mode.SYNCHRONIZED_OUTPUT)) terminal.synchronizedUpdate(body);
-            else body.run();
-            drawnRows = rows;
-            drawnColumns = cols;
-            drawnRegionRows = region.size();
-            redraws.incrementAndGet();
-            if (running && reading && input != null && activePane == null
-                    && Thread.currentThread() != inputThread) {
-                input.redraw();
+            drawScreen(false);
+        }
+    }
+
+    /**
+     * Starts the screen again: clears the terminal and forgets what the display drew. The next draw then writes every
+     * row. Use it when the terminal can show stale text, for example after a resize. The method does nothing while
+     * {@link #suspendDrawing} holds.
+     */
+    public void resetScreen() {
+        synchronized (drawLock) {
+            if (suspended || !entered.get()) return;
+            terminal.puts(InfoCmp.Capability.clear_screen);
+            terminal.flush();
+            redrawAll();
+        }
+        draw();
+        // The input line keeps its own model of the screen. It learns the new cursor row from the next key.
+        if (Thread.currentThread() == inputThread && input != null) input.resetDisplay();
+    }
+
+    private void redrawAll() {
+        display.reset();
+        drawnRows = -1;
+        drawnColumns = -1;
+        drawnRegionRows = -1;
+    }
+
+    /** Draws the region, the input row, and the status row. Call it inside the drawing lock. */
+    private void drawScreen(boolean whole) {
+        var rows = rows();
+        var cols = columns();
+        syncNotices();
+        var region = renderRegion(rows, cols);
+        var resized = rows != drawnRows || cols != drawnColumns || region.size() != drawnRegionRows;
+        Runnable body = () -> {
+            if (whole) {
+                terminal.puts(InfoCmp.Capability.clear_screen);
+                display.reset();
             }
+            if (resized) {
+                display.resize(region.size(), cols);
+                display.reset();
+            }
+            // Display moves the cursor relative to the home cell. Other code moves the cursor, so go home first.
+            terminal.puts(InfoCmp.Capability.cursor_address, 0, 0);
+            display.update(region, 0);
+            terminal.puts(InfoCmp.Capability.cursor_address, rows - 1, 0);
+            terminal.writer().print(status.render(cols).toAnsi(terminal));
+            terminal.puts(InfoCmp.Capability.clr_eol);
+            terminal.puts(InfoCmp.Capability.cursor_address, Math.max(0, rows - 1 - inputRows), 0);
+            terminal.flush();
+        };
+        if (terminal.isModeSupported(Terminal.Mode.SYNCHRONIZED_OUTPUT)) terminal.synchronizedUpdate(body);
+        else body.run();
+        drawnRows = rows;
+        drawnColumns = cols;
+        drawnRegionRows = region.size();
+        redraws.incrementAndGet();
+        if (running && reading && input != null && activePane == null
+                && Thread.currentThread() != inputThread) {
+            input.redraw();
         }
     }
 
@@ -513,9 +570,7 @@ public final class Screen implements AutoCloseable {
     public void repaint() {
         synchronized (drawLock) {
             suspended = false;
-            display.reset();
-            drawnRows = -1;
-            draw();
+            drawScreen(true);
         }
         if (Thread.currentThread() == inputThread && input != null) input.resetDisplay();
     }
@@ -659,11 +714,8 @@ public final class Screen implements AutoCloseable {
         for (var binding : bindings) {
             var action = binding.action();
             var sequences = sequencesOf(binding.keys());
-            var defaults = sequencesOf(action.defaults());
             var id = action.id();
-            var defaultKey = defaults.contains("\u0004");
-            input.bindWidget("jeorje-" + id, () -> runAction(id, defaultKey && sequences.contains("\u0004")),
-                    sequences);
+            input.bindWidget("jeorje-" + id, () -> runAction(id), sequences);
         }
         input.bindWidget("jeorje-complete", this::completeInput, List.of("\t"));
         input.afterEachWidget(this::afterInput);
@@ -697,7 +749,7 @@ public final class Screen implements AutoCloseable {
         return keys.stream().flatMap(k -> k.sequences(kittyOn).stream()).distinct().toList();
     }
 
-    private boolean runAction(String id, boolean ctrlD) {
+    private boolean runAction(String id) {
         switch (id) {
             case "send" -> {
                 handler.handle(id);
@@ -706,19 +758,13 @@ public final class Screen implements AutoCloseable {
             }
             case "newline" -> input.insertNewline();
             case "interrupt" -> throw new UserInterruptException(input.buffer());
-            case "exit" -> {
-                if (input.buffer().isEmpty()) throw new EndOfFileException();
-                if (ctrlD) input.callWidget(LineReader.DELETE_CHAR);
-                return true;
-            }
             case "expandResult" -> {
                 chat(foreground).toggleLastResult();
                 draw();
             }
             case "redraw" -> {
                 synchronized (drawLock) {
-                    display.reset();
-                    drawnRows = -1;
+                    redrawAll();
                     draw();
                 }
                 input.resetDisplay();

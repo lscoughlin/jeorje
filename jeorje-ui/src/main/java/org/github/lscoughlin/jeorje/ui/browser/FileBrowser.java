@@ -29,6 +29,7 @@ public final class FileBrowser implements Region {
     private final ScrollModel scroll;
     private final Set<Path> expanded = new HashSet<>();
     private Rect bounds;
+    private int reservedRows;
     private boolean open;
     private boolean showIgnored;
     private boolean filtering;
@@ -55,6 +56,11 @@ public final class FileBrowser implements Region {
     public void onAdd(Consumer<Path> adder) { this.adder = adder; }
 
     public void setBounds(Rect bounds) { this.bounds = bounds; }
+
+    /** Reserves the last rows of the bounds for a footer that the caller draws. */
+    public void setReservedRows(int rows) { this.reservedRows = Math.max(0, rows); }
+
+    private int visibleRows() { return Math.max(1, bounds.height() - reservedRows); }
 
     @Override
     public Rect bounds() { return bounds; }
@@ -137,7 +143,7 @@ public final class FileBrowser implements Region {
         var rows = rows();
         var out = new ArrayList<String>();
         var from = scroll.offset();
-        var to = Math.min(rows.size(), from + Math.max(1, bounds.height()));
+        var to = Math.min(rows.size(), from + visibleRows());
         for (var i = from; i < to; i++) {
             var r = rows.get(i);
             var mark = r.directory() ? (r.expanded() ? "v " : "> ") : "  ";
@@ -159,20 +165,25 @@ public final class FileBrowser implements Region {
         selected = Math.clamp(index, 0, rows.size() - 1);
         sync(rows.size());
         if (selected < scroll.offset()) scroll.shift(selected - scroll.offset());
-        else if (selected >= scroll.offset() + bounds.height()) {
-            scroll.shift(selected - (scroll.offset() + bounds.height() - 1));
+        else if (selected >= scroll.offset() + visibleRows()) {
+            scroll.shift(selected - (scroll.offset() + visibleRows() - 1));
         }
     }
 
-    private void sync(int count) { scroll.setContent(count, bounds.height()); }
+    private void sync(int count) { scroll.setContent(count, visibleRows()); }
 
-    /** Opens the selected directory. */
+    /** Opens the selected directory and moves into it. A file does not change. */
     public void right() {
         var row = selectedRow();
-        if (row != null && row.directory()) expanded.add(row.path());
+        if (row == null || !row.directory()) return;
+        expanded.add(row.path());
+        select(selected + 1);
     }
 
-    /** Closes the selected directory. On a closed directory or a file, selects the parent directory. */
+    /**
+     * Closes the selected directory and keeps the selection. On a closed directory or a file, selects the
+     * parent row. With no parent row, nothing changes.
+     */
     public void left() {
         var row = selectedRow();
         if (row == null) return;
