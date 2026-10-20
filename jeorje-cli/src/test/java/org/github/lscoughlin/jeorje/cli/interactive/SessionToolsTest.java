@@ -63,6 +63,39 @@ class SessionToolsTest {
     }
 
     @Test
+    void theAdvisorIsOnByDefaultAndTheSwitchTurnsItOffAndOn() throws Exception {
+        var main = new ScriptedLlmClient(Response.text("one"), Response.text("two"), Response.text("three"));
+        var router = new SessionRig.Router(main);
+        try (var rig = new SessionRig(tmp, router, "logging:\n  level: INFO\n")) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            say(rig, "first", 1);
+            var first = router.mainRequests.getFirst();
+            assertTrue(names(first).contains("advisor"), "on by default: " + names(first));
+            assertTrue(first.system().contains("- advisor:"));
+            assertTrue(rig.session.slash().execute("/advisor none").output().contains("now off"));
+            say(rig, "second", 2);
+            assertFalse(names(router.mainRequests.get(1)).contains("advisor"));
+            assertTrue(rig.session.slash().execute("/advisor").output().contains("~deepseek/deepseek-pro-latest"));
+            say(rig, "third", 3);
+            assertTrue(names(router.mainRequests.getLast()).contains("advisor"));
+        }
+    }
+
+    @Test
+    void aConfigValueOfNoneTurnsTheAdvisorOffAtTheStart() throws Exception {
+        var router = new SessionRig.Router(new ScriptedLlmClient(Response.text("one")));
+        try (var rig = new SessionRig(tmp, router, "models:\n  advisor: none\n")) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            say(rig, "first", 1);
+            assertFalse(names(router.mainRequests.getFirst()).contains("advisor"));
+        }
+    }
+
+    @Test
     void theToolListFollowsTheAdvisorModel() throws Exception {
         var main = new ScriptedLlmClient(
                 Response.text("one"),
@@ -72,7 +105,7 @@ class SessionToolsTest {
                 Response.text("four"));
         var advisorModel = new ScriptedLlmClient(Response.text("Looks good, add tests."));
         var router = new SessionRig.Router(main);
-        try (var rig = new SessionRig(tmp, router, null)) {
+        try (var rig = new SessionRig(tmp, router, "models:\n  advisor: none\n")) {
             rig.byModel = model -> "vendor/strong".equals(model) ? advisorModel : router;
             rig.initRepo();
             rig.start();

@@ -150,8 +150,12 @@ class SlashCommandsTest {
         assertEquals("vendor/smart", backend.roles.advisor());
         commands.execute("/advisor");
         assertEquals("~deepseek/deepseek-pro-latest", backend.roles.advisor());
-        commands.execute("/advisor none");
-        assertNull(backend.roles.advisor());
+        var off = commands.execute("/advisor none");
+        assertEquals("The advisor model is now off. This applies to this session only.", off.output());
+        assertEquals("none", backend.roles.advisor());
+        assertFalse(backend.roles.advisorSet());
+        commands.execute("/advisor");
+        assertTrue(backend.roles.advisorSet(), "/advisor with no slug turns the default advisor on again");
         commands.execute("/compactor off");
         assertNull(backend.roles.compactor());
         assertEquals("vendor/default", backend.roles.defaultModel());

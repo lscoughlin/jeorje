@@ -44,7 +44,7 @@ public final class PlanMode {
         4. Give each story a goal, acceptance criteria that a test can check, a context part, and tasks. Task ids start with the story id, for example S1.T1.
         5. Keep each story small. A story has 20 tasks at most and 8,000 characters at most. A plan has 50 stories at most.
         6. Two stories that can run at the same time must not touch the same path. Add a dependency or merge the stories.
-        7. If an advisor model is set, call the advisor tool on your draft before you call plan_submit.
+        7. Call the advisor tool on your draft before you call plan_submit. If the tool answers that the advisor is off, go on without it.
         8. Call plan_submit to write the plan. If it returns errors, correct the plan and call it again.
         Explore with a limit. Use grep to find a place, and read with offset and limit to read only the part that you need. Do not read a file that you already read: its content is in your context or in the history, and recall finds it. Ask all open questions early, in one ask_user form with several questions. Start to write the plan as soon as you know enough. Open facts that remain go into the context of the story as a task for the worker.
         You can use bash to explore: to run the build, the tests, and other commands that show how the project works. Prefer grep and read to bash for reading files. Do not use bash to change the workspace. Do not create, edit, or delete project files with it.

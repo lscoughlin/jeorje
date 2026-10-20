@@ -554,7 +554,7 @@ public final class Wiring {
         var skillTool = SkillTool.create(visibleSkills, grants::skillLoaded);
         skillTool.ifPresent(tools::add);
         var advisor = new AdvisorSupport(roles::advisorSet, () -> llmClient(config, env, roles.advisor()));
-        if (roles.advisorToolEnabled()) tools.add(advisor.slot());
+        tools.add(advisor.slot());
 
         var settings = new AgentSettings(session.id(), cwd, window, config.context().budgetPercent(),
                 config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),

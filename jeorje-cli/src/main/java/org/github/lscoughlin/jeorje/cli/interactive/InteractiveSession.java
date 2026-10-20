@@ -508,6 +508,7 @@ public final class InteractiveSession implements AutoCloseable {
             skillTool = t;
             out.add(t);
         });
+        out.add(advisor.slot());
         return out;
     }
 
@@ -532,6 +533,8 @@ public final class InteractiveSession implements AutoCloseable {
     }
 
     private void buildAgents() {
+        // Every agent has the advisor tool: the main agent, the subagents, and the workers. They all use this support.
+        advisor = new AdvisorSupport(() -> roles.advisorSet(), () -> clientFor(roles.advisor()));
         var settings = agentSettings();
         var workerPolicy = new GatedPolicy(skillGrants(), null, this::askForWorker);
         var mainPolicy = new GatedPolicy(skillGrants(), planMode, null);
@@ -545,7 +548,7 @@ public final class InteractiveSession implements AutoCloseable {
                 startupNotices.add("The swarm did not start: " + e.getMessage());
             }
         }
-        var runtimeBuilder = SubagentRuntime.builder(session.id(), settings, model -> clientFor(model))
+        var runtimeBuilder = SubagentRuntime.builder(session.id(), settings, model -> advisor.tap(clientFor(model)))
                 .store(store).transcript(transcript::writeTurn).agentEvents(this::onEvent)
                 .pruneListener((child, chunks) -> releaseSkills(child.value(), chunks))
                 .events(event -> {
@@ -564,8 +567,6 @@ public final class InteractiveSession implements AutoCloseable {
         tools.put(PlanSubmitTool.NAME, new PlanSubmitTool(config.plan().dir(), planMode, this::onPlanSubmitted));
         broker = new UserQuestionBroker(this::onQuestion);
         tools.put(AskUserTool.NAME, new AskUserTool(broker));
-        advisor = new AdvisorSupport(() -> roles.advisorSet(), () -> clientFor(roles.advisor()));
-        tools.put(AdvisorTool.NAME, advisor.slot());
         var agentTools = AgentTools.install(runtime, session.id());
         var peerTools = bridge == null ? agentTools : PeerSpawnTool.wrap(agentTools, runtime);
         WorktreeSpawnTool.wrap(peerTools, runtime, worktrees, () -> agentTypes)
@@ -634,7 +635,7 @@ public final class InteractiveSession implements AutoCloseable {
     private void buildOrchestrator() {
         var settings = agentSettings();
         var workerPolicy = new GatedPolicy(skillGrants(), null, this::askForWorker);
-        var builder = ImplementOrchestrator.builder(session.id(), settings, model -> clientFor(model),
+        var builder = ImplementOrchestrator.builder(session.id(), settings, model -> advisor.tap(clientFor(model)),
                         config.implement())
                 .store(store).transcript(transcript::writeTurn).worktrees(worktrees)
                 .stateStore(RunStateStore.file(session.dir().resolve("implement.json")))

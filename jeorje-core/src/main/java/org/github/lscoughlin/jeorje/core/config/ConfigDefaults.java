@@ -19,7 +19,7 @@ final class ConfigDefaults {
             models:
               default: ~deepseek/deepseek-flash-latest
               compactor: ""
-              advisor: ""
+              advisor: "~deepseek/deepseek-pro-latest"
             context:
               window: 128000
               windows: {}

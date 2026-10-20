@@ -185,10 +185,13 @@ class MemoryToolsTest {
     void advisorRegistrationRule() {
         var client = new ScriptedLlmClient(ScriptedLlmClient.Response.text("ok"));
         java.util.function.Function<AgentId, AdvisorContext> contexts = a -> new AdvisorContext("sys", List.of());
-        List<Tool> without = MemoryTools.create(new ModelRoles("m", "c", ""), "s1", null, todo, broker, client, contexts);
-        assertEquals(List.of("recall", "todo", "ask_user"), without.stream().map(t -> t.definition().name()).toList());
+        List<Tool> off = MemoryTools.create(new ModelRoles("m", "c", "none"), "s1", null, todo, broker, client, contexts);
+        assertEquals(List.of("recall", "todo", "ask_user"), off.stream().map(t -> t.definition().name()).toList());
+        List<Tool> byDefault = MemoryTools.create(new ModelRoles("m", "c", ""), "s1", null, todo, broker, client, contexts);
+        assertEquals(List.of("recall", "todo", "ask_user", "advisor"),
+                byDefault.stream().map(t -> t.definition().name()).toList());
         List<Tool> blank = MemoryTools.create(new ModelRoles("m", "c", "  "), "s1", null, todo, broker, client, contexts);
-        assertEquals(3, blank.size());
+        assertEquals(4, blank.size());
         List<Tool> with = MemoryTools.create(new ModelRoles("m", "", "~big/model"), "s1", null, todo, broker, client, contexts);
         assertEquals("advisor", with.getLast().definition().name());
         assertTrue(with.getLast().readOnly());

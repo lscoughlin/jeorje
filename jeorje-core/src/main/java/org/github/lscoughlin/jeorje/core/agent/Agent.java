@@ -130,6 +130,13 @@ public final class Agent implements AutoCloseable {
     private int overBudgetNoticeTurn = -1;
     private int spilledTotal;
     private volatile ContextReport lastReport;
+    private volatile LlmRequest lastRequest;
+
+    /**
+     * The request of the last model call of this agent: its working context. The advisor tool sends it to the
+     * advisor model, so that each agent gets a review of its own context.
+     */
+    public Optional<LlmRequest> lastRequest() { return Optional.ofNullable(lastRequest); }
 
     /** How full the context was at the last model call, or a report with no numbers before the first call. */
     public ContextReport contextReport() {
@@ -585,6 +592,7 @@ public final class Agent implements AutoCloseable {
                 lastReport = ContextReport.of(id.value(), new ContextBuilder.Input(systemPrompt(),
                     pinnedItems(messages), olderEntries(), recentTurns(), messages, definitions()), built, spilledTotal);
                 publish(new AgentEvent.ContextUsage(id, built.estimate(), built.budget()));
+                lastRequest = built.request();
                 var assistant = callModel(built, token);
                 if (assistant.error() != null) {
                     publish(new AgentEvent.Error(id, assistant.error()));

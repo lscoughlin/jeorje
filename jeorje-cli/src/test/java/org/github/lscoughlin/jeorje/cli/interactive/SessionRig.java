@@ -120,10 +120,10 @@ final class SessionRig implements AutoCloseable {
         this.router = router;
         this.home = Files.createDirectories(tmp.resolve("home"));
         this.repo = Files.createDirectories(tmp.resolve("repo"));
-        if (userConfig != null) {
-            Files.createDirectories(home.resolve(".jeorje"));
-            Files.writeString(home.resolve(".jeorje").resolve("config.yaml"), userConfig);
-        }
+        // The advisor is on by default. A rig with no config turns it off, so that no test needs a script for it.
+        var config = userConfig != null ? userConfig : "models:\n  advisor: none\n";
+        Files.createDirectories(home.resolve(".jeorje"));
+        Files.writeString(home.resolve(".jeorje").resolve("config.yaml"), config);
         var in = new PipedInputStream(keys, 1 << 16);
         terminal = new ExternalTerminal("test", "xterm", in, terminalOut, StandardCharsets.UTF_8);
         terminal.setSize(new Size(100, 30));

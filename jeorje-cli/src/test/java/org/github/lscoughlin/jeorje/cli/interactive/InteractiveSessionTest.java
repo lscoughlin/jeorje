@@ -28,6 +28,8 @@ class InteractiveSessionTest {
               rules:
                 - tool: write
                   decision: allow
+            models:
+              advisor: none
             """;
 
     private static final String PLAN_JSON = """
