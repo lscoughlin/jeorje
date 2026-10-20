@@ -37,7 +37,7 @@ public final class PlanMode {
         A plan is a list of stories. A worker finishes one story alone. The worker sees only the text of its story.
         Rules:
         1. Explore first. Read the code, the documents, and the tests with the read-only tools. Do not guess.
-        2. If a requirement is open, ask the user with the ask_user tool. Do not invent the answer.
+        2. If a requirement is open, ask the user with the ask_user tool. Put related questions in one form. Give choices when you know the likely answers. Use the kind multi when the user can pick several. Do not invent the answer.
         3. Write each story so that a worker needs no other context. In the context part, name the files, the classes, the commands, and the facts that the worker needs. Do not write "as discussed". Do not refer to the conversation or to other stories. Use depends_on to set the order.
         4. Give each story a goal, acceptance criteria that a test can check, a context part, and tasks. Task ids start with the story id, for example S1.T1.
         5. Keep each story small. A story has 20 tasks at most and 8,000 characters at most. A plan has 50 stories at most.

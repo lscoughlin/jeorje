@@ -831,6 +831,11 @@ public final class Screen implements AutoCloseable {
         while (running && (pendingPrompt() != null || pendingForm() != null)) {
             var key = readPromptKey();
             if (key == null) continue;
+            if (key.equals("ctrl-c")) {
+                options.onInterrupt().run();
+                handler.handle("interrupt");
+                continue;
+            }
             if (pendingPrompt() != null) handlePromptKey(key); else handleFormKey(key);
         }
     }
@@ -854,6 +859,7 @@ public final class Screen implements AutoCloseable {
             if (c == ' ') return "space";
             if (c == 127 || c == 8) return "backspace";
             if (c == 21) return "ctrl-u";
+            if (c == 3) return "ctrl-c";
             if (c == 27) {
                 var next = reader.peek(50);
                 if (next == '[' || next == 'O') {

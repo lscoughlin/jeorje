@@ -3,6 +3,7 @@ package org.github.lscoughlin.jeorje.cli.interactive;
 import static org.github.lscoughlin.jeorje.cli.interactive.SessionRig.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -120,8 +121,16 @@ class SessionToolsTest {
         }
     }
 
+    private static final String FORM = "{\"title\":\"Setup\",\"questions\":["
+            + "{\"id\":\"db\",\"prompt\":\"Which database?\",\"options\":[\"sqlite\",\"postgres\"]},"
+            + "{\"id\":\"checks\",\"prompt\":\"Which checks?\",\"kind\":\"multi\",\"options\":[\"unit\",\"lint\",\"e2e\"]}]}";
+
+    private static void formShown(SessionRig rig) throws Exception {
+        await("the form", () -> rig.session.screen().pendingForm() != null);
+    }
+
     @Test
-    void askUserShowsTheQuestionAndReturnsTheAnswerToTheModel() throws Exception {
+    void askUserShowsTheFormAndReturnsTheAnswerToTheModel() throws Exception {
         var main = new ScriptedLlmClient(
                 Response.toolCall("q1", "ask_user", "{\"question\":\"Which color?\",\"choices\":[\"red\",\"blue\"]}"),
                 Response.text("Blue it is."));
@@ -131,12 +140,85 @@ class SessionToolsTest {
             rig.start();
             ready(rig);
             rig.type("pick one\r");
-            await("the question", () -> chat(rig).contains("Which color?"));
-            assertTrue(chat(rig).contains("red") && chat(rig).contains("blue"));
-            rig.type("blue\r");
+            formShown(rig);
+            await("the question", () -> chat(rig).contains("Question from main: Which color?"));
+            var shown = String.join("\n", rig.session.screen().renderRegion(24, 80).stream().map(Object::toString).toList());
+            assertTrue(shown.contains("red") && shown.contains("blue"), shown);
+            rig.type("2");
+            Thread.sleep(100);
+            rig.type("\r");
+            Thread.sleep(100);
+            rig.type("\r");
             await("the turn ends", () -> rig.session.agent().turns().size() == 1);
             assertTrue(toolResults(router.mainRequests.getLast()).contains("User answer: blue"),
                     toolResults(router.mainRequests.getLast()));
+            assertNull(rig.session.screen().pendingForm());
+        }
+    }
+
+    @Test
+    void aFormWithTwoQuestionsGivesStructuredAnswers() throws Exception {
+        var main = new ScriptedLlmClient(Response.toolCall("q1", "ask_user", FORM), Response.text("Noted."));
+        var router = new SessionRig.Router(main);
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            rig.type("set up\r");
+            formShown(rig);
+            for (var key : new String[] {"2", "\r", "1", "3", "\t", "\r"}) {
+                rig.type(key);
+                Thread.sleep(100);
+            }
+            await("the turn ends", () -> rig.session.agent().turns().size() == 1);
+            var results = toolResults(router.mainRequests.getLast());
+            assertTrue(results.contains("- db \"Which database?\": postgres"), results);
+            assertTrue(results.contains("- checks \"Which checks?\": unit; e2e"), results);
+        }
+    }
+
+    @Test
+    void chatAboutThisReturnsToTheAgentAndTheUserCanTypeAMessage() throws Exception {
+        var main = new ScriptedLlmClient(
+                Response.toolCall("q1", "ask_user", FORM),
+                Response.text("Sqlite has no server. Postgres has a server."),
+                Response.text("Thanks."));
+        var router = new SessionRig.Router(main);
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            rig.type("set up\r");
+            formShown(rig);
+            rig.type("c");
+            Thread.sleep(100);
+            rig.type("which?");
+            Thread.sleep(100);
+            rig.type("\r");
+            await("the first turn ends", () -> rig.session.agent().turns().size() == 1);
+            var results = toolResults(router.mainRequests.getLast());
+            assertTrue(results.contains("The user wants to talk about this before answering."), results);
+            assertTrue(results.contains("Note from the user: which?"), results);
+            assertTrue(chat(rig).contains("form: chat requested"), chat(rig));
+            say(rig, "ok, use sqlite", 2);
+            assertNull(rig.session.screen().pendingForm());
+        }
+    }
+
+    @Test
+    void ctrlCWhileAFormWaitsEndsTheTurnAndRemovesTheForm() throws Exception {
+        var main = new ScriptedLlmClient(Response.toolCall("q1", "ask_user", FORM), Response.text("never"));
+        var router = new SessionRig.Router(main);
+        try (var rig = new SessionRig(tmp, router, null)) {
+            rig.initRepo();
+            rig.start();
+            ready(rig);
+            rig.type("set up\r");
+            formShown(rig);
+            Thread.sleep(200);
+            rig.type("\u0003");
+            await("the form is gone", () -> rig.session.screen().pendingForm() == null);
+            await("the turn ends", () -> rig.session.agent().turns().size() == 1);
         }
     }
 

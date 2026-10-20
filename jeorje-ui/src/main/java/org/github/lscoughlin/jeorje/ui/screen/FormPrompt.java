@@ -196,6 +196,8 @@ public final class FormPrompt {
                     s.selected.add(row.option());
                     s.otherOn = false;
                     if (advance) forward();
+                } else if (q.kind() == FormQuestion.Kind.MULTI && advance) {
+                    forward();
                 } else if (q.kind() == FormQuestion.Kind.MULTI) {
                     if (s.selected.contains(row.option())) {
                         s.selected.remove(row.option());
@@ -204,7 +206,6 @@ public final class FormPrompt {
                     } else {
                         s.selected.add(row.option());
                     }
-                    if (advance && message.isEmpty()) forward();
                 }
             }
             case OTHER -> startEdit(Target.OTHER);
