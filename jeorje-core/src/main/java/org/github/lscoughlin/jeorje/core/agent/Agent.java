@@ -741,9 +741,7 @@ public final class Agent implements AutoCloseable {
         if (by != null && !entries.isEmpty()) {
             var paths = classifier.immediatePaths(all, ctx, classes);
             var concluded = classifier.concludedSearches(all, ctx, classes);
-            var overhead = contextBuilder.overhead(new ContextBuilder.Input(systemPrompt(), pinnedItems(List.of()),
-                List.of(), recentTurns(), List.of(), definitions()));
-            outcome = by.compact(entries, currentTurn, overhead, paths, concluded);
+            outcome = by.compact(entries, currentTurn, paths, concluded);
             entries = new ArrayList<>(outcome.entries());
         }
         older = List.copyOf(entries);
