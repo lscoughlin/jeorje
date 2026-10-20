@@ -128,10 +128,8 @@ public final class ToolRegistry {
             return ToolResultData.error("Unknown tool '" + use.tool() + "'. Available tools: " + String.join(", ", order));
         }
         var input = use.input();
-        var errors = InputValidator.validate(tool.definition().inputSchema(), input);
-        if (!errors.isEmpty()) {
-            return ToolResultData.error("Invalid input for " + use.tool() + ": " + String.join("; ", errors));
-        }
+        var invalid = tool.check(input);
+        if (invalid.isPresent()) return ToolResultData.error(invalid.get());
         return limiter.apply(runWithTimeout(tool, input, context));
     }
 

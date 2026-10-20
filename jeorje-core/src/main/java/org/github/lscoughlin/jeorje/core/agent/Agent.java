@@ -1154,7 +1154,10 @@ public final class Agent implements AutoCloseable {
         publish(new AgentEvent.ToolStarted(id, use.id(), use.tool(), summary(use)));
         try {
             var context = new ToolContext(settings.workingDirectory(), id, token, store, clock);
-            var result = tool.execute(use.input() == null ? MAPPER.createObjectNode() : use.input(), context);
+            var input = use.input() == null ? MAPPER.createObjectNode() : use.input();
+            var invalid = tool.check(input);
+            if (invalid.isPresent()) return ToolResultData.error(invalid.get());
+            var result = tool.execute(input, context);
             if (result == null) return ToolResultData.error("Tool " + use.tool() + " returned no result.");
             return token.isCancelled() && result.error() ? interrupted() : result;
         } catch (CancellationException e) {

@@ -14,6 +14,7 @@ import org.github.lscoughlin.jeorje.core.port.ToolContext;
 import org.github.lscoughlin.jeorje.core.state.AgentState;
 import org.github.lscoughlin.jeorje.core.state.StateUpdate;
 import org.github.lscoughlin.jeorje.tools.registry.Describe;
+import org.github.lscoughlin.jeorje.tools.registry.Required;
 import org.github.lscoughlin.jeorje.tools.registry.RecordTool;
 
 /** The {@code edit} tool. It replaces an exact string in a file. */
@@ -21,9 +22,9 @@ public final class EditTool extends RecordTool<EditTool.Input> {
 
     /** The input of {@code edit}. */
     public record Input(
-            @Describe("Path of the file. A relative path is relative to the working directory.") String path,
-            @Describe("The exact text to replace.") String oldString,
-            @Describe("The new text.") String newString,
+            @Required @Describe("Path of the file. A relative path is relative to the working directory.") String path,
+            @Required @Describe("The exact text to replace.") String oldString,
+            @Required @Describe("The new text.") String newString,
             @Describe("Replace every match. Default false: the match must be unique.") Boolean replaceAll) {}
 
     private final PermissionPolicy policy;
