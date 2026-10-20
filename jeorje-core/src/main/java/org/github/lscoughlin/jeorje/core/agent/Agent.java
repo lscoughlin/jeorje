@@ -35,6 +35,7 @@ import org.github.lscoughlin.jeorje.core.model.Content;
 import org.github.lscoughlin.jeorje.core.model.LlmEvent;
 import org.github.lscoughlin.jeorje.core.model.LlmRequest;
 import org.github.lscoughlin.jeorje.core.model.Message;
+import org.github.lscoughlin.jeorje.core.model.Notes;
 import org.github.lscoughlin.jeorje.core.model.Role;
 import org.github.lscoughlin.jeorje.core.model.Text;
 import org.github.lscoughlin.jeorje.core.model.ToolResult;
@@ -504,6 +505,7 @@ public final class Agent implements AutoCloseable {
             messages.add(Message.user(input));
             var calls = 0;
             var total = 0;
+            var emptyReplies = 0;
             while (true) {
                 if (token.isCancelled()) break;
                 // A text of the user starts a new count, so the step limit gives the turn a new budget.
@@ -529,6 +531,19 @@ public final class Agent implements AutoCloseable {
                     closeOpenCalls(messages, uses, List.of());
                     break;
                 }
+                if (uses.isEmpty() && isBlank(assistant.content())) {
+                    emptyReplies++;
+                    var count = emptyReplies;
+                    log.atWarn().log(() -> "The model gave an empty reply (" + count + " in a row) in turn " + number);
+                    if (emptyReplies > MAX_EMPTY_RETRIES) {
+                        publish(new AgentEvent.Error(id, "The model gave an empty reply " + emptyReplies
+                            + " times. The turn ends."));
+                        break;
+                    }
+                    addNote(messages, EMPTY_REPLY_NOTE);
+                    continue;
+                }
+                emptyReplies = 0;
                 if (uses.isEmpty()) break;
                 var results = dispatch(uses, token);
                 messages.add(new Message(Role.USER, List.copyOf(results)));
@@ -570,6 +585,31 @@ public final class Agent implements AutoCloseable {
             messages.add(new Message(Role.USER, texts));
         }
         return steered;
+    }
+
+    /** The most empty replies in a row that the agent answers with a note before it ends the turn. */
+    static final int MAX_EMPTY_RETRIES = 2;
+    static final String EMPTY_REPLY_NOTE =
+        "Your last reply was empty. Continue with the task. If you are done, say so.";
+
+    private static boolean isBlank(List<Content> content) {
+        return content.stream().noneMatch(c -> !(c instanceof Text t) || !t.text().isBlank());
+    }
+
+    /**
+     * Adds a system note to the turn. The note joins the last user message, so that a tool result always follows
+     * its tool use directly. Otherwise it becomes a new user message.
+     */
+    static void addNote(List<Message> messages, String text) {
+        var note = new Text(Notes.of(text));
+        var last = messages.isEmpty() ? null : messages.getLast();
+        if (last != null && last.role() == Role.USER) {
+            var merged = new ArrayList<>(last.content());
+            merged.add(note);
+            messages.set(messages.size() - 1, new Message(Role.USER, merged));
+        } else {
+            messages.add(new Message(Role.USER, List.of(note)));
+        }
     }
 
     /**
