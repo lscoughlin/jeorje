@@ -205,7 +205,7 @@ public final class HeadlessWork implements AutoCloseable {
         session = sessions.create(config);
         embedder = Wiring.embedder(config, env);
         store = counting = new ScrubbingContextStore(
-                LuceneContextStore.open(session.indexDir(), embedder, LuceneContextStore.Options.defaults()), scrubber);
+                LuceneContextStore.open(session.indexDir(), embedder, LuceneContextStore.Options.defaults().withUserBoost(config.index().userBoost())), scrubber);
         transcript = new TranscriptWriter(session.transcriptPath(), scrubber);
         policy = Wiring.policy(config, options, env, cwd, session.id(), scrubber);
         grants = new SkillGrantPolicy(policy, config.skills().honorAllowedTools());

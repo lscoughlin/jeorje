@@ -11,8 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The compaction policy. After each turn, {@link #compact} applies the soft trigger (the working context is more
- * than 50% of the budget) and the hard trigger (the next request can use more than 80%). It prunes in the
+ * The compaction policy. After each turn, {@link #compact} applies the soft trigger (the earlier context is more
+ * than 50% of the budget) and the hard trigger (the earlier context is more than 80%). It prunes in the
  * eviction order and sends the chunks to the {@link Pruner} in batches. It never changes {@code PROTECTED}
  * chunks or recent turns. The index keeps the original text.
  */
@@ -41,31 +41,29 @@ public final class ContextCompactor {
     /**
      * @param entries the pruned chunks and recent chunks of the working context, oldest first
      * @param currentTurn the number of the turn that just ended
-     * @param overheadTokens the tokens of the system prompt, the pinned items, and the recent turns
      * @param keepPaths the immediate file paths that pruning keeps at every level
      */
-    public Outcome compact(List<ContextEntry> entries, int currentTurn, int overheadTokens, Set<String> keepPaths) {
-        return compact(entries, currentTurn, overheadTokens, keepPaths, Set.of());
+    public Outcome compact(List<ContextEntry> entries, int currentTurn, Set<String> keepPaths) {
+        return compact(entries, currentTurn, keepPaths, Set.of());
     }
 
     /** The policy values. */
     public CompactionSettings settings() { return settings; }
 
     /**
-     * Compacts the working context. The triggers compare the tokens of all entries plus the overhead with the
-     * budget. The overhead is everything else in the next request: the system prompt, the tool definitions, the
-     * pinned items, and the recent turns.
+     * Compacts the working context. The triggers compare the tokens of the entries (the earlier context) with
+     * the limits. They do not count the system prompt, the tool definitions, the pinned items, or the recent
+     * turns.
      *
-     * @param overheadTokens the tokens of the working context that are not in the entries
      * @param concluded ids of search results that a later edit, write, or answer used. They go to level 3 at
      *                  the first compaction that touches them, and they are pruned first.
      */
-    public Outcome compact(List<ContextEntry> entries, int currentTurn, int overheadTokens, Set<String> keepPaths,
+    public Outcome compact(List<ContextEntry> entries, int currentTurn, Set<String> keepPaths,
                            Set<String> concluded) {
         var work = new ArrayList<>(entries);
         var before = total(work);
-        var soft = before + overheadTokens > settings.softLimit();
-        var hard = before + overheadTokens > settings.hardLimit();
+        var soft = before > settings.softLimit();
+        var hard = before > settings.hardLimit();
         var pruned = new java.util.HashSet<String>();
         if (soft) {
             var order = evictionOrder(work, currentTurn, concluded);
@@ -74,12 +72,12 @@ public final class ContextCompactor {
             apply(work, order, targets, keepPaths, pruned, -1);
         }
         if (hard) {
-            while (total(work) + overheadTokens > settings.softLimit()) {
+            while (total(work) > settings.softLimit()) {
                 var order = evictionOrder(work, currentTurn, concluded);
                 if (order.isEmpty()) break;
                 var targets = new java.util.HashMap<String, Integer>();
                 for (var i : order) targets.put(work.get(i).chunk().chunkId(), work.get(i).level() + 1);
-                var progressed = apply(work, order, targets, keepPaths, pruned, settings.softLimit() - overheadTokens);
+                var progressed = apply(work, order, targets, keepPaths, pruned, settings.softLimit());
                 if (!progressed) break;
             }
         }

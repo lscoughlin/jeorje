@@ -155,7 +155,7 @@ class CompactionRulesTest {
         var plain = entry(2, "grep", 40);
         var concluded = entry(3, "grep", 40);
         var total = plain.tokens() + concluded.tokens();
-        var out = compactor(total).compact(List.of(plain, concluded), 10, 0, Set.of(),
+        var out = compactor(total).compact(List.of(plain, concluded), 10, Set.of(),
             Set.of(concluded.chunk().chunkId()));
         assertEquals(2, out.entries().get(0).level(), "not concluded: level 2 until it is old enough");
         assertEquals(3, out.entries().get(1).level());
@@ -172,14 +172,15 @@ class CompactionRulesTest {
     }
 
     @Test
-    void theTriggersCountTheWholeWorkingContext() {
+    void theTriggersCountTheEarlierContextOnly() {
         var entries = List.of(entry(1, "read", 20));
         var t = entries.getFirst().tokens();
-        var budget = t * 4;
-        assertFalse(compactor(budget).compact(entries, 40, 0, Set.of()).soft());
-        var whole = compactor(budget).compact(entries, 40, t * 2, Set.of());
-        assertTrue(whole.soft(), "the overhead of the request makes the whole context pass the soft limit");
-        assertEquals(1, whole.chunksPruned());
+        var small = compactor(t * 4).compact(entries, 40, Set.of());
+        assertFalse(small.soft(), "a small earlier context does not pass the soft limit");
+        assertEquals(0, small.chunksPruned());
+        var large = compactor(t + 1).compact(entries, 40, Set.of());
+        assertTrue(large.soft());
+        assertEquals(1, large.chunksPruned());
     }
 
     @Test

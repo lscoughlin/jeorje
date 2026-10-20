@@ -94,7 +94,7 @@ public final class Agent implements AutoCloseable {
     private final Consumer<AgentEvent> events;
     private final Clock clock;
     private final ContextBuilder contextBuilder;
-    private final TurnChunker chunker;
+    private volatile TurnChunker chunker;
     private final AgentState state = new AgentState();
     private final BlockingQueue<AgentInput> inbox = new LinkedBlockingQueue<>();
     private final Map<String, CompletableFuture<Boolean>> confirmations = new ConcurrentHashMap<>();
@@ -235,6 +235,12 @@ public final class Agent implements AutoCloseable {
             synchronized (this) {
                 completed.clear();
                 pinned.clear();
+                if (manifest != null) {
+                    chunker = TurnChunker.forFormat(settings.sessionId(), manifest.chunkFormat());
+                    if (manifest.chunkFormat() == SessionManifest.LEGACY_CHUNK_FORMAT) {
+                        log.atInfo().log(() -> "Session " + settings.sessionId() + " resumes with chunk format 1");
+                    }
+                }
                 var own = new ArrayList<TranscriptReader.TimedTurn>();
                 for (var timed : transcript) {
                     if (timed.turn().agent().equals(source)) own.add(timed);
@@ -741,9 +747,7 @@ public final class Agent implements AutoCloseable {
         if (by != null && !entries.isEmpty()) {
             var paths = classifier.immediatePaths(all, ctx, classes);
             var concluded = classifier.concludedSearches(all, ctx, classes);
-            var overhead = contextBuilder.overhead(new ContextBuilder.Input(systemPrompt(), pinnedItems(List.of()),
-                List.of(), recentTurns(), List.of(), definitions()));
-            outcome = by.compact(entries, currentTurn, overhead, paths, concluded);
+            outcome = by.compact(entries, currentTurn, paths, concluded);
             entries = new ArrayList<>(outcome.entries());
         }
         older = List.copyOf(entries);

@@ -50,8 +50,9 @@ public final class IndexCommand implements Callable<Integer> {
             var session = found.get();
             var embedder = Wiring.embedder(loaded.config(), env);
             try (var store = LuceneContextStore.open(session.indexDir(), embedder,
-                    LuceneContextStore.Options.defaults().withRebuild(true))) {
-                var count = new IndexRebuilder(store, new TurnChunker(session.id())).rebuild(session.transcriptPath());
+                    LuceneContextStore.Options.defaults().withUserBoost(loaded.config().index().userBoost()).withRebuild(true))) {
+                var count = new IndexRebuilder(store,
+                        TurnChunker.forFormat(session.id(), session.manifest().chunkFormat())).rebuild(session.transcriptPath());
                 env.out().println("Rebuilt the index of session " + session.id() + ": " + count + " chunks"
                         + (embedder == null ? " (text-only)." : "."));
             } finally {

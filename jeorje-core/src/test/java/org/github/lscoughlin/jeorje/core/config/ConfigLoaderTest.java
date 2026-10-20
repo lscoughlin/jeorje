@@ -42,6 +42,7 @@ class ConfigLoaderTest {
         assertEquals("https://openrouter.ai/api/v1", c.llm().baseUrl());
         assertEquals(java.util.List.of("OPENROUTER_API_KEY"), c.llm().apiKeyEnv());
         assertEquals(home + "/.cache/jeorje/models", c.index().modelCache());
+        assertEquals(1.5, c.index().userBoost());
         assertEquals(ConfigSource.Kind.DEFAULT, loaded.sourceOf("models.default").kind());
         assertEquals("openai-compatible", JeorjeConfig.defaults().llm().provider());
     }
@@ -61,6 +62,15 @@ class ConfigLoaderTest {
         assertEquals(ConfigSource.Kind.USER, loaded.sourceOf("context.budgetPercent").kind());
         assertEquals(ConfigSource.Kind.FLAG, loaded.sourceOf("logging.level").kind());
         assertTrue(loaded.describe().stream().anyMatch(l -> l.startsWith("context.budgetPercent: 40  # user config")));
+    }
+
+    @Test
+    void theUserBoostLoadsAndMustBeAboveZero() throws IOException {
+        write(home.resolve(".jeorje"), "config.yaml", "index:\n  userBoost: 2.5\n");
+        assertEquals(2.5, ConfigLoader.load(opts()).config().index().userBoost());
+        write(home.resolve(".jeorje"), "config.yaml", "index:\n  userBoost: 0\n");
+        var e = assertThrows(ConfigException.class, () -> ConfigLoader.load(opts()));
+        assertTrue(e.getMessage().contains("index.userBoost"), e.getMessage());
     }
 
     @Test

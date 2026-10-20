@@ -42,7 +42,7 @@ Each chunk is one Lucene document.
 | `turn` | IntPoint, StoredField, NumericDocValues | yes | Range filter and order |
 | `part` | IntPoint, StoredField, NumericDocValues | yes | Position in the turn, and order inside a turn |
 | `timestamp` | LongPoint, StoredField | yes | Time filter |
-| `kind` | StringField | yes | `user`, `assistant`, `tool_call`, `tool_result`, `subagent_summary`, or `mixed` |
+| `kind` | StringField | yes | `user`, `assistant`, `tool_call`, `tool_result`, `subagent_summary`, or `mixed`. A `user` chunk holds one user text or one `ask_user` question with its answer. See [Chunk formats](context-and-compaction.md#chunk-formats). |
 | `source_agent_id` | StringField | yes | For `subagent_summary`, the id of the subagent that wrote the summary. The field is absent when the chunk has no source agent. |
 | `tool_name` | StringField | yes | Filter by tool. The field is absent when the chunk has no tool. |
 | `text` | TextField (analyzed) | yes | BM25 search and snippet source |
@@ -106,7 +106,7 @@ Each session has one writer thread. Many searcher threads use `SearcherManager`.
 
 ## Results
 
-A `Hit` has the chunk (with `chunkId`, `agentId`, `turn`, `part`, `kind`, `toolName`, and the other values), a `score`, and a snippet of `text`. TEXT and RAW use the Lucene highlighter for the snippet. It marks matches with `[` and `]` and makes fragments of about 200 characters. VECTOR uses the first 200 characters of the text. HYBRID uses the highlighter for hits that the TEXT leg found and the first characters for other hits.
+A `Hit` has the chunk (with `chunkId`, `agentId`, `turn`, `part`, `kind`, `toolName`, and the other values), a `score`, and a snippet of `text`. The store multiplies the score of a chunk of the kind `user` by the factor `index.userBoost` (default 1.5) in every search syntax. For HYBRID, it multiplies the fused score. The snippet of a `user` chunk is its text, up to 1,000 characters, in every search syntax. TEXT and RAW use the Lucene highlighter for the snippet. It marks matches with `[` and `]` and makes fragments of about 200 characters. VECTOR uses the first 200 characters of the text. HYBRID uses the highlighter for hits that the TEXT leg found and the first characters for other hits.
 
 ## Failure behavior
 

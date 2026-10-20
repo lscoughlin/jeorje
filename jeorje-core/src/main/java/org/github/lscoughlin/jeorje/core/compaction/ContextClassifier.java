@@ -81,6 +81,7 @@ public final class ContextClassifier {
         if (ctx.pinnedChunkIds().contains(c.chunkId())) return Protection.PROTECTED;
         var tool = c.toolName();
         if (tool != null && TODO_TOOLS.contains(tool.toLowerCase())) return Protection.PROTECTED;
+        if ("ask_user".equals(tool) && !"mixed".equals(c.kind())) return Protection.PROTECTED;
         if ("recall".equals(tool)) return Protection.AGGRESSIVE;
         if ("skill".equals(tool) && "tool_result".equals(c.kind())) return Protection.PROTECTED;
         return switch (c.kind()) {

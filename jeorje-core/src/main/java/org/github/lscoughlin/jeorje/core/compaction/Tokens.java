@@ -17,7 +17,21 @@ final class Tokens {
         "would", "can", "could", "should", "there", "their", "we", "i", "you", "he", "she", "they", "not", "no",
         "which", "who", "what", "when", "where", "also", "very", "just", "into", "about", "over", "under");
 
+    /** Words that change the meaning of a sentence. The fallback pruner never removes them. */
+    static final Set<String> KEEP_WORDS = Set.of("no", "not", "never", "without", "except", "only", "nor", "none",
+        "cannot");
+
     private Tokens() {}
+
+    /** True when the token is a negation or restriction word, with or without punctuation around it. */
+    static boolean isKeepWord(String token) {
+        var start = 0;
+        var end = token.length();
+        while (start < end && !Character.isLetter(token.charAt(start))) start++;
+        while (end > start && !Character.isLetter(token.charAt(end - 1))) end--;
+        var word = token.substring(start, end).toLowerCase(java.util.Locale.ROOT);
+        return KEEP_WORDS.contains(word) || word.endsWith("n't") || word.endsWith("n\u2019t");
+    }
 
     /** Estimates the token count: one token for four characters. */
     static int estimate(String text) { return (text.length() + 3) / 4; }

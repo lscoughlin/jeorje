@@ -20,6 +20,15 @@ class FallbackAndHintsTest {
     }
 
     @Test
+    void fallbackKeepsNegationWords() {
+        var text = "no, do not use the cache and the parser of the writer in the sink, and don't touch it without asking";
+        var out = Spans.build(text, new FallbackPruner(TermStats.UNIFORM).prune(text, 0.7, List.of()));
+        PrunerTest.assertSubsequence(text, out);
+        assertTrue(out.length() < text.length(), out);
+        for (var w : List.of("no,", "not", "don't", "without")) assertTrue(out.contains(w), w + ": " + out);
+    }
+
+    @Test
     void fallbackKeepsPathErrorAndNumberLines() {
         var filler = "the quiet worker walks around the old garden and sees nothing\n";
         var text = filler + "open src/main/App.java now\n" + filler.replace("quiet", "calm") + "build failed here\n"

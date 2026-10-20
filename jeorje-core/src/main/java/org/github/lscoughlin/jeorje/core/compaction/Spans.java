@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
+import org.github.lscoughlin.jeorje.core.model.Chunk;
 import org.github.lscoughlin.jeorje.core.session.SessionManifest.Span;
 
 /** Operations on kept spans: validation, normalization, union, and the pruned text builder. */
@@ -11,7 +13,50 @@ public final class Spans {
     /** The text between two kept spans that are not neighbors in the original. */
     public static final String GAP = " ... ";
 
+    private static final Pattern MARKER = Pattern.compile("^(USER: |ASSISTANT: |TOOL_CALL |TOOL_RESULT )");
+
     private Spans() {}
+
+    /**
+     * The character ranges of a chunk that hold the words of the user: a chunk of the kind {@code user}
+     * (the whole text), each {@code USER:} part of a turn chunk, and each {@code ask_user} result of a turn
+     * chunk. Pruning keeps these ranges at every level.
+     */
+    public static List<Span> human(Chunk chunk) {
+        var text = chunk.text();
+        if ("user".equals(chunk.kind())) return text.isEmpty() ? List.of() : List.of(new Span(0, text.length()));
+        var out = new ArrayList<Span>();
+        var start = -1;
+        var pos = 0;
+        while (pos <= text.length()) {
+            var nl = text.indexOf('\n', pos);
+            var end = nl < 0 ? text.length() : nl;
+            var m = MARKER.matcher(text.substring(pos, end));
+            if (m.find()) {
+                close(out, text, start, pos);
+                start = isHuman(m.group(1), text.substring(pos + m.end(), end)) ? pos : -1;
+            }
+            if (nl < 0) break;
+            pos = nl + 1;
+        }
+        close(out, text, start, text.length());
+        return normalize(out);
+    }
+
+    private static boolean isHuman(String marker, String rest) {
+        return switch (marker) {
+            case "USER: " -> true;
+            case "TOOL_RESULT " -> rest.startsWith("ask_user ") || rest.equals("ask_user");
+            default -> false;
+        };
+    }
+
+    private static void close(List<Span> out, String text, int start, int end) {
+        if (start < 0) return;
+        var stop = end;
+        while (stop > start && Character.isWhitespace(text.charAt(stop - 1))) stop--;
+        if (stop > start) out.add(new Span(start, stop));
+    }
 
     /**
      * Checks spans against a chunk text. Each span must be inside the text, must not be empty, and must not

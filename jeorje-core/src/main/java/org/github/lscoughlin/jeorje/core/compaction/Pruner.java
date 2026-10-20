@@ -89,7 +89,8 @@ public final class Pruner {
             } else if (level >= 3) {
                 results[i] = hintOnly(job, keepPaths);
             } else {
-                groups.computeIfAbsent(level + ":" + job.protection(), k -> new ArrayList<>()).add(i);
+                var guard = Spans.human(chunk).isEmpty() ? "" : ":human";
+                groups.computeIfAbsent(level + ":" + job.protection() + guard, k -> new ArrayList<>()).add(i);
             }
         }
         for (var indexes : groups.values()) {
@@ -105,7 +106,10 @@ public final class Pruner {
     private int effectiveLevel(Job job) {
         var prev = job.previous() == null ? 0 : job.previous().level();
         if (job.protection() == Protection.PROTECTED) return 0;
-        return Math.max(prev, Math.min(job.level(), job.protection().maxLevel()));
+        var max = job.protection().maxLevel();
+        // A chunk with words of the user stops at level 2 and keeps those words.
+        if (max > 2 && !Spans.human(job.chunk()).isEmpty()) max = 2;
+        return Math.max(prev, Math.min(job.level(), max));
     }
 
     private List<List<Integer>> batches(List<Integer> indexes, List<Job> jobs) {
@@ -129,7 +133,8 @@ public final class Pruner {
     private void runBatch(List<Integer> batch, List<Job> jobs, int level, Protection prot, Set<String> keepPaths,
                           PruneResult[] results) {
         var target = config.levels().get(level);
-        var noteMode = prot == Protection.CAREFUL && level == 2;
+        var human = !Spans.human(jobs.get(batch.getFirst()).chunk()).isEmpty();
+        var noteMode = prot == Protection.CAREFUL && level == 2 && !human;
         var valid = new HashMap<Integer, CompactorAnswer>();
         var pending = new ArrayList<>(batch);
         var feedback = new HashMap<String, String>();
@@ -176,7 +181,7 @@ public final class Pruner {
         var chunk = job.chunk();
         var text = chunk.text();
         var keywords = keywords(job, a.keywords());
-        if (a.note() != null && job.protection() == Protection.CAREFUL && level == 2) {
+        if (a.note() != null && job.protection() == Protection.CAREFUL && level == 2 && Spans.human(chunk).isEmpty()) {
             var note = new LinkedHashMap<>(a.note());
             var files = new LinkedHashSet<>(note.getOrDefault("files", List.of()));
             keepPaths.stream().filter(text::contains).forEach(files::add);
@@ -185,14 +190,15 @@ public final class Pruner {
             return new PruneResult(chunk.chunkId(), job.protection(), level, List.of(), rendered, keywords,
                 PruneResult.Source.MODEL, rendered.length(), text.length());
         }
-        var spans = Spans.union(a.spans(), Spans.occurrences(text, keepPaths));
+        var spans = Spans.union(Spans.union(a.spans(), Spans.human(chunk)), Spans.occurrences(text, keepPaths));
         return new PruneResult(chunk.chunkId(), job.protection(), level, spans, null, keywords,
             PruneResult.Source.MODEL, Spans.size(spans), text.length());
     }
 
     private PruneResult fromFallback(Job job, int level, double target, Set<String> keepPaths) {
         var chunk = job.chunk();
-        var spans = Spans.union(fallback.prune(chunk.text(), target, keepPaths), Spans.occurrences(chunk.text(), keepPaths));
+        var spans = Spans.union(Spans.union(fallback.prune(chunk.text(), target, keepPaths), Spans.human(chunk)),
+            Spans.occurrences(chunk.text(), keepPaths));
         return new PruneResult(chunk.chunkId(), job.protection(), level, spans, null, keywords(job, List.of()),
             PruneResult.Source.FALLBACK, Spans.size(spans), chunk.text().length());
     }

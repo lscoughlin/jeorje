@@ -13,13 +13,30 @@ Compaction removes tokens from the working context. It keeps original words and 
 
 When a turn ends, `TurnChunker` converts it to one or more chunks.
 
-- By default, one turn is one chunk. The chunk text has one line for each part: `USER: <text>`, `ASSISTANT: <text>`, `TOOL_CALL <tool> <arguments>`, and `TOOL_RESULT <tool> <output>`. The chunk has the part number 0.
+- A turn gives one or more chunks. The chunk format decides which. See [Chunk formats](#chunk-formats).
+- The text of a turn chunk has one line for each part: `USER: <text>`, `ASSISTANT: <text>`, `TOOL_CALL <tool> <arguments>`, and `TOOL_RESULT <tool> <output>`.
 - A tool result of more than 8,000 characters becomes separate chunks of the kind `tool_result`. `TurnChunker` splits at paragraph or line boundaries and uses a 10% overlap. A large file read then does not dominate one embedding.
 - A `recall` call becomes a reference chunk. See [Recall](#recall).
 - Each chunk has these values: `chunkId`, `sessionId`, `agentId`, `turn`, `part`, `timestamp`, `kind`, `toolName` (when it applies), the text, and `sourceAgentId` (when it applies). The chunk id is `<agentId>:<turn>.<part>`.
 - The `kind` value is `user`, `assistant`, `tool_call`, `tool_result`, `subagent_summary`, or `mixed`. A chunk that has parts of more than one kind has the kind `mixed`. The `toolName` is set when the chunk has exactly one tool. A `subagent_summary` chunk has the parent in `agentId` and the subagent in `sourceAgentId`.
 
 The agent adds the chunks to the index one time, when the turn ends. Adding the same chunk id again replaces the chunk, so an append is idempotent. The history grows only by append.
+
+### Chunk formats
+
+The manifest of a session stores the **chunk format** in the field `chunkFormat`. A new session uses format 2. A manifest with no `chunkFormat` value belongs to an older session and has format 1. A resumed session keeps its format, so the chunk ids and the pruning table of the session still match. The command `jeorje index rebuild` also uses the format of the manifest. A log line at level info tells when a session resumes with format 1.
+
+**Format 2.** `TurnChunker` writes the parts of a turn in this order, and numbers them from 0:
+
+1. One chunk of the kind `user` for each user text. The text is `USER: <text>`.
+2. One chunk of the kind `user` with the tool name `ask_user` for each `ask_user` call. The text has the lines `QUESTION <question>`, `CHOICES <choice> | <choice>` (when the call has choices), and `ANSWER <answer>`. A call with no result has `ANSWER (none)`. A failed call has `ERROR <message>` and not `ANSWER`. These parts are not in the main text.
+3. The main text: the lines of the assistant text, the tool calls, and the tool results. If the main text is longer than 8,000 characters, `TurnChunker` splits it into parts of at most 8,000 characters. It splits between lines and never inside a line. It cuts a single assistant line that is longer than 8,000 characters with the overlap rule of tool results. A part has the kind `mixed` when it holds more than one kind of line.
+4. The `recall` reference chunks.
+5. The chunks of the large tool results.
+
+A user chunk is short, so the index finds it easily and the embedding covers all of its text.
+
+**Format 1.** One chunk holds all parts of the turn, except the `recall` references and the large tool results. The chunk has the part number 0 and the kind `mixed` when the turn has more than one kind of line. The user text and the answers of `ask_user` are lines in this chunk. See [Protection classes](#protection-classes) for how pruning keeps them.
 
 ## Working context layout
 
@@ -46,10 +63,19 @@ Jeorje puts each chunk in one of three classes. The class decides how much compa
 | Content | Rule |
 |---------|------|
 | System prompt | Never in the chunk list. The agent builds it again for each request. |
-| Active user instructions | A chunk of the kind `user`. A `mixed` chunk is `PROTECTED` when it is the first chunk of its agent in the list that the classifier gets and its text starts with `USER:`. A chunk that the caller marks as pinned. |
+| Active user instructions and answers | A chunk of the kind `user`. This covers every user text and every `ask_user` question with its answer in format 2. In format 1, a `mixed` chunk is `PROTECTED` when it is the first chunk of its agent in the list that the classifier gets and its text starts with `USER:`. A chunk that the caller marks as pinned. |
 | Todo list | A chunk whose `toolName` is `todo`. The agent also pins the latest list in every request (see [Working context layout](#working-context-layout)). |
 | Current error state | The latest failing `tool_result` chunk of each tool that no later success of the same tool has resolved. A failure is a result that matches a failure pattern, for example `BUILD FAILURE`, `[ERROR]`, `FAILED`, a non-zero `exit code`, or `Tests run:` with failures. A later chunk of the same tool with no failure, or a note that the caller marks as resolved, ends the protection. The chunk then becomes `AGGRESSIVE`. |
 | Skill content | A `tool_result` chunk of the `skill` tool, because it is durable guidance. |
+
+**Words of the user in a turn chunk (format 1).** In format 1, the user text of a later turn and the answer of `ask_user` are lines in a `mixed` chunk that is `CAREFUL`. `Spans.human` finds these **human ranges**: each `USER:` part and each `TOOL_RESULT ask_user` part. The rules for a chunk that has human ranges are:
+
+- The chunk stops at level 2. It never goes to level 3.
+- The chunk never becomes a decision note. The compactor gives kept spans for it, also at level 2.
+- Every answer of the compactor and of the fallback pruner includes the human ranges. If an answer leaves them out, Jeorje adds them before it stores the result. The size check of the target applies to the answer of the compactor before Jeorje adds the ranges, so the kept share of the chunk can be higher than the target.
+- The ranges stay on resume, because the pruning table stores the kept spans.
+
+The words of the user are therefore never removed in any format. The assistant text, the tool calls, and the other tool results of the chunk follow the normal rules.
 
 **Immediate file paths.** `ContextClassifier.immediatePaths` finds the paths of files that the agent read, wrote, or edited in the last N turns (default 6), and the paths in a protected error chunk. The compactor and the pruner keep these path tokens at every level, also in chunks of other classes. The agent computes the set before each compaction and gives it to the compactor. A path that only a pruned older turn used is not in the set.
 
@@ -82,7 +108,7 @@ An `AGGRESSIVE` chunk goes to level 2 at the first compaction that touches it. I
 
 ### Classification
 
-`ContextClassifier` assigns the class with fixed rules on `kind`, `toolName`, and the text of the chunk. It does not use the compactor model. The rules run in this order: a pinned chunk, a `todo` chunk, a `recall` chunk (`AGGRESSIVE`), a `skill` result (`PROTECTED`), and then the kind of the chunk (`user` is `PROTECTED`, `assistant` and `subagent_summary` are `CAREFUL`, `tool_result` and `tool_call` are `AGGRESSIVE`, and `mixed` follows the table above). A chunk of an unknown kind is `CAREFUL` if its text starts with `ASSISTANT:` and `AGGRESSIVE` otherwise. The error state and the skill limit then change some classes.
+`ContextClassifier` assigns the class with fixed rules on `kind`, `toolName`, and the text of the chunk. It does not use the compactor model. The rules run in this order: a pinned chunk, a `todo` chunk, an `ask_user` chunk that is not `mixed` (`PROTECTED`), a `recall` chunk (`AGGRESSIVE`), a `skill` result (`PROTECTED`), and then the kind of the chunk (`user` is `PROTECTED`, `assistant` and `subagent_summary` are `CAREFUL`, `tool_result` and `tool_call` are `AGGRESSIVE`, and `mixed` follows the table above). A chunk of an unknown kind is `CAREFUL` if its text starts with `ASSISTANT:` and `AGGRESSIVE` otherwise. The error state and the skill limit then change some classes.
 
 The agent classifies the chunks of one turn at a time, when the turn leaves the recent window. It does not classify them again at later compactions. The agent gives no pinned chunk ids and no resolved chunk ids to the classifier.
 
@@ -121,7 +147,7 @@ Jeorje checks each answer:
 3. Each keyword must appear in the original chunk text.
 4. For a decision note, see [Compress carefully](#compress-carefully-careful).
 
-Jeorje asks again one time for the chunks that fail the check, and it gives the reason to the compactor. A call that fails or returns text that is not valid JSON counts as a failed try. If the check fails after the second try, Jeorje uses the **fallback pruner**. It needs no model. It removes tokens in this order until it reaches the target: repeated lines, English stop words, and then lines with the lowest score. A line score is the sum of the weights of its terms. The weight comes from a `TermStats` object. The CLI passes uniform weights, so every term has the weight 1. It always keeps tokens that contain a path, an error word (`error`, `exception`, `failed`), or a digit. The fallback also produces keywords with the same candidate score. This pruner also runs when the compactor model is not set or not available. A `CAREFUL` chunk at level 2 that has no valid decision note gets the spans of the fallback pruner, not a note.
+Jeorje asks again one time for the chunks that fail the check, and it gives the reason to the compactor. A call that fails or returns text that is not valid JSON counts as a failed try. If the check fails after the second try, Jeorje uses the **fallback pruner**. It needs no model. It removes tokens in this order until it reaches the target: repeated lines, English stop words, and then lines with the lowest score. The stop-word step never removes a negation or restriction word (`no`, `not`, `never`, `nor`, `none`, `cannot`, `without`, `except`, `only`) or a word that ends in `n't`, also when punctuation is next to it. A line score is the sum of the weights of its terms. The weight comes from a `TermStats` object. The CLI passes uniform weights, so every term has the weight 1. It always keeps tokens that contain a path, an error word (`error`, `exception`, `failed`), or a digit. The fallback also produces keywords with the same candidate score. This pruner also runs when the compactor model is not set or not available. A `CAREFUL` chunk at level 2 that has no valid decision note gets the spans of the fallback pruner, not a note.
 
 Jeorje prunes `AGGRESSIVE` chunks first. They are the largest and the easiest to recover.
 
@@ -151,7 +177,7 @@ A keyword hint helps the model find the full text again. The compactor chooses t
 
 ## Compaction policy
 
-Compaction runs after each turn. It does not wait for a hard limit. The budget is the share of the context window for the working context (60% by default, `context.budgetPercent`). The triggers measure the estimated tokens of the earlier context: the chunks of the turns outside the recent window, in their current form. They do not count the system prompt, the pinned items, or the recent turns.
+Compaction runs after each turn. It does not wait for a hard limit. The budget is the share of the context window for the working context (60% by default, `context.budgetPercent`). The triggers measure the estimated tokens of the earlier context only: the chunks of the turns outside the recent window, in their current form. They do not count the system prompt, the tool definitions, the pinned items, or the recent turns. A large system prompt or large recent turns therefore never starts a compaction by themselves. The request builder keeps the whole request inside the budget: when a request is over the budget, it drops the oldest recent turns. See [agent-loop.md](agent-loop.md#token-budget).
 
 An **eligible** chunk is not `PROTECTED`, is older than the recent turns, and is below the highest level of its class.
 
@@ -182,6 +208,8 @@ The agent has a `recall` tool. See [tools.md](tools.md). It has two modes:
 - `recall(query, filters?, limit?)` runs a hybrid search over the history of the session. The default limit is 10 and the largest is 50. The result starts with a line `recall-ref: <JSON>` that has the query, the filters, and the ids of the hits. Then each hit has a line with the chunk id, the agent, the turn, the score, the kind, and the tool, and a line with a snippet.
 - `recall(chunkId, before?, after?)` returns the full text of a chunk, or a window of up to 10 chunks before and after it.
 
+To find what the user said, asked, or chose, the model calls `recall` with the filter `kind` set to `user`. The system prompt tells the model to do this. The index gives a `user` chunk a rank boost: it multiplies the score of the chunk by `index.userBoost` (default 1.5). The snippet of a `user` chunk is its text, up to 1,000 characters.
+
 The tool gets the session id as a constructor argument. It never returns a chunk of another session.
 
 The system prompt tells the model what a pruned chunk is. It tells the model to take the terms from the `recall:` line and use them with `recall` when it needs the missing detail. It also tells the model to use `recall` instead of a repeat tool run.
@@ -196,6 +224,6 @@ Recalled content enters the working context as a normal tool result at level 0. 
 
 ## Persistence and resume
 
-A session directory holds the index, the transcript, and a manifest. Jeorje removes secrets from the chunk text before it enters the index, and from every message before it enters the transcript. See [permissions-and-safety.md](permissions-and-safety.md#secrets). The manifest has the session id, the times, the agent tree, a snapshot of the config, the pinned items, the pruning table, the run state, the last turn number, and the state of an `/implement` run. The pruning table has the class, the level, the kept spans (character offsets) or the note, and the keywords for each pruned chunk.
+A session directory holds the index, the transcript, and a manifest. Jeorje removes secrets from the chunk text before it enters the index, and from every message before it enters the transcript. See [permissions-and-safety.md](permissions-and-safety.md#secrets). The manifest has the session id, the times, the agent tree, a snapshot of the config, the pinned items, the pruning table, the run state, the last turn number, the state of an `/implement` run, and the chunk format. The pruning table has the class, the level, the kept spans (character offsets) or the note, and the keywords for each pruned chunk.
 
 To resume a session, Jeorje reads the manifest and the transcript. It chunks the turns of the agent with `TurnChunker`. It builds the working context from the pinned items, the pruned chunks, and the latest turns. The text of a pruned chunk comes from the transcript, with the kept spans applied. For a decision note, it uses the stored note. A chunk with no row in the pruning table is at level 0. The next request equals the request that the earlier run would have made. The index can be rebuilt from the transcript with `jeorje index rebuild`.

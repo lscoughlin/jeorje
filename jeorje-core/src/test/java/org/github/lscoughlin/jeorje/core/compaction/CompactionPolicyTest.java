@@ -31,7 +31,7 @@ class CompactionPolicyTest {
     @Test
     void belowTheSoftTriggerNothingChanges() {
         var entries = List.of(entry(1, 0, "tool_result", "read", Protection.AGGRESSIVE, 3));
-        var out = compactor(100_000, null).compact(entries, 30, 0, Set.of());
+        var out = compactor(100_000, null).compact(entries, 30, Set.of());
         assertFalse(out.soft());
         assertNull(out.event());
         assertEquals(entries, out.entries());
@@ -45,7 +45,7 @@ class CompactionPolicyTest {
         entries.add(entry(3, 0, "assistant", null, Protection.CAREFUL, 40));
         entries.add(entry(13, 0, "tool_result", "read", Protection.AGGRESSIVE, 40));
         var total = entries.stream().mapToInt(ContextEntry::tokens).sum();
-        var out = compactor(total * 3 / 2, null).compact(entries, 15, 0, Set.of());
+        var out = compactor(total * 3 / 2, null).compact(entries, 15, Set.of());
         assertTrue(out.soft());
         assertFalse(out.hard());
         var e = out.entries();
@@ -64,7 +64,7 @@ class CompactionPolicyTest {
         var entries = List.of(entry(1, 0, "tool_result", "read", Protection.AGGRESSIVE, 40),
             entry(2, 0, "tool_result", "read", Protection.AGGRESSIVE, 40));
         var total = entries.stream().mapToInt(ContextEntry::tokens).sum();
-        var out = compactor(total, null).compact(entries, 40, 0, Set.of());
+        var out = compactor(total, null).compact(entries, 40, Set.of());
         assertTrue(out.entries().stream().allMatch(x -> x.level() == 3));
     }
 
@@ -74,7 +74,7 @@ class CompactionPolicyTest {
         for (var i = 0; i < 12; i++) entries.add(entry(i + 1, 0, "assistant", null, Protection.CAREFUL, 30));
         var total = entries.stream().mapToInt(ContextEntry::tokens).sum();
         var budget = total * 10 / 12;
-        var out = compactor(budget, null).compact(entries, 40, 0, Set.of());
+        var out = compactor(budget, null).compact(entries, 40, Set.of());
         assertTrue(out.hard());
         assertTrue(out.entries().stream().allMatch(x -> x.level() <= 2));
         var after = out.entries().stream().mapToInt(ContextEntry::tokens).sum();
@@ -83,13 +83,11 @@ class CompactionPolicyTest {
     }
 
     @Test
-    void hardTriggerUsesTheOverheadOfTheNextRequest() {
+    void hardTriggerMeasuresTheEarlierContextOnly() {
         var entries = List.of(entry(1, 0, "assistant", null, Protection.CAREFUL, 30));
         var t = entries.getFirst().tokens();
-        var low = compactor(t * 3, null).compact(entries, 40, 0, Set.of());
-        assertFalse(low.hard());
-        var high = compactor(t * 3, null).compact(entries, 40, t * 2, Set.of());
-        assertTrue(high.hard());
+        assertFalse(compactor(t * 3, null).compact(entries, 40, Set.of()).hard());
+        assertTrue(compactor(t, null).compact(entries, 40, Set.of()).hard());
     }
 
     @Test
@@ -112,7 +110,7 @@ class CompactionPolicyTest {
             + " returned=a:1.0,a:4.2"), Protection.AGGRESSIVE);
         var filler = entry(3, 0, "tool_result", "read", Protection.AGGRESSIVE, 40);
         var total = recall.tokens() + filler.tokens();
-        var out = compactor(total, null).compact(List.of(recall, filler), 30, 0, Set.of());
+        var out = compactor(total, null).compact(List.of(recall, filler), 30, Set.of());
         var r = out.entries().getFirst();
         assertEquals(3, r.level());
         assertTrue(r.render().contains("a:1.0") && r.render().contains("a:4.2"));
@@ -126,7 +124,7 @@ class CompactionPolicyTest {
         entries.add(entry(2, 0, "assistant", null, Protection.CAREFUL, 40));
         entries.add(entry(3, 0, "user", null, Protection.PROTECTED, 4));
         var total = entries.stream().mapToInt(ContextEntry::tokens).sum();
-        var out = compactor(total / 2, null).compact(entries, 30, 0, Set.of());
+        var out = compactor(total / 2, null).compact(entries, 30, Set.of());
         var manifest = PruningTable.store(SessionManifest.create("s1", Instant.EPOCH, null), out.entries());
         assertEquals(2, manifest.pruning().size());
         var restored = PruningTable.restore(entries.stream().map(ContextEntry::chunk).toList(), manifest.pruning(), c -> Protection.PROTECTED);

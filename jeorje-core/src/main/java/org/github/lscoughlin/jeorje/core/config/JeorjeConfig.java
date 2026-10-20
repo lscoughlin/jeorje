@@ -87,7 +87,7 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
         }
     }
 
-    public record Index(boolean embeddings, String modelCache) {
+    public record Index(boolean embeddings, String modelCache, double userBoost) {
     }
 
     public record PermissionRule(String tool, String pattern, String decision) {

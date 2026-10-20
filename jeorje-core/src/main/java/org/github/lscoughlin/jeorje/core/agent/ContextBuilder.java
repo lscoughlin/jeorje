@@ -88,16 +88,6 @@ public final class ContextBuilder {
         }
     }
 
-    /**
-     * The estimate of everything in the next request except the earlier context: the system prompt, the tool
-     * definitions, the pinned items, the recent turns, and the current messages. It includes the scale. The
-     * compaction triggers add this number to the earlier context, so they measure the whole working context.
-     */
-    public synchronized int overhead(Input in) {
-        var bare = new Input(in.system(), in.pinned(), List.of(), in.recentTurns(), in.current(), in.tools());
-        return (int) Math.ceil(rawEstimate(request(bare, bare.recentTurns())) * scale);
-    }
-
     /** The estimate of a request before the scale. */
     public static int rawEstimate(LlmRequest request) {
         var chars = request.system().length();

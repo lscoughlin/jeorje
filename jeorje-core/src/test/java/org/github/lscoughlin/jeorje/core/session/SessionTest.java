@@ -44,8 +44,8 @@ class SessionTest {
     // ---- chunker
 
     @Test
-    void oneChunkPerTurn() {
-        var chunks = new TurnChunker("s1").chunk(plain(1, "hello", "world"), T0);
+    void format1WritesOneChunkPerTurn() {
+        var chunks = TurnChunker.forFormat("s1", 1).chunk(plain(1, "hello", "world"), T0);
         assertEquals(1, chunks.size());
         var c = chunks.getFirst();
         assertEquals("main:1.0", c.chunkId());
@@ -55,8 +55,8 @@ class SessionTest {
     }
 
     @Test
-    void smallToolResultStaysInTurnChunk() {
-        var chunks = new TurnChunker("s1").chunk(toolTurn(2, "read", "{\"path\":\"a\"}", "x".repeat(8000)), T0);
+    void format1KeepsASmallToolResultInTheTurnChunk() {
+        var chunks = TurnChunker.forFormat("s1", 1).chunk(toolTurn(2, "read", "{\"path\":\"a\"}", "x".repeat(8000)), T0);
         assertEquals(1, chunks.size());
         assertEquals("read", chunks.getFirst().toolName());
     }
@@ -109,6 +109,75 @@ class SessionTest {
         assertTrue(recall.text().contains("tool_result"));
         assertTrue(recall.text().contains("main:2.0") && recall.text().contains("main:5.1"));
         assertTrue(chunks.stream().noneMatch(c -> c.text().contains("SECRET-RECALLED-TEXT")));
+    }
+
+    @Test
+    void format2WritesUserTextAndAskUserAsSeparateChunks() {
+        var ask = JSON.readTree("{\"question\":\"Which database?\",\"choices\":[\"postgres\",\"sqlite\"]}");
+        var turn = new Turn(agent, 4, List.of(Message.user("plan the migration"),
+            new Message(Role.ASSISTANT, List.of(new ToolUse("q1", "ask_user", ask))),
+            new Message(Role.USER, List.of(new ToolResult("q1", "User answer: sqlite, and do not use postgres", false))),
+            new Message(Role.ASSISTANT, List.of(new ToolUse("r1", "read", JSON.readTree("{\"path\":\"a\"}")))),
+            new Message(Role.USER, List.of(new ToolResult("r1", "contents", false))),
+            Message.assistant("done")));
+        var chunks = new TurnChunker("s1").chunk(turn, T0);
+        assertEquals(List.of("user", "user", "mixed"), chunks.stream().map(c -> c.kind()).toList());
+        assertEquals(List.of("main:4.0", "main:4.1", "main:4.2"), chunks.stream().map(c -> c.chunkId()).toList());
+        assertEquals("USER: plan the migration", chunks.get(0).text());
+        assertEquals("ask_user", chunks.get(1).toolName());
+        assertEquals("QUESTION Which database?\nCHOICES postgres | sqlite\nANSWER sqlite, and do not use postgres",
+            chunks.get(1).text());
+        assertTrue(chunks.get(2).text().contains("TOOL_CALL read"));
+        assertTrue(chunks.get(2).text().contains("ASSISTANT: done"));
+        assertTrue(chunks.stream().skip(2).noneMatch(c -> c.text().contains("sqlite")));
+    }
+
+    @Test
+    void format2SplitsALargeMainTextAtItemBoundaries() {
+        var items = new java.util.ArrayList<Message>();
+        items.add(Message.user("go"));
+        for (var i = 0; i < 10; i++) {
+            items.add(Message.assistant(("step " + i + " ").repeat(500).strip()));
+        }
+        var chunks = new TurnChunker("s1").chunk(new Turn(agent, 2, items), T0);
+        var main = chunks.stream().filter(c -> c.kind().equals("assistant")).toList();
+        assertTrue(main.size() >= 3, "parts: " + main.size());
+        for (var c : main) {
+            assertTrue(c.text().length() <= TurnChunker.MAX_RESULT_CHARS, "length " + c.text().length());
+            assertTrue(c.text().startsWith("ASSISTANT: step "), "no item is cut");
+        }
+        assertEquals(chunks.size(), chunks.stream().map(c -> c.part()).distinct().count());
+        assertEquals("user", chunks.getFirst().kind());
+    }
+
+    @Test
+    void format2SplitsOneOversizedTextItem() {
+        var chunks = new TurnChunker("s1", 100).chunk(
+            new Turn(agent, 2, List.of(Message.assistant("word ".repeat(100)))), T0);
+        assertTrue(chunks.size() > 3);
+        assertTrue(chunks.stream().allMatch(c -> c.text().length() <= 100));
+    }
+
+    @Test
+    void format2AddsAnUnansweredQuestion() {
+        var ask = JSON.readTree("{\"question\":\"Which?\"}");
+        var turn = new Turn(agent, 2, List.of(Message.user("go"),
+            new Message(Role.ASSISTANT, List.of(new ToolUse("q1", "ask_user", ask)))));
+        var chunks = new TurnChunker("s1").chunk(turn, T0);
+        assertEquals("QUESTION Which?\nANSWER (none)", chunks.get(1).text());
+    }
+
+    @Test
+    void theManifestChunkFormatDefaultsToTheLegacyFormat() {
+        var now = SessionManifest.create("s1", T0, null);
+        assertEquals(2, now.chunkFormat());
+        var json = JSON.writeValueAsString(now);
+        assertEquals(2, SessionManifest.readFrom(json).chunkFormat());
+        var legacy = JSON.readTree(json);
+        ((tools.jackson.databind.node.ObjectNode) legacy).remove("chunkFormat");
+        assertEquals(1, SessionManifest.readFrom(JSON.writeValueAsString(legacy)).chunkFormat());
+        assertEquals(1, new SessionManifest("s1", T0, T0, List.of(), null, List.of(), List.of(), "idle", 0)
+            .chunkFormat());
     }
 
     // ---- transcript

@@ -456,4 +456,55 @@ class LuceneContextStoreTest {
             assertEquals(41, s.search(q("marker", Syntax.TEXT, Filters.none(), 100)).size());
         }
     }
+
+    @Test
+    void userChunksRankHighAndTheKindFilterFindsThem() {
+        try (var s = store(null)) {
+            var all = new ArrayList<Chunk>();
+            for (var i = 1; i <= 30; i++) {
+                all.add(chunk("a", i, 1, "mixed", null, ("TOOL_RESULT read the migration notes list sqlite and postgres and "
+                    + "other storage options for step " + i + "\n").repeat(40)));
+            }
+            all.add(chunk("a", 31, 0, "user", "ask_user",
+                "QUESTION Which database?\nANSWER sqlite, and do not use postgres for the migration"));
+            s.append(all);
+            var hits = s.search(q("sqlite postgres migration", Syntax.TEXT, Filters.none(), 5));
+            assertTrue(ids(hits).subList(0, 3).contains("a:31.0"), ids(hits).toString());
+            var users = s.search(q("sqlite", Syntax.TEXT, filters(Set.of(), OptionalInt.empty(), OptionalInt.empty(),
+                Set.of("user"), Set.of()), 10));
+            assertEquals(List.of("a:31.0"), ids(users));
+        }
+    }
+
+    @Test
+    void theUserBoostRaisesTheScoreOfUserChunks() {
+        var text = "the answer is sqlite";
+        var assistantFirst = List.of(chunk("a", 1, 0, "assistant", null, text), chunk("a", 2, 0, "user", null, text));
+        try (var s = store(null)) {
+            s.append(assistantFirst);
+            assertEquals(List.of("a:2.0", "a:1.0"), ids(s.search(q("sqlite", Syntax.TEXT, Filters.none(), 5))));
+        }
+        var plain = LuceneContextStore.open(tmp.resolve("plain"), null, LuceneContextStore.Options.defaults()
+            .withRetryInterval(Duration.ZERO).withUserBoost(1.0));
+        try (plain) {
+            plain.append(assistantFirst);
+            assertEquals(List.of("a:1.0", "a:2.0"), ids(plain.search(q("sqlite", Syntax.TEXT, Filters.none(), 5))));
+        }
+        assertThrows(IllegalArgumentException.class, () -> LuceneContextStore.Options.defaults().withUserBoost(0));
+    }
+
+    @Test
+    void theSnippetOfAShortUserChunkIsItsFullText() {
+        var text = "ANSWER sqlite " + "and keep every table name as it is, ".repeat(15) + "end of the answer";
+        assertTrue(text.length() > 400 && text.length() < 1000);
+        try (var s = store(null)) {
+            s.append(List.of(chunk("a", 1, 0, "user", "ask_user", text),
+                chunk("a", 2, 0, "assistant", null, text)));
+            var hits = s.search(q("sqlite", Syntax.TEXT, Filters.none(), 5));
+            var user = hits.stream().filter(h -> h.chunk().kind().equals("user")).findFirst().orElseThrow();
+            var other = hits.stream().filter(h -> h.chunk().kind().equals("assistant")).findFirst().orElseThrow();
+            assertEquals(text, user.snippet());
+            assertTrue(other.snippet().length() < text.length());
+        }
+    }
 }
