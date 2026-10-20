@@ -88,7 +88,12 @@ public final class PlanSubmitTool extends RecordTool<PlanSubmitTool.Input> {
     protected ToolResultData run(Input input, ToolContext context) throws IOException {
         var today = LocalDate.now(context.clock());
         var dir = context.workingDirectory().toAbsolutePath().resolve(planDir).normalize();
-        var slug = slug(input.name() != null && !input.name().isBlank() ? input.name() : input.title());
+        var named = input.name() != null && !input.name().isBlank();
+        var earlier = mode == null ? null : mode.submittedPlan().orElse(null);
+        // A call with no name replaces the plan that this mode wrote before. A new title does not make a new file.
+        var slug = !named && earlier != null && earlier.startsWith(dir) && Files.isRegularFile(earlier)
+                ? earlier.getFileName().toString().replaceAll("\\.md$", "")
+                : slug(named ? input.name() : input.title());
         var file = dir.resolve(slug + ".md").normalize();
         var prevFile = dir.resolve(slug + ".prev.md").normalize();
         if (!file.startsWith(dir) || !prevFile.startsWith(dir) || Files.isSymbolicLink(file) || Files.isSymbolicLink(prevFile)) {
@@ -128,6 +133,8 @@ public final class PlanSubmitTool extends RecordTool<PlanSubmitTool.Input> {
         Files.createDirectories(dir);
         if (existed) Files.copy(file, prevFile, StandardCopyOption.REPLACE_EXISTING);
         PlanWriter.write(plan, file);
+        written.put(file, Files.readString(file));
+        var moved = removeMovedDraft(earlier, file, dir);
         if (mode != null) mode.recordSubmission(file, existed ? prevFile : null);
         if (onSubmitted != null) onSubmitted.accept(file);
 
@@ -136,7 +143,26 @@ public final class PlanSubmitTool extends RecordTool<PlanSubmitTool.Input> {
         log.atInfo().log(() -> "plan written to " + shown);
         return ToolResultData.ok("Plan written to " + shown + " (" + plan.stories().size() + " stories, " + tasks
                 + " tasks)." + (existed ? " The previous version is in " + prevFile.getFileName() + "." : "")
+                + (moved ? " The earlier draft " + earlier.getFileName() + " is removed." : "")
                 + " The user reviews the plan now.");
+    }
+
+    /** The text that this tool wrote last to each file. A draft with other text was changed by the user. */
+    private final java.util.Map<Path, String> written = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Deletes the earlier draft of this mode when the new plan went to another file. Returns true if it deleted. */
+    private boolean removeMovedDraft(Path earlier, Path file, Path dir) {
+        if (earlier == null || earlier.equals(file) || !earlier.startsWith(dir) || !Files.isRegularFile(earlier)) return false;
+        try {
+            var last = written.get(earlier);
+            if (last == null || !last.equals(Files.readString(earlier))) return false;
+            Files.delete(earlier);
+            written.remove(earlier);
+            return true;
+        } catch (IOException e) {
+            log.atDebug().log(() -> "earlier draft not removed: " + e.getMessage());
+            return false;
+        }
     }
 
     /** Makes the plan from the tool input. */
@@ -181,9 +207,12 @@ public final class PlanSubmitTool extends RecordTool<PlanSubmitTool.Input> {
                 .map(x -> x.startsWith("`") && x.endsWith("`") && x.length() > 1 ? x.substring(1, x.length() - 1) : x).toList();
     }
 
-    private static String yaml(String value) {
+    /** A front matter value. It gets quotes when plain text would be read in another way. */
+    static String yaml(String value) {
         var v = oneLine(value);
-        return v.contains("#") ? "\"" + v.replace('"', '\'') + "\"" : v;
+        var special = v.contains(": ") || v.contains(" #") || v.startsWith("#") || v.endsWith(":")
+                || !v.isEmpty() && "\"'[]{}&*!|>%@`-?,".indexOf(v.charAt(0)) >= 0;
+        return special ? "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"" : v;
     }
 
     private static String oneLine(String s) { return nullToEmpty(s).replaceAll("\\s+", " ").strip(); }

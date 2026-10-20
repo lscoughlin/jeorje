@@ -4,6 +4,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import org.github.lscoughlin.jeorje.core.agent.Agent;
 import org.github.lscoughlin.jeorje.core.model.AgentId;
 import org.github.lscoughlin.jeorje.core.model.LlmRequest;
 import org.github.lscoughlin.jeorje.core.model.ToolDefinition;
@@ -44,10 +45,17 @@ public final class AdvisorSupport {
         return advisorOn.getAsBoolean();
     }
 
-    /** The working context of the agent of the user, as of its last model call. */
+    /**
+     * The working context of an agent, as of its last model call. Each agent has its own: an advisor call of a
+     * subagent never sees the context of the main agent.
+     */
     public AdvisorContext context(AgentId agent) {
-        var last = lastContext.get();
-        return last == null ? new AdvisorContext(null, java.util.List.of()) : last;
+        return Agent.live(agent).flatMap(Agent::lastRequest)
+                .map(request -> new AdvisorContext(request.system(), request.messages()))
+                .orElseGet(() -> {
+                    var last = lastContext.get();
+                    return last == null ? new AdvisorContext(null, java.util.List.of()) : last;
+                });
     }
 
     /** The tool for the agent. It answers with an error while no advisor model is set. */
@@ -66,7 +74,7 @@ public final class AdvisorSupport {
 
             @Override
             public ToolResultData execute(JsonNode input, ToolContext context) throws Exception {
-                if (!enabled()) return ToolResultData.error("No advisor model is set. Use /advisor <slug>.");
+                if (!enabled()) return ToolResultData.error("The advisor is off. Use /advisor to turn it on.");
                 LlmClient client;
                 try {
                     client = advisorClient.get();

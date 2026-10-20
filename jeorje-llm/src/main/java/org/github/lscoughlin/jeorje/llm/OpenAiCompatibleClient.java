@@ -111,7 +111,7 @@ public final class OpenAiCompatibleClient implements LlmClient {
         }
 
         private void call() throws Exception {
-            var json = mapper.writeValueAsString(wire.request(settings.model(), request));
+            var json = mapper.writeValueAsString(wire.request(settings.model(), request, settings.extraBody()));
             var http1 = buildRequest(json);
             for (var attempt = 1; ; attempt++) {
                 if (cancel.isCancelled()) return;
@@ -191,6 +191,7 @@ public final class OpenAiCompatibleClient implements LlmClient {
             if (!done && !assembler.finished()) {
                 throw new LlmException("Stream ended before the model finished", 0, false);
             }
+            for (var event : assembler.flush()) emit(event);
             emit(assembler.finish());
         }
 

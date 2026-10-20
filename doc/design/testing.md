@@ -51,7 +51,11 @@ Four tests run only when `JEORJE_LIVE=1` is set: `LiveSmokeTest` and `LivePlanIm
 - Rejection of invalid compactor answers (overlapping spans, a wrong ratio, a keyword that is not in the chunk), and the fallback pruner.
 - Keyword hints: each keyword is in the original text, and the hint as a TEXT query finds the pruned chunk in the top 3 results.
 - Prompts: `text` and `file` both set is an error, `append` and `replace` build the right prompt, the project value overrides the user value, unknown variables are rejected, an edited prompt file takes effect on the next request, and the fixed parts and the output contract stay in a custom prompt.
-- Model roles: `/model`, `/compactor`, and `/advisor` change the right client. `/advisor none` removes the `advisor` tool.
+- Model roles: `/model`, `/compactor`, and `/advisor` change the right client. The advisor is on by default. `/advisor none` hides the `advisor` tool from every agent, and `/advisor` turns it on again. Main agent, subagent, and worker all have the tool, and each agent sends its own context to the advisor. Test configs that do not script an advisor set `models.advisor: none`.
+- Tool input: a call with empty arguments or a missing required field never runs the tool and gets the exact error text. Broken tool-call streams (cut arguments, split fragments, a missing id or name, a `length` finish reason) give error results and a warning after two in a row.
+- Request body: `llm.extraBody` fields reach the body, the reserved keys are refused, and OpenRouter gets `provider.require_parameters` unless the config sets a provider.
+- Plan files: a `plan_submit` with no name reuses the draft file, a new name moves it, and front matter values with special text read back the same.
+- Transcript: the messages of a running turn are in the file, each message has one row, a half-written turn is ignored, and `plan_submit` calls give audit lines.
 - Permission rule matching and the strictest-decision rule.
 - `--yes` and `--yolo`: `--yes` keeps `DENY` rules and the sandbox, `--yolo` allows every action, `--yolo` wins over `--yes`, secrets never reach logs or child processes in `--yolo`, and the audit log records the source `yolo`.
 - Path sandbox: symbolic links, `..` segments, and paths outside the workspace.

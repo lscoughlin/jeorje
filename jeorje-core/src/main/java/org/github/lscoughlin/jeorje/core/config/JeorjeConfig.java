@@ -49,13 +49,25 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
         };
     }
 
+    /**
+     * The model API settings.
+     *
+     * @param extraBody fields that Jeorje adds to the top level of each request body, for example the OpenRouter
+     *                  {@code provider} object. The names that Jeorje sets itself cannot be used. See
+     *                  {@link #RESERVED_BODY_KEYS}.
+     */
     public record Llm(String provider, String baseUrl, List<String> apiKeyEnv, int maxOutputTokens,
-                      Map<String, String> headers) {
+                      Map<String, String> headers, Map<String, Object> extraBody) {
         public Llm {
             apiKeyEnv = list(apiKeyEnv);
             headers = headers == null ? Map.of() : Map.copyOf(headers);
+            extraBody = extraBody == null ? Map.of() : freezeMap(extraBody);
         }
     }
+
+    /** The request body fields that Jeorje sets itself. {@code llm.extraBody} cannot set them. */
+    public static final java.util.Set<String> RESERVED_BODY_KEYS =
+            java.util.Set.of("model", "messages", "tools", "stream", "max_tokens", "stream_options");
 
     public record Models(@JsonProperty("default") String defaultModel, String compactor, String advisor) {
     }

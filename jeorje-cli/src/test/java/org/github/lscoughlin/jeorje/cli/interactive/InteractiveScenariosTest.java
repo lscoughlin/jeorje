@@ -71,6 +71,35 @@ class InteractiveScenariosTest {
     }
 
     @Test
+    void aWorkerHasTheAdvisorToolByDefault() throws Exception {
+        var router = new SessionRig.Router(new ScriptedLlmClient())
+                .story("S1",
+                        Response.toolCall("w1", "write", "{\"path\":\"s1.txt\",\"content\":\"S1\"}"),
+                        Response.toolCall("w2", "task_done", "{\"taskId\":\"S1.T1\",\"note\":\"ok\"}"),
+                        Response.toolCall("w3", "story_done", "{\"summary\":\"DRAFT\",\"filesChanged\":[\"s1.txt\"]}"),
+                        Response.text("Finished S1."));
+        // The advisor is on. The review of the story is off, so that no script is needed for the advisor model.
+        try (var rig = new SessionRig(tmp, router, "implement:\n  review: none\n")) {
+            rig.initRepo();
+            commitPlan(rig, "approved");
+            rig.start();
+            await("screen up", () -> rig.session.screen() != null && rig.terminalText().contains("ready"));
+            rig.type("/implement one\r");
+            await("worker prompt", () -> rig.session.screen().pendingPrompt() != null);
+            rig.type("y");
+            await("done", () -> {
+                var rows = rig.session.orchestrator().rows();
+                return rows.size() == 1 && rows.getFirst().state() == StoryState.DONE
+                        && !rig.session.orchestrator().active();
+            });
+            var requests = router.workers.get("S1").requests();
+            assertFalse(requests.isEmpty());
+            var names = requests.getFirst().tools().stream().map(t -> t.name()).toList();
+            assertTrue(names.contains("advisor"), names.toString());
+        }
+    }
+
+    @Test
     void ctrlCInterruptsAndTwiceExits() throws Exception {
         var router = new SessionRig.Router(new ScriptedLlmClient());
         try (var rig = new SessionRig(tmp, router, null)) {

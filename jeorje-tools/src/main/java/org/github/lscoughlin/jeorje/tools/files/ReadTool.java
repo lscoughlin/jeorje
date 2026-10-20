@@ -12,6 +12,7 @@ import org.github.lscoughlin.jeorje.core.port.ToolContext;
 import org.github.lscoughlin.jeorje.core.state.AgentState;
 import org.github.lscoughlin.jeorje.core.state.StateUpdate;
 import org.github.lscoughlin.jeorje.tools.registry.Describe;
+import org.github.lscoughlin.jeorje.tools.registry.Required;
 import org.github.lscoughlin.jeorje.tools.registry.RecordTool;
 
 /**
@@ -25,7 +26,7 @@ public final class ReadTool extends RecordTool<ReadTool.Input> {
 
     /** The input of {@code read}. */
     public record Input(
-            @Describe("Path of the file. A relative path is relative to the working directory.") String path,
+            @Required @Describe("Path of the file. A relative path is relative to the working directory.") String path,
             @Describe("Line number to start at, from 1. Default 1.") Integer offset,
             @Describe("Most lines to return. Default 2000.") Integer limit) {}
 

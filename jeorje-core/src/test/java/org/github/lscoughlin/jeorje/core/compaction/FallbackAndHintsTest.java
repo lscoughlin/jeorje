@@ -4,6 +4,7 @@ import static org.github.lscoughlin.jeorje.core.compaction.CompactionTestSupport
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.List;
+import org.github.lscoughlin.jeorje.core.config.JeorjeConfig;
 import org.junit.jupiter.api.Test;
 
 class FallbackAndHintsTest {
@@ -102,9 +103,31 @@ class FallbackAndHintsTest {
         var roles = new ModelRoles("m", null, "");
         assertFalse(roles.compactorSet());
         assertTrue(roles.pruningModel().isEmpty());
-        assertFalse(roles.advisorToolEnabled());
+        assertTrue(roles.advisorToolEnabled(), "the advisor is on by default");
         var set = new ModelRoles("m", "fast", "big");
         assertEquals("fast", set.pruningModel().orElseThrow());
         assertTrue(set.advisorToolEnabled());
+    }
+
+    @Test
+    void theAdvisorIsOnByDefaultAndNoneTurnsItOff() {
+        for (var empty : new String[] {null, "", "   "}) {
+            var roles = new ModelRoles("m", "", empty);
+            assertEquals(ModelRoles.DEFAULT_ADVISOR, roles.advisor());
+            assertTrue(roles.advisorSet() && roles.advisorToolEnabled());
+        }
+        assertEquals("vendor/x", new ModelRoles("m", "", " vendor/x ").advisor());
+        for (var off : new String[] {"none", "NONE", "None"}) {
+            var roles = new ModelRoles("m", "", off);
+            assertEquals(ModelRoles.ADVISOR_OFF, roles.advisor());
+            assertFalse(roles.advisorSet() || roles.advisorToolEnabled());
+        }
+        assertFalse(new ModelRoles("m", "c", "big").withAdvisorOff().advisorSet());
+        assertEquals("c", new ModelRoles("m", "c", "big").withAdvisorOff().compactor());
+    }
+
+    @Test
+    void theConfigDefaultIsTheDefaultAdvisorAndNoneLoads() {
+        assertEquals(ModelRoles.DEFAULT_ADVISOR, ModelRoles.from(JeorjeConfig.defaults().models()).advisor());
     }
 }

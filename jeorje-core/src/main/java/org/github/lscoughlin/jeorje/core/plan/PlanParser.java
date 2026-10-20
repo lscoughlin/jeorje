@@ -22,7 +22,8 @@ public final class PlanParser {
     private static final Pattern STORY_HEADING = Pattern.compile("^## Story\\s+([^\\s:]+):\\s*(.*\\S)?\\s*$");
     private static final Pattern LABEL = Pattern.compile("^- \\*\\*([^*]+?):\\*\\*\\s*(.*)$");
     private static final Pattern TASK = Pattern.compile("^- \\[(.)\\]\\s+(\\S+)\\s*(.*)$");
-    private static final Pattern COMMENT = Pattern.compile("\\s+#(\\s.*)?$");
+    private static final Pattern QUOTED = Pattern.compile("^([\"'])((?:\\\\.|(?!\\1).)*)\\1(?:\\s+#.*)?$");
+    private static final Pattern COMMENT =Pattern.compile("\\s+#(\\s.*)?$");
 
     private PlanParser() {}
 
@@ -95,10 +96,18 @@ public final class PlanParser {
             throw new PlanException(number, "Front matter line must have the form 'key: value'.");
         }
         var key = line.substring(0, colon).strip();
-        var value = COMMENT.matcher(line.substring(colon + 1)).replaceFirst("").strip();
-        if (value.length() >= 2 && (value.startsWith("\"") && value.endsWith("\"")
-                || value.startsWith("'") && value.endsWith("'"))) {
-            value = value.substring(1, value.length() - 1);
+        var value = line.substring(colon + 1).strip();
+        var quoted = QUOTED.matcher(value);
+        if (quoted.matches()) {
+            // A quoted value keeps any ' #' inside the quotes. Only text after the closing quote can be a comment.
+            var inner = quoted.group(2);
+            value = quoted.group(1).equals("\"") ? inner.replace("\\\"", "\"").replace("\\\\", "\\") : inner;
+        } else {
+            value = COMMENT.matcher(value).replaceFirst("").strip();
+            if (value.length() >= 2 && (value.startsWith("\"") && value.endsWith("\"")
+                    || value.startsWith("'") && value.endsWith("'"))) {
+                value = value.substring(1, value.length() - 1);
+            }
         }
         if (front.putIfAbsent(key, value) != null) throw new PlanException(number, "Front matter key '" + key + "' is used twice.");
     }

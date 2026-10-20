@@ -41,7 +41,7 @@ The full design is in [doc/design/index.md](doc/design/index.md).
 | `sync_done`, `sync_abort`, `worktree_merge`, `worktree_discard` | Resolve a sync, and manage the worktree of a subagent |
 | `plan_submit` | Check a plan and write it (plan mode only) |
 | `skill` | Load a skill from `.agents/skills/` |
-| `advisor` | Ask a second model for a review |
+| `advisor` | Ask a second model for a review (on by default, for every agent) |
 
 [doc/design/tools.md](doc/design/tools.md) describes each tool.
 
@@ -74,7 +74,7 @@ Jeorje uses the OpenAI-compatible API. The first target is OpenRouter, and the d
 - `/model` sets the default model.
 - `/compactor` sets the model that prunes the context.
 - `/context` shows how full the context is: the tokens of each part of the last request and the share of the budget.
-- `/advisor` sets the model that the `advisor` tool calls. With no slug, it sets `~deepseek/deepseek-pro-latest`. `/advisor none` turns the advisor off.
+- `/advisor` sets the model that the `advisor` tool calls. The advisor is on by default with `~deepseek/deepseek-pro-latest`, and every agent has the tool. With no slug, the command sets the default again. `/advisor none` turns the advisor off.
 
 ## User Interface
 

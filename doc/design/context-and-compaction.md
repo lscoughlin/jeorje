@@ -214,7 +214,7 @@ Jeorje uses three model settings. The user can set each one in the config or wit
 | Compactor | `/compactor` | The model that prunes chunks and chooses keywords. A fast, low-cost model is a good choice. |
 | Advisor | `/advisor` | The model that the `advisor` tool calls. See [tools.md](tools.md). |
 
-If no compactor is set, compaction uses the fallback pruner. If no advisor is set, Jeorje does not register the `advisor` tool.
+If no compactor is set, compaction uses the fallback pruner. The advisor is on by default, with the model `~deepseek/deepseek-pro-latest`. If the advisor is `none`, Jeorje hides the `advisor` tool from the model.
 
 ## Recall
 

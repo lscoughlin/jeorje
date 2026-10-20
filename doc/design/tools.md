@@ -14,6 +14,7 @@ public interface Tool {
     ToolDefinition definition();            // name, description, JSON schema for input
     boolean readOnly();                     // can run at the same time as other read-only calls
     ToolResultData execute(JsonNode input, ToolContext context) throws Exception;
+    Optional<String> check(JsonNode input); // default method. An error text if the input breaks the schema
 }
 
 public record ToolContext(Path workingDirectory, AgentId agent, CancellationToken cancel,
@@ -26,7 +27,7 @@ public record ToolContext(Path workingDirectory, AgentId agent, CancellationToke
 - Every field is optional unless the record component has `@Required`. `@Describe` adds a description. `@Allowed` adds an `enum`.
 - The schema sets `additionalProperties` to `false`.
 
-`InputValidator` checks the input against the schema before `execute`. It supports `type`, `required`, `properties`, `additionalProperties`, `items`, `enum`, `minimum`, `maximum`, `minLength`, and `maxLength`. If validation fails, the registry returns an error result and does not call the tool. `RecordTool` is the base class of the typed tools. It converts the input to the record and rejects unknown properties.
+`InputValidator` (in `jeorje-core`, package `core.port`) checks the input against the schema before `execute`. It supports `type`, `required`, `properties`, `additionalProperties`, `items`, `enum`, `minimum`, `maximum`, `minLength`, and `maxLength`. The default method `Tool.check` runs the validator. The agent calls `check` for every call of every tool, and the registry calls it too. If the check fails, the result is an error and the tool does not run. The error text is `Invalid input for <tool>: <problems>`. When the arguments of the call were empty and the schema has required fields, the text ends with `. The arguments of the call were empty. Send the whole call again with all required fields.` A tool can override `check`. `RecordTool` is the base class of the typed tools. It converts the input to the record and rejects unknown properties.
 
 ## Registry
 
@@ -69,7 +70,7 @@ A registry can make restricted copies of itself: `only` (named tools), `without`
 | `worktree_merge`, `worktree_discard` | no | Run the completion sequence for a subagent in manual mode, or remove the worktree branch of a subagent. See [subagents.md](subagents.md#worktrees). |
 | `plan_submit` | no | Check a plan and write it to the plan directory. Only in plan mode. See [planning.md](planning.md). |
 | `task_done`, `story_done`, `story_blocked` | no | Report progress of a story. Only for `/implement` workers. See [planning.md](planning.md#workers). |
-| `advisor` | yes | Ask the advisor model for a review of the conversation. Jeorje registers it only when an advisor model is set. |
+| `advisor` | yes | Ask the advisor model for a review of the conversation. Every agent has it, unless the user turns the advisor off with `/advisor none`. |
 
 The tools `ls`, `glob`, and `grep` always skip `.git` and `.jeorje` directories. They also skip each file that the permission policy does not allow. A search tool cannot ask the user, so it treats `ASK` like `DENY`. Other tools refuse a call only when the policy returns `DENY`. The agent loop handles `ASK`. See [permissions-and-safety.md](permissions-and-safety.md).
 
@@ -256,9 +257,10 @@ An input that breaks a rule gives a short error, and the form does not reach the
 The advisor is a second model. It is usually stronger than the default model. The agent calls `advisor` before it starts large work, when it is stuck, and before it says that a task is done.
 
 - Input: an optional `question`. With no question, the advisor reviews the whole task.
-- Jeorje sends the working context of the calling agent to the advisor model. The pruned chunks in the context have their keyword hints. The advisor has no tools. The answer has at most 4,096 tokens.
-- Output: the advice as text. The calling agent receives it as a normal tool result.
-- The user sets the model with `/advisor [slug]`. With no slug, it sets `~deepseek/deepseek-pro-latest`. `/advisor none` removes the model and the tool.
+- The advisor is on by default. The default model is `~deepseek/deepseek-pro-latest`. The key `models.advisor` with the value `none` turns the advisor off. Every agent has the tool: the main agent, plan mode, subagents, and the workers of `/implement`.
+- Jeorje sends the working context of the calling agent to the advisor model. It is the last request of that agent, so a subagent never sends the context of another agent. The pruned chunks in the context have their keyword hints. The advisor has no tools. The answer has at most 4,096 tokens.
+- Output: the advice as text. The calling agent receives it as a normal tool result. While the advisor is off, the tool is not in the tool list of the model. If a call arrives anyway, the answer is `The advisor is off. Use /advisor to turn it on.`
+- The user sets the model with `/advisor [slug]`. With no slug, it sets `~deepseek/deepseek-pro-latest`. `/advisor none` turns the advisor off for the session. The change applies to all agents at once.
 - The advisor call is part of the turn of the calling agent. It is in the history as part of the chunk of that turn.
 
 ### Extension tools

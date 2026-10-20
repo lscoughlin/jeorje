@@ -13,6 +13,7 @@ import org.github.lscoughlin.jeorje.core.port.ToolContext;
 import org.github.lscoughlin.jeorje.core.state.AgentState;
 import org.github.lscoughlin.jeorje.core.state.StateUpdate;
 import org.github.lscoughlin.jeorje.tools.registry.Describe;
+import org.github.lscoughlin.jeorje.tools.registry.Required;
 import org.github.lscoughlin.jeorje.tools.registry.RecordTool;
 
 /** The {@code write} tool. It creates a file or replaces its content. */
@@ -20,8 +21,8 @@ public final class WriteTool extends RecordTool<WriteTool.Input> {
 
     /** The input of {@code write}. */
     public record Input(
-            @Describe("Path of the file. A relative path is relative to the working directory.") String path,
-            @Describe("The full new content of the file.") String content) {}
+            @Required @Describe("Path of the file. A relative path is relative to the working directory.") String path,
+            @Required @Describe("The full new content of the file.") String content) {}
 
     private final PermissionPolicy policy;
     private final AgentState state;

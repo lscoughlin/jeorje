@@ -15,6 +15,21 @@ final class WireMapper {
     WireMapper(ObjectMapper mapper) { this.mapper = mapper; }
 
     ObjectNode request(String model, LlmRequest request) {
+        return request(model, request, java.util.Map.of());
+    }
+
+    /** Maps the request and adds the extra fields at the top level. The fields that Jeorje sets cannot be replaced. */
+    ObjectNode request(String model, LlmRequest request, java.util.Map<String, Object> extraBody) {
+        var root = request0(model, request);
+        extraBody.forEach((key, value) -> {
+            if (!org.github.lscoughlin.jeorje.core.config.JeorjeConfig.RESERVED_BODY_KEYS.contains(key)) {
+                root.set(key, mapper.valueToTree(value));
+            }
+        });
+        return root;
+    }
+
+    private ObjectNode request0(String model, LlmRequest request) {
         var root = mapper.createObjectNode();
         root.put("model", model);
         root.put("stream", true);

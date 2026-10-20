@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import org.github.lscoughlin.jeorje.core.port.InputValidator;
 import java.nio.file.Files;
 import org.github.lscoughlin.jeorje.testkit.TempWorkspace;
 import org.junit.jupiter.api.Test;

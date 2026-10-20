@@ -364,6 +364,10 @@ public final class ConfigLoader {
 
     private void validate(JeorjeConfig c) {
         require(c.llm().provider().equals("openai-compatible"), "llm.provider", "must be openai-compatible");
+        for (var key : c.llm().extraBody().keySet()) {
+            require(!JeorjeConfig.RESERVED_BODY_KEYS.contains(key), "llm.extraBody",
+                    "cannot set the key '" + key + "', because Jeorje sets it");
+        }
         require(percent(c.context().budgetPercent()), "context.budgetPercent", "must be 0 to 100");
         require(c.context().recentMaxPercent() >= 1 && c.context().recentMaxPercent() <= 100,
                 "context.recentMaxPercent", "must be 1 to 100");

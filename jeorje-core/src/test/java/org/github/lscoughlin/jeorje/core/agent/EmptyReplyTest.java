@@ -72,15 +72,18 @@ class EmptyReplyTest {
     }
 
     @Test
-    void theNoteJoinsTheLastUserMessageAfterToolResults() {
+    void theNoteFollowsTheToolResultsAsItsOwnMessage() {
         var llm = new Scripted(calls("c1", "ping", "{}"), text(), text("Done."));
         var ping = tool("ping", true, (in, ctx) -> org.github.lscoughlin.jeorje.core.model.ToolResultData.ok("pong"));
         var rig = new Rig(llm, policy(Decision.ALLOW), Rig.settings(dir), ping);
         rig.agent.runTurn("go");
+        // The transcript has the tool result message already, so the note cannot join it.
         var messages = llm.requests.get(2).messages();
+        var results = messages.get(messages.size() - 2);
+        assertTrue(results.content().getFirst() instanceof org.github.lscoughlin.jeorje.core.model.ToolResult);
         var user = messages.get(messages.size() - 1);
         assertEquals(org.github.lscoughlin.jeorje.core.model.Role.USER, user.role());
-        assertEquals(2, user.content().size(), "the tool result and the note");
+        assertEquals(1, user.content().size(), "the note only");
         assertTrue(user.content().getLast() instanceof Text t && Notes.is(t.text()));
     }
 

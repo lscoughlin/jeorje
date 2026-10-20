@@ -42,6 +42,8 @@ class HeadlessWorkTest {
                   decision: allow
             implement:
               maxAttempts: 1
+            models:
+              advisor: none
             """;
 
     private static final String PLAN_JSON = """

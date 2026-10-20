@@ -251,9 +251,8 @@ public final class HeadlessWork implements AutoCloseable {
         tools.put(PlanSubmitTool.NAME, new PlanSubmitTool(config.plan().dir(), mode,
                 file -> env.err().println("Plan written: " + file)));
         tools.put(AskUserTool.NAME, new AskUserTool(broker));
-        tools.put(AdvisorTool.NAME, advisor.slot());
         agent = new Agent(MAIN, settings(), advisor.tap(clientFor(null)), List.copyOf(tools.values()), mainPolicy,
-                store, transcript::writeTurn, this::onAgentEvent, Clock.systemUTC());
+                store, transcript, this::onAgentEvent, Clock.systemUTC());
         mode.maxExploreCalls(config.plan().maxExploreCalls());
         agent.withToolFilter(mode::refuse).withStepBoundary(mode::notes);
         agent.withPruneListener(chunks -> {
@@ -432,8 +431,9 @@ public final class HeadlessWork implements AutoCloseable {
 
     private void buildOrchestrator() {
         var workerPolicy = new GatedPolicy(grants, null, this::askForWorker);
-        var builder = ImplementOrchestrator.builder(session.id(), settings(), this::clientFor, config.implement())
-                .store(store).transcript(transcript::writeTurn).worktrees(worktrees)
+        var builder = ImplementOrchestrator.builder(session.id(), settings(), model -> advisor.tap(clientFor(model)),
+                        config.implement())
+                .store(store).transcript(transcript).worktrees(worktrees)
                 .stateStore(RunStateStore.file(session.dir().resolve("implement.json")))
                 .events(this::onImplementEvent).agentEvents(this::onAgentEvent)
                 .orchestratorInput(input -> log.atDebug().log(() -> "orchestrator input: " + input.text()))
@@ -529,6 +529,7 @@ public final class HeadlessWork implements AutoCloseable {
             skillTool = t;
             out.add(t);
         });
+        out.add(advisor.slot());
         return out;
     }
 

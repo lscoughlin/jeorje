@@ -74,6 +74,21 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void theExtraBodyIsAFreeFormMapAndCannotSetReservedKeys() throws IOException {
+        assertTrue(ConfigLoader.load(opts()).config().llm().extraBody().isEmpty());
+        write(home.resolve(".jeorje"), "config.yaml",
+                "llm:\n  extraBody:\n    provider:\n      order: [DeepInfra]\n      allow_fallbacks: false\n    temperature: 0.2\n");
+        var body = ConfigLoader.load(opts()).config().llm().extraBody();
+        assertEquals(java.util.Set.of("provider", "temperature"), body.keySet());
+        assertEquals(false, ((java.util.Map<?, ?>) body.get("provider")).get("allow_fallbacks"));
+        for (var key : new String[] {"model", "messages", "tools", "stream", "max_tokens", "stream_options"}) {
+            write(home.resolve(".jeorje"), "config.yaml", "llm:\n  extraBody:\n    " + key + ": 1\n");
+            var e = assertThrows(ConfigException.class, () -> ConfigLoader.load(opts()));
+            assertTrue(e.getMessage().contains("llm.extraBody") && e.getMessage().contains("'" + key + "'"), e.getMessage());
+        }
+    }
+
+    @Test
     void theExploreLimitAndTheRepeatGuardHaveDefaultsAndRanges() throws IOException {
         var c = ConfigLoader.load(opts()).config();
         assertEquals(40, c.plan().maxExploreCalls());

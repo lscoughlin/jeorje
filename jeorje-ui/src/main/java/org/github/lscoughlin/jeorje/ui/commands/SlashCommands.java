@@ -255,7 +255,7 @@ public final class SlashCommands {
     }
 
     /** The advisor model that {@code /advisor} sets when it has no argument. */
-    static final String DEFAULT_ADVISOR = "~deepseek/deepseek-pro-latest";
+    static final String DEFAULT_ADVISOR = ModelRoles.DEFAULT_ADVISOR;
 
     private CommandResult role(String which, String arg0, boolean canTurnOff) {
         var arg = arg0;
@@ -269,7 +269,7 @@ public final class SlashCommands {
             arg = DEFAULT_ADVISOR;
         }
         if (arg.isBlank()) {
-            var shown = current == null || current.isBlank() ? "off" : current;
+            var shown = current == null || current.isBlank() || ModelRoles.ADVISOR_OFF.equals(current) ? "off" : current;
             return CommandResult.ok("The " + label(which) + " is " + shown + ".");
         }
         if (arg.chars().anyMatch(Character::isWhitespace)) {
@@ -287,7 +287,7 @@ public final class SlashCommands {
         var updated = switch (which) {
             case "model" -> new ModelRoles(value, roles.compactor(), roles.advisor());
             case "compactor" -> new ModelRoles(roles.defaultModel(), value, roles.advisor());
-            default -> new ModelRoles(roles.defaultModel(), roles.compactor(), value);
+            default -> new ModelRoles(roles.defaultModel(), roles.compactor(), value == null ? ModelRoles.ADVISOR_OFF : value);
         };
         backend.applyRoles(updated);
         return CommandResult.ok("The " + label(which) + " is now " + (value == null ? "off" : value)

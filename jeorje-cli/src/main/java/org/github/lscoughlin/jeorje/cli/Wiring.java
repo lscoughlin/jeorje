@@ -157,7 +157,23 @@ public final class Wiring {
                     : config.llm().apiKeyEnv();
             throw new CliException("No API key found. Set the environment variable " + String.join(" or ", names) + ".");
         }
-        return new OpenAiCompatibleClient(OpenAiSettings.fromConfig(config, model, key.get()));
+        var settings = OpenAiSettings.fromConfig(config, model, key.get());
+        if (!settings.extraBody().isEmpty() && EXTRA_BODY_LOGGED.compareAndSet(false, true)) {
+            log.atInfo().log(() -> "Extra fields in each model request: " + describeExtraBody(settings.extraBody()));
+        }
+        return new OpenAiCompatibleClient(settings);
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean EXTRA_BODY_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static final java.util.regex.Pattern SECRET_NAME = java.util.regex.Pattern.compile(
+            "(?i)key|token|secret|auth|password");
+
+    /** The extra body fields as text for the log. The value of a field with a secret-like name is hidden. */
+    static String describeExtraBody(java.util.Map<String, Object> extra) {
+        var parts = new ArrayList<String>();
+        new java.util.TreeMap<>(extra).forEach((k, v) -> parts.add(k + "=" + (SECRET_NAME.matcher(k).find() ? "***" : v)));
+        return String.join(", ", parts);
     }
 
     /**
@@ -554,7 +570,7 @@ public final class Wiring {
         var skillTool = SkillTool.create(visibleSkills, grants::skillLoaded);
         skillTool.ifPresent(tools::add);
         var advisor = new AdvisorSupport(roles::advisorSet, () -> llmClient(config, env, roles.advisor()));
-        if (roles.advisorToolEnabled()) tools.add(advisor.slot());
+        tools.add(advisor.slot());
 
         var settings = new AgentSettings(session.id(), cwd, window, config.context().budgetPercent(),
                 config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),
@@ -594,7 +610,7 @@ public final class Wiring {
             final var swarm = bridge;
             var builder = SubagentRuntime.builder(session.id(), settings, model -> llmClient(config, env,
                             model == null || model.isBlank() ? roles.defaultModel() : model))
-                    .store(store).transcript(transcript::writeTurn).agentEvents(onEvent)
+                    .store(store).transcript(transcript).agentEvents(onEvent)
                     .pruneListener((child, chunks) -> skillTool.ifPresent(t -> t.releasePruned(child.value(), chunks)))
                     .events(swarm::onSubagentEvent).remote(swarm)
                     .limits(SubagentLimits.defaults().withMaxModelCalls(config.subagents().stepLimit()));
@@ -602,7 +618,7 @@ public final class Wiring {
             tools.addAll(PeerSpawnTool.wrap(AgentTools.install(subagents, session.id()), subagents));
         }
         var self = new java.util.concurrent.atomic.AtomicReference<Agent>();
-        var agent = new Agent(id, settings, advisor.tap(llm), tools, policy, store, transcript::writeTurn,
+        var agent = new Agent(id, settings, advisor.tap(llm), tools, policy, store, transcript,
                 onEvent, Clock.systemUTC());
         self.set(agent);
         skillTool.ifPresent(t -> agent.withPruneListener(chunks -> t.releasePruned(id.value(), chunks)));
