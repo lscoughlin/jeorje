@@ -136,7 +136,8 @@ class FileBrowserPaneTest {
         var browser = browser(root);
         var pane = new FileBrowserPane(browser, keys(java.util.Map.of("browserExit", "q", "browserHidden", "none")));
         assertTrue(pane.title().contains("q cancel"), pane.title());
-        assertTrue(pane.title().contains("- ignored"), pane.title());
+        assertTrue(pane.title().contains("- hidden"), pane.title());
+        assertFalse(pane.title().contains("ignored"), pane.title());
     }
 
     @Test

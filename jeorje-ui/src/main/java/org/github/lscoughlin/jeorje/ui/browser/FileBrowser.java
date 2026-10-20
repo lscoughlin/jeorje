@@ -17,21 +17,28 @@ import org.github.lscoughlin.jeorje.ui.mouse.ScrollModel;
 import org.jline.terminal.MouseEvent;
 
 /**
- * A small tree browser at the working directory. It hides {@code .git/} and the paths of {@code .gitignore}
- * unless the user presses {@code .}. It is a display filter only. It is not a sandbox.
+ * A small tree browser at the working directory. It shows every path. It hides {@code .git/},
+ * {@code .jeorje/sessions/}, and {@code .jeorje/worktrees/} of the root unless the user presses {@code .}. It
+ * reads no ignore file. It is a display filter only. It is not a sandbox.
  */
 public final class FileBrowser implements Region {
     /** One visible row. */
     public record Row(Path path, int depth, boolean directory, boolean expanded) {}
 
+    /** The data of git and of Jeorje at the root. The paths are relative to the root. */
+    private static final Set<Path> HIDDEN = Set.of(Path.of(".git"), Path.of(".jeorje", "sessions"),
+            Path.of(".jeorje", "worktrees"));
+
+    /** The most entries that one name filter walk visits. */
+    private static final int MAX_FILTER_ENTRIES = 20_000;
+
     private final Path root;
-    private final IgnoreRules ignore;
     private final ScrollModel scroll;
     private final Set<Path> expanded = new HashSet<>();
     private Rect bounds;
     private int reservedRows;
     private boolean open;
-    private boolean showIgnored;
+    private boolean showHidden;
     private boolean filtering;
     private String filter = "";
     private int selected;
@@ -41,7 +48,6 @@ public final class FileBrowser implements Region {
 
     public FileBrowser(Path root, Rect bounds, int wheelLines) {
         this.root = root.toAbsolutePath().normalize();
-        this.ignore = IgnoreRules.load(this.root);
         this.bounds = bounds;
         this.scroll = new ScrollModel(wheelLines);
     }
@@ -75,7 +81,7 @@ public final class FileBrowser implements Region {
 
     public boolean isFiltering() { return filtering; }
 
-    public boolean showsIgnored() { return showIgnored; }
+    public boolean showsHidden() { return showHidden; }
 
     public int selectedIndex() { return selected; }
 
@@ -93,20 +99,29 @@ public final class FileBrowser implements Region {
     /** The visible rows in tree order. */
     public List<Row> rows() {
         var out = new ArrayList<Row>();
-        collect(root, 0, out);
+        collect(root, 0, out, new int[] {MAX_FILTER_ENTRIES});
         return out;
     }
 
-    private void collect(Path dir, int depth, List<Row> out) {
+    /**
+     * Adds the rows of a directory. With a filter, the walk goes below every directory except a symbolic link, and
+     * it stops when the budget of entries is used up. The budget belongs to one call of {@link #rows()}.
+     */
+    private void collect(Path dir, int depth, List<Row> out, int[] budget) {
         for (var child : children(dir)) {
             var isDir = Files.isDirectory(child);
             if (filter.isEmpty()) {
                 var open = isDir && expanded.contains(child);
                 out.add(new Row(child, depth, isDir, open));
-                if (open) collect(child, depth + 1, out);
+                if (open) collect(child, depth + 1, out, budget);
+                continue;
+            }
+            if (budget[0]-- <= 0) return;
+            if (isDir && Files.isSymbolicLink(child)) {
+                if (matches(child)) out.add(new Row(child, depth, true, false));
             } else if (isDir) {
                 var sub = new ArrayList<Row>();
-                collect(child, depth + 1, sub);
+                collect(child, depth + 1, sub, budget);
                 if (matches(child) || !sub.isEmpty()) {
                     out.add(new Row(child, depth, true, true));
                     out.addAll(sub);
@@ -133,9 +148,7 @@ public final class FileBrowser implements Region {
     }
 
     private boolean visible(Path p) {
-        if (showIgnored) return true;
-        if (p.getFileName().toString().equals(".git")) return false;
-        return !ignore.ignored(root.relativize(p), Files.isDirectory(p));
+        return showHidden || !HIDDEN.contains(root.relativize(p));
     }
 
     /** The text rows for the visible part of the tree. */
@@ -220,8 +233,8 @@ public final class FileBrowser implements Region {
     /** Starts the name filter. The next characters go into the filter. */
     public void startFilter() { filtering = true; }
 
-    public void toggleIgnored() {
-        showIgnored = !showIgnored;
+    public void toggleHidden() {
+        showHidden = !showHidden;
         select(selected);
     }
 
@@ -263,7 +276,7 @@ public final class FileBrowser implements Region {
             case "ENTER" -> enter();
             case "a" -> addSelected();
             case "/" -> filtering = true;
-            case "." -> toggleIgnored();
+            case "." -> toggleHidden();
             case "ESC" -> close();
             default -> {
                 return false;
