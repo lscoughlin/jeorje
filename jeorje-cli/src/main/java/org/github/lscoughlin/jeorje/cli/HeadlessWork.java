@@ -89,8 +89,28 @@ public final class HeadlessWork implements AutoCloseable {
         return task != null && COMMAND.matcher(task.strip()).matches();
     }
 
+    /**
+     * How a run answers the forms of {@code ask_user}.
+     *
+     * @param values the values of {@code --answer}, by question id
+     * @param ask true to ask the questions on the terminal when no value exists
+     * @param stdin the input for {@code ask}
+     */
+    public record Answers(Map<String, String> values, boolean ask, java.io.InputStream stdin) {
+        public static final Answers NONE = new Answers(Map.of(), false, null);
+
+        public Answers {
+            values = Map.copyOf(values);
+        }
+    }
+
     /** Runs the command in the task text. */
     public static int runCommand(CliEnvironment env, GlobalOptions options, String task) {
+        return runCommand(env, options, task, Answers.NONE);
+    }
+
+    /** Runs the command in the task text, and answers forms as {@code answers} says. */
+    public static int runCommand(CliEnvironment env, GlobalOptions options, String task, Answers answers) {
         var m = COMMAND.matcher(task.strip());
         if (!m.matches()) throw new IllegalArgumentException("Not a command: " + task);
         var args = m.group(2) == null ? "" : m.group(2).strip();
@@ -100,6 +120,7 @@ public final class HeadlessWork implements AutoCloseable {
             return 1;
         }
         try (var work = new HeadlessWork(env, options)) {
+            work.answers = answers;
             return work.plan(args);
         }
     }
@@ -187,6 +208,7 @@ public final class HeadlessWork implements AutoCloseable {
     private org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp;
     private boolean mcpStarted;
     private volatile UserQuestion stoppedBy;
+    private volatile Answers answers = Answers.NONE;
 
     private HeadlessWork(CliEnvironment env, GlobalOptions options) {
         this.env = env;
@@ -256,9 +278,9 @@ public final class HeadlessWork implements AutoCloseable {
         var question = stoppedBy;
         if (question != null) {
             env.out().println("Question from the agent: " + question.question());
-            question.choices().forEach(c -> env.out().println("  - " + c));
-            env.err().println("The plan is not finished. Run again with --yes to answer with the first choice, or "
-                    + "put the answer into the goal.");
+            env.out().print(FormAnswers.render(question.form()));
+            env.err().println("The plan is not finished. Run again with --yes to answer with the first choice, with "
+                    + "--answer <id>=<value> for each question, or put the answer into the goal.");
             return EXIT_QUESTION;
         }
         var file = mode.submittedPlan();
@@ -276,12 +298,23 @@ public final class HeadlessWork implements AutoCloseable {
     private final AtomicReference<UserQuestionBroker> brokerRef = new AtomicReference<>();
 
     private void onQuestion(UserQuestion question, UserQuestionBroker broker) {
-        if (yes) {
-            var answer = question.choices().isEmpty() ? "Use your best judgment and go on."
-                    : question.choices().getFirst();
-            env.err().println("Question: " + question.question() + " Answer: " + answer);
-            broker.answer(question.id(), answer);
-            return;
+        var form = question.form();
+        try {
+            var answer = FormAnswers.resolve(form, answers.values(), yes);
+            if (answer.isEmpty() && answers.ask() && answers.stdin() != null) {
+                var reader = new java.io.BufferedReader(new java.io.InputStreamReader(answers.stdin(),
+                        java.nio.charset.StandardCharsets.UTF_8));
+                answer = java.util.Optional.of(new PlainFormAsker(reader, env.err()).ask(form));
+            }
+            if (answer.isPresent()) {
+                for (var a : answer.get().answers()) {
+                    env.err().println("Question: " + a.id() + " Answer: " + a.value());
+                }
+                broker.answer(question.id(), answer.get());
+                return;
+            }
+        } catch (IllegalArgumentException e) {
+            env.err().println("Error: " + e.getMessage());
         }
         stoppedBy = question;
         agent.cancel();

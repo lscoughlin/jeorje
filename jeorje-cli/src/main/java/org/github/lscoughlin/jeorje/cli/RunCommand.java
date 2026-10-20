@@ -1,5 +1,7 @@
 package org.github.lscoughlin.jeorje.cli;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
 import org.github.lscoughlin.jeorje.core.model.Role;
 import org.github.lscoughlin.jeorje.core.model.Text;
@@ -20,6 +22,15 @@ public final class RunCommand implements Callable<Integer> {
             description = "Implement the plan in this file. The task, if any, lists the story ids.")
     String plan;
 
+    @Option(names = "--answer", paramLabel = "<id>=<value>",
+            description = "Answer a question of the agent. Repeat it for each question id. For a multiple choice "
+                    + "question, separate the values with commas. An option is its label or its number.")
+    List<String> answers = new ArrayList<>();
+
+    @Option(names = "--ask",
+            description = "Ask the questions of the agent on the terminal when no --answer value exists.")
+    boolean ask;
+
     private final CliEnvironment env;
     private final GlobalOptions options;
 
@@ -30,12 +41,19 @@ public final class RunCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        HeadlessWork.Answers given;
+        try {
+            given = new HeadlessWork.Answers(FormAnswers.parse(answers), ask, System.in);
+        } catch (IllegalArgumentException e) {
+            env.err().println("Error: " + e.getMessage());
+            return 1;
+        }
         if (plan != null) return HeadlessWork.runPlan(env, options, plan, task);
         if (task == null || task.isBlank()) {
             env.err().println("Error: give a task, or use --plan <path>.");
             return 1;
         }
-        if (HeadlessWork.isCommand(task)) return HeadlessWork.runCommand(env, options, task);
+        if (HeadlessWork.isCommand(task)) return HeadlessWork.runCommand(env, options, task, given);
         var loaded = Wiring.loadConfig(options, env);
         Wiring.configureLogging(loaded.config(), env, true);
         Wiring.warnUnattended(options, env);

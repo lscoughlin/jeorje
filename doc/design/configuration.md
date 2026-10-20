@@ -306,7 +306,7 @@ Rules:
 
 The config can change the hotkeys of the chat screen and the editor. There are two scopes: `ui.keys` for the chat screen and the file browser, and `editor.keys` for the editor. Each key in the map is an **action id**. The value is one key, a list of keys, or `none`. An action id that does not exist, or that belongs to the other scope, is an error.
 
-Keys belong to three contexts: the chat screen, the file browser, and the editor. The chat screen and the file browser share the scope `ui.keys`. See [Action ids and defaults](#action-ids-and-defaults).
+Keys belong to four contexts: the chat screen, the file browser, the form, and the editor. The chat screen, the file browser, and the form share the scope `ui.keys`. See [Action ids and defaults](#action-ids-and-defaults).
 
 ### Key notation
 
@@ -363,6 +363,16 @@ File browser (`ui.keys`). The browser pane reads these keys. A key that the conf
 | `browserFilter` | `/` | Filter by name or by glob |
 | `browserHidden` | `.` | Show or hide the data of git and of Jeorje |
 | `browserExit` | `Esc` | Close the browser |
+
+Form (`ui.keys`). The form of `ask_user` reads these keys. See [Forms](ui.md#forms). The keys in a text field are not rebindable. A default key of an action that the config moved to another key does nothing:
+
+| Action id | Default | Action |
+|-----------|---------|--------|
+| `formUp`, `formDown` | `Up`, `Down` | Move to the row above or below |
+| `formNext`, `formPrevious` | `Tab`, `Shift-Tab` | Go to the next or previous question |
+| `formToggle` | `Space` | Choose or clear the option |
+| `formChat` | `c` | Chat about this question |
+| `formDecline` | `Esc` | Ask to decline the form |
 
 Editor (`editor.keys`):
 

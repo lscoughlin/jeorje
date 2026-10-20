@@ -39,6 +39,14 @@ public final class ActionRegistry {
         browser("browserHidden", "Show or hide the data of git and of Jeorje", ".");
         browser("browserExit", "Close the browser", "Esc");
 
+        form("formUp", "Move to the row above", "Up");
+        form("formDown", "Move to the row below", "Down");
+        form("formNext", "Go to the next question", "Tab");
+        form("formPrevious", "Go to the previous question", "Shift-Tab");
+        form("formToggle", "Select or clear the option", "Space");
+        form("formChat", "Chat about this question", "c");
+        form("formDecline", "Decline the form", "Esc");
+
         editor("menu", "Open the menu bar", false, "F10");
         editor("menuFile", "Open the File menu", false, "Alt-F");
         editor("menuEdit", "Open the Edit menu", false, "Alt-E");
@@ -90,6 +98,10 @@ public final class ActionRegistry {
 
     private void browser(String id, String description, String... keys) {
         add(id, KeyContext.BROWSER, description, false, keys);
+    }
+
+    private void form(String id, String description, String... keys) {
+        add(id, KeyContext.FORM, description, false, keys);
     }
 
     private void editor(String id, String description, boolean required, String... keys) {

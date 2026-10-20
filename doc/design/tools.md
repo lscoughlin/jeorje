@@ -58,7 +58,7 @@ A registry can make restricted copies of itself: `only` (named tools), `without`
 | `webfetch` | yes | Fetch a URL, convert HTML to markdown text, and refuse a response over the size cap. |
 | `todo` | no | Keep the task list of the agent. Each call replaces the list. The context classifier protects the chunk of this tool. |
 | `recall` | yes | Search the history of the session, or read a chunk. It covers the chunks of all agents of the session and never the chunks of another session. See [context-and-compaction.md](context-and-compaction.md#recall). |
-| `ask_user` | no | Ask the user a question. It can give choices. The question and the answer become a `user` chunk that pruning never changes. `recall` with the filter `kind` set to `user` finds it. |
+| `ask_user` | no | Show the user a form with one or more questions and wait for the answers. See [ask_user](#ask_user). The question and the answers become a `user` chunk that pruning never changes. `recall` with the filter `kind` set to `user` finds it. |
 | `spawn_agent` | no | Start a subagent. It can use a `type` from a subagent definition. See [subagents.md](subagents.md) and [instructions-and-skills.md](instructions-and-skills.md#subagent-definitions). |
 | `skill` | yes | Load the body of a skill. See [instructions-and-skills.md](instructions-and-skills.md#skills). |
 | `agent_message` | no | Send a message to a subagent or peer. See [swarm.md](swarm.md). |
@@ -216,6 +216,40 @@ Behavior:
 ### webfetch
 
 `webfetch` accepts only `http` and `https`. It follows up to five redirects, and it checks the network policy again for each redirect target. It refuses private, loopback, and link-local addresses. The CLI passes no setting that allows them. It enforces a response size cap (default 2 MB): a response over the cap is an error, not a cut text. It accepts text types only (`text/*`, JSON, XML, and JavaScript) and refuses other types. It converts HTML to markdown text and returns other text as it is. A status of 400 or more is an error. The request timeout is 30 s. The domain policy applies.
+
+### ask_user
+
+The tool shows a form to the user and waits. The UI shows the form in the terminal. See [Forms](ui.md#forms). A run with no UI answers the form from options. See [planning.md](planning.md#headless-runs).
+
+**Input.**
+
+| Field | Meaning |
+|-------|---------|
+| `title` | A short title of the form. Optional. |
+| `questions` | A list of 1 to 8 questions. Use this or `question`. |
+| `question`, `choices` | One question, with an optional list of choices. The tool makes a form with one question. It is `single` when it has choices, and `text` when it has none. A call with both `question` and `questions` is an error. |
+
+Each item of `questions` has these fields:
+
+| Field | Meaning |
+|-------|---------|
+| `id` | The id that the answer uses. Default `q1`, `q2`, and so on. Ids are unique. |
+| `prompt` | The question. It is not empty. |
+| `kind` | `single` (one option), `multi` (several options), or `text` (a free answer). Default: `single` when the question has options, else `text`. |
+| `options` | 2 to 12 options for `single` and `multi`. Each option is a text label, or an object with `label` and `description`. Labels are unique. |
+| `allowOther` | The user can type an answer that is not an option. Default `false`. |
+| `required` | The user must answer. Default `true`. |
+| `minChoices`, `maxChoices` | For `multi` only. The range is `0 <= min <= max <= number of options`. Default: no limit. |
+| `defaultValue` | For `single`: the label of the option that starts chosen. For `text`: the start text. |
+
+An input that breaks a rule gives a short error, and the form does not reach the user.
+
+**Result.** The text is stable, because it goes into the history.
+
+- The user answered the form: `User answers:` and one line for each question, `- <id> "<prompt>": <answer>`. A `multi` answer lists the labels with `; ` between them. A question with no answer shows `(no answer)`. A call with only `question` gives the older text `User answer: <answer>`.
+- The user chose to chat: `The user wants to talk about this before answering.`, then the note of the user (`Note from the user: ...`) when there is one, the open questions, the answers so far, and the line `Answer in chat. Then call ask_user again if you still need an answer.`
+- The user declined: `The user declined to answer.`
+- The turn was cancelled: an error result.
 
 ### advisor
 

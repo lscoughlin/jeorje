@@ -89,6 +89,21 @@ class HumanTextGuardTest {
     }
 
     @Test
+    void aMultiLineFormResultStaysWholeInAFormat1Chunk() {
+        var form = "TOOL_RESULT ask_user User answers:\n- db \"Which database?\": sqlite\n"
+            + "- note \"More?\": do not use postgres\nand keep the tables\n";
+        var text = USER + "\nASSISTANT: " + filler("quiet") + "TOOL_CALL ask_user {\"questions\":[]}\n" + form
+            + "ASSISTANT: " + filler("loud");
+        var c = chunk(2, "mixed", "ask_user", text.stripTrailing());
+        var pruner = new Pruner(null, null, TermStats.UNIFORM, Pruner.Config.defaults());
+        for (var level = 1; level <= 2; level++) {
+            var res = pruner.prune(new Pruner.Job(c, Protection.CAREFUL, level, null), Set.of());
+            var pruned = Spans.build(c.text(), res.keptSpans());
+            assertTrue(pruned.contains(form.stripTrailing()), "level " + level + ": " + pruned);
+        }
+    }
+
+    @Test
     void anAnswerOfTheCompactorThatDropsTheUserWordsIsRepaired() {
         var c = legacyChunk(2);
         var keep = c.text().length() / 5;

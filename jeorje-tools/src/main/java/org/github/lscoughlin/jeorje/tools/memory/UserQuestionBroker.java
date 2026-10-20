@@ -7,6 +7,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import org.github.lscoughlin.jeorje.core.form.Form;
+import org.github.lscoughlin.jeorje.core.form.FormAnswer;
 import org.github.lscoughlin.jeorje.core.model.AgentId;
 import org.github.lscoughlin.jeorje.core.model.CancellationToken;
 
@@ -15,31 +17,41 @@ import org.github.lscoughlin.jeorje.core.model.CancellationToken;
  * {@link #answer}. {@link #ask} blocks until the answer arrives or the token is cancelled.
  */
 public final class UserQuestionBroker {
-    private final Map<String, CompletableFuture<String>> pending = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<FormAnswer>> pending = new ConcurrentHashMap<>();
     private final AtomicLong counter = new AtomicLong();
     private final Consumer<UserQuestion> listener;
 
     public UserQuestionBroker(Consumer<UserQuestion> listener) { this.listener = listener; }
 
-    /** Sends the question event and waits for the answer. */
-    public String ask(AgentId agent, String question, List<String> choices, CancellationToken cancel)
-            throws Exception {
+    /** Sends the form event and waits for the answer. */
+    public FormAnswer ask(AgentId agent, Form form, CancellationToken cancel) throws Exception {
         var id = "q" + counter.incrementAndGet();
-        var future = new CompletableFuture<String>();
+        var future = new CompletableFuture<FormAnswer>();
         pending.put(id, future);
         cancel.onCancel(() -> future.completeExceptionally(new CancellationException("cancelled")));
         try {
-            listener.accept(new UserQuestion(id, agent, question, choices));
+            listener.accept(new UserQuestion(id, agent, form));
             return future.get();
         } finally {
             pending.remove(id);
         }
     }
 
+    /** Sends a question with choices and waits for the answer as one text. */
+    public String ask(AgentId agent, String question, List<String> choices, CancellationToken cancel)
+            throws Exception {
+        return ask(agent, Form.single(question, choices), cancel).firstValue();
+    }
+
     /** Gives the answer to a question. Returns false if no such question waits. */
-    public boolean answer(String questionId, String answer) {
+    public boolean answer(String questionId, FormAnswer answer) {
         var future = pending.get(questionId);
         return future != null && future.complete(answer);
+    }
+
+    /** Gives a plain text answer to the first question. Returns false if no such question waits. */
+    public boolean answer(String questionId, String answer) {
+        return answer(questionId, FormAnswer.text(answer));
     }
 
     public int pendingCount() { return pending.size(); }

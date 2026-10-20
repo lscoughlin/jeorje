@@ -225,6 +225,70 @@ class HeadlessWorkTest {
         assertTrue(main.requests().get(1).toString().contains("User answer: JSON"), "the answer is the first choice");
     }
 
+    private static final String FORM = "{\"title\":\"Setup\",\"questions\":["
+            + "{\"id\":\"fmt\",\"prompt\":\"Which format?\",\"options\":[\"JSON\",\"YAML\"]},"
+            + "{\"id\":\"checks\",\"prompt\":\"Which checks?\",\"kind\":\"multi\",\"options\":[\"unit\",\"lint\",\"e2e\"]},"
+            + "{\"id\":\"note\",\"prompt\":\"Anything else?\",\"kind\":\"text\"}]}";
+
+    @Test
+    void planAnswersAFormFromAnswerValues() {
+        var main = new ScriptedLlmClient(
+                Response.toolCall("q1", "ask_user", FORM),
+                Response.toolCall("p1", "plan_submit", PLAN_JSON),
+                Response.text("Done."));
+        var code = run(new Router(main), "run", "--answer", "fmt=2", "--answer", "checks=unit,e2e",
+                "--answer", "note=keep it short", "/plan Build a config reader");
+        assertEquals(0, code, stderr());
+        var result = main.requests().get(1).toString();
+        assertTrue(result.contains("- fmt \\\"Which format?\\\": YAML") || result.contains("YAML"), result);
+        assertTrue(result.contains("unit; e2e"), result);
+        assertTrue(result.contains("keep it short"), result);
+    }
+
+    @Test
+    void planUsesTheYesRuleForQuestionsWithNoValue() {
+        var main = new ScriptedLlmClient(
+                Response.toolCall("q1", "ask_user", FORM),
+                Response.toolCall("p1", "plan_submit", PLAN_JSON),
+                Response.text("Done."));
+        var code = run(new Router(main), "run", "--yes", "--answer", "fmt=YAML", "/plan Build a config reader");
+        assertEquals(0, code, stderr());
+        var result = main.requests().get(1).toString();
+        assertTrue(result.contains("YAML") && result.contains("unit") && result.contains(FormAnswers.BEST_JUDGMENT),
+                result);
+    }
+
+    @Test
+    void planStopsWithTheNumberedFormWhenAQuestionHasNoValue() {
+        var main = new ScriptedLlmClient(Response.toolCall("q1", "ask_user", FORM), Response.text("unreachable"));
+        var code = run(new Router(main), "run", "--answer", "fmt=1", "/plan Build a config reader");
+        assertEquals(HeadlessWork.EXIT_QUESTION, code, stderr());
+        assertTrue(stdout().contains("Question checks (multi): Which checks?"), stdout());
+        assertTrue(stdout().contains("  2. lint"), stdout());
+        assertTrue(stderr().contains("--answer <id>=<value>"), stderr());
+    }
+
+    @Test
+    void planStopsOnABadAnswerValue() {
+        var main = new ScriptedLlmClient(Response.toolCall("q1", "ask_user", FORM), Response.text("unreachable"));
+        var code = run(new Router(main), "run", "--answer", "fmt=XML", "/plan Build a config reader");
+        assertEquals(HeadlessWork.EXIT_QUESTION, code);
+        assertTrue(stderr().contains("'XML' is not one of JSON, YAML"), stderr());
+    }
+
+    @Test
+    void aBadAnswerOptionFailsAtOnce() {
+        var code = run(new Router(new ScriptedLlmClient()), "run", "--answer", "oops", "/plan x");
+        assertEquals(1, code);
+        assertTrue(stderr().contains("Use <id>=<value>"), stderr());
+    }
+
+    @Test
+    void runHelpListsTheAnswerOption() {
+        var usage = new picocli.CommandLine(new RunCommand(null, null)).getUsageMessage();
+        assertTrue(usage.contains("--answer=<id>=<value>") && usage.contains("--ask"), usage);
+    }
+
     @Test
     void planThatWritesNoFileExitsWithOne() {
         var main = new ScriptedLlmClient(Response.text("I need more details."));

@@ -114,6 +114,7 @@ import org.github.lscoughlin.jeorje.ui.editor.QEditor;
 import org.github.lscoughlin.jeorje.ui.screen.ActionHandler;
 import org.github.lscoughlin.jeorje.ui.screen.Decision;
 import org.github.lscoughlin.jeorje.ui.switcher.AgentSwitcherPane;
+import org.github.lscoughlin.jeorje.ui.screen.FormPrompt;
 import org.github.lscoughlin.jeorje.ui.screen.Screen;
 import org.github.lscoughlin.jeorje.ui.switcher.AgentSwitcher;
 import org.jline.terminal.MouseEvent;
@@ -166,7 +167,6 @@ public final class InteractiveSession implements AutoCloseable {
     private final PlanMode planMode = new PlanMode();
     private final Map<String, LlmClient> clients = new ConcurrentHashMap<>();
     private final List<String> attachments = new CopyOnWriteArrayList<>();
-    private final List<UserQuestion> questions = new CopyOnWriteArrayList<>();
     private final AtomicInteger promptIds = new AtomicInteger();
     private final List<String> startupNotices = new ArrayList<>();
     private volatile ModelRoles roles;
@@ -904,12 +904,16 @@ public final class InteractiveSession implements AutoCloseable {
     }
 
     private void onQuestion(UserQuestion question) {
-        questions.add(question);
-        var text = new StringBuilder("Question from " + question.agent() + ": " + question.question());
-        question.choices().forEach(c -> text.append("\n  - ").append(c));
-        text.append("\nType the answer and press Enter.");
-        notice(question.agent().equals(MAIN) ? MAIN : question.agent(), text.toString());
-        notice(MAIN, text.toString());
+        var form = question.form();
+        var title = form.title() != null && !form.title().isBlank() ? form.title() : form.firstPrompt();
+        var text = "Question from " + question.agent() + ": " + title;
+        notice(question.agent(), text);
+        if (!question.agent().equals(MAIN)) notice(MAIN, text);
+        screen.status().state("waiting for you");
+        screen.showForm(new FormPrompt(question.agent(), form), answer -> {
+            broker.answer(question.id(), answer);
+            screen.status().state("working");
+        });
     }
 
     private void onPlanSubmitted(Path file) {
@@ -979,7 +983,6 @@ public final class InteractiveSession implements AutoCloseable {
 
     private void onSubmit(String line) {
         try {
-            if (answerQuestion(line)) return;
             promptSent = false;
             var result = slash.execute(line);
             if (result.handled()) {
@@ -1010,14 +1013,6 @@ public final class InteractiveSession implements AutoCloseable {
         }
     }
 
-    private boolean answerQuestion(String line) {
-        if (questions.isEmpty() || line.startsWith("/")) return false;
-        var question = questions.removeFirst();
-        broker.answer(question.id(), line);
-        screen.status().state("working");
-        return true;
-    }
-
     void sendPrompt(String prompt, String model) {
         promptSent = true;
         modelOverride = model;
@@ -1045,11 +1040,13 @@ public final class InteractiveSession implements AutoCloseable {
         if (target.equals(MAIN)) {
             agent.cancel();
             gate.denyAgent(MAIN);
+            screen.cancelForms(MAIN);
             return "Interrupted the main agent.";
         }
         var any = false;
         for (var r : List.of(runtime, orchestrator.runtime())) any |= r.cancel(target.value());
         gate.denyAgent(target);
+        screen.cancelForms(target);
         return any ? "Interrupted " + target + "." : "Nothing to interrupt for " + target + ".";
     }
 

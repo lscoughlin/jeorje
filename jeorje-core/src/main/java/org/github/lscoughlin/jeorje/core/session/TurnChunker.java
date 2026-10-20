@@ -14,6 +14,7 @@ import org.github.lscoughlin.jeorje.core.model.Text;
 import org.github.lscoughlin.jeorje.core.model.ToolResult;
 import org.github.lscoughlin.jeorje.core.model.ToolUse;
 import org.github.lscoughlin.jeorje.core.model.Turn;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Converts a finished turn to chunks. A tool result of more than {@link #MAX_RESULT_CHARS} characters becomes
@@ -176,10 +177,81 @@ public final class TurnChunker {
         return groups;
     }
 
+    /** The most characters of one answer in an {@code ask_user} chunk. */
+    static final int MAX_ANSWER_CHARS = 2_000;
+    private static final Pattern ANSWER_LINE = Pattern.compile("^- (\\S+) \".*\": (.*)$");
+
+    private static String cut(String text) {
+        return text.length() <= MAX_ANSWER_CHARS ? text : text.substring(0, MAX_ANSWER_CHARS) + " [cut]";
+    }
+
+    /** The answers in a result text, by question id. Lines that start with {@code - id "prompt": } begin an answer. */
+    private static java.util.Map<String, String> answersIn(String output, String from) {
+        var out = new java.util.LinkedHashMap<String, String>();
+        var start = from == null ? 0 : output.indexOf(from);
+        if (start < 0) return out;
+        String last = null;
+        for (var line : output.substring(start).split("\n", -1)) {
+            var m = ANSWER_LINE.matcher(line);
+            if (m.matches()) {
+                last = m.group(1);
+                out.put(last, m.group(2));
+            } else if (last != null && !line.startsWith("Answer in chat.")) {
+                out.put(last, out.get(last) + "\n" + line);
+            }
+        }
+        return out;
+    }
+
+    /** The text of an {@code ask_user} chunk for a call with {@code questions}. */
+    private static String formText(JsonNode input, ToolResult result) {
+        var sb = new StringBuilder();
+        if (input.path("title").isString() && !input.path("title").asString().isBlank()) {
+            sb.append("FORM ").append(input.path("title").asString()).append('\n');
+        }
+        var output = result == null ? "" : result.output();
+        var answers = result == null || result.error() ? java.util.Map.<String, String>of()
+            : answersIn(output, output.startsWith("User answers:") ? "User answers:"
+                : output.contains("Answers so far:") ? "Answers so far:" : null);
+        var number = 0;
+        for (var q : input.get("questions")) {
+            number++;
+            var id = q.path("id").isString() && !q.path("id").asString().isBlank() ? q.path("id").asString() : "q" + number;
+            sb.append("QUESTION ").append(id).append(' ').append(q.path("prompt").asString()).append('\n');
+            if (q.path("options").isArray() && !q.path("options").isEmpty()) {
+                var labels = new ArrayList<String>();
+                for (var o : q.path("options")) labels.add(o.isObject() ? o.path("label").asString() : o.asString());
+                var multi = "multi".equalsIgnoreCase(q.path("kind").asString(""));
+                sb.append("CHOICES ").append(multi ? "(multi) " : "").append(String.join(" | ", labels)).append('\n');
+            }
+            if (answers.containsKey(id)) sb.append("ANSWER ").append(id).append(' ').append(cut(answers.get(id))).append('\n');
+        }
+        if (result == null) return sb.append("ANSWER (none)").toString();
+        if (result.error()) return sb.append("ERROR ").append(output).toString();
+        if (output.startsWith("The user declined")) sb.append("DECLINED");
+        else if (output.startsWith("The user wants to talk")) {
+            var note = Pattern.compile("(?m)^Note from the user: (.*)$").matcher(output);
+            sb.append("CHAT").append(note.find() ? " " + cut(note.group(1)) : "");
+        }
+        return sb.toString().stripTrailing();
+    }
+
     /** The text of an {@code ask_user} chunk: the question, the choices, and the answer. */
     private static String askText(ToolUse use, ToolResult result) {
         var sb = new StringBuilder();
         var input = use == null ? null : use.input();
+        if (input != null && input.path("questions").isArray() && !input.path("questions").isEmpty()) {
+            return formText(input, result);
+        }
+        if (result != null && !result.error() && result.output().startsWith("The user declined")) {
+            sb.append("QUESTION ").append(input != null && input.has("question") ? input.get("question").asString() : "");
+            return sb.append("\nDECLINED").toString();
+        }
+        if (result != null && !result.error() && result.output().startsWith("The user wants to talk")) {
+            sb.append("QUESTION ").append(input != null && input.has("question") ? input.get("question").asString() : "");
+            var note = Pattern.compile("(?m)^Note from the user: (.*)$").matcher(result.output());
+            return sb.append("\nCHAT").append(note.find() ? " " + cut(note.group(1)) : "").toString();
+        }
         sb.append("QUESTION ").append(input != null && input.has("question") ? input.get("question").asString() : "");
         if (input != null && input.has("choices") && input.get("choices").isArray() && !input.get("choices").isEmpty()) {
             var choices = new ArrayList<String>();
@@ -189,7 +261,7 @@ public final class TurnChunker {
         if (result == null) return sb.append("\nANSWER (none)").toString();
         var output = result.output();
         if (!result.error() && output.startsWith(ANSWER_PREFIX)) output = output.substring(ANSWER_PREFIX.length());
-        return sb.append(result.error() ? "\nERROR " : "\nANSWER ").append(output).toString();
+        return sb.append(result.error() ? "\nERROR " : "\nANSWER ").append(cut(output)).toString();
     }
 
     private List<Chunk> chunkV1(Turn turn, Instant timestamp) {

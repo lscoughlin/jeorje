@@ -7,6 +7,7 @@ package org.github.lscoughlin.jeorje.ui.keys;
 public enum KeyContext {
     CHAT(KeyScope.UI, "chat screen"),
     BROWSER(KeyScope.UI, "file browser"),
+    FORM(KeyScope.UI, "form"),
     EDITOR(KeyScope.EDITOR, "editor");
 
     private final KeyScope scope;

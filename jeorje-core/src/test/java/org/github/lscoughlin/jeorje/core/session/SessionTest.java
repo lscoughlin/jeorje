@@ -158,6 +158,60 @@ class SessionTest {
         assertTrue(chunks.stream().allMatch(c -> c.text().length() <= 100));
     }
 
+    private static final String FORM_INPUT = "{\"title\":\"Setup\",\"questions\":["
+        + "{\"id\":\"db\",\"prompt\":\"Which database?\",\"options\":[\"sqlite\",{\"label\":\"postgres\"}]},"
+        + "{\"id\":\"checks\",\"prompt\":\"Which checks?\",\"kind\":\"multi\",\"options\":[\"unit\",\"lint\"]},"
+        + "{\"prompt\":\"Anything else?\",\"kind\":\"text\"}]}";
+
+    private List<org.github.lscoughlin.jeorje.core.model.Chunk> formChunks(String input, String output, boolean error) {
+        var turn = new Turn(agent, 5, List.of(Message.user("set up"),
+            new Message(Role.ASSISTANT, List.of(new ToolUse("q1", "ask_user", JSON.readTree(input)))),
+            new Message(Role.USER, List.of(new ToolResult("q1", output, error)))));
+        return new TurnChunker("s1").chunk(turn, T0);
+    }
+
+    @Test
+    void format2WritesAFormWithItsAnswers() {
+        var chunks = formChunks(FORM_INPUT, "User answers:\n- db \"Which database?\": sqlite\n"
+            + "- checks \"Which checks?\": unit; lint\n- q3 \"Anything else?\": keep it short\nand simple", false);
+        assertEquals(2, chunks.size());
+        var ask = chunks.get(1);
+        assertEquals("user", ask.kind());
+        assertEquals("ask_user", ask.toolName());
+        assertEquals("FORM Setup\nQUESTION db Which database?\nCHOICES sqlite | postgres\nANSWER db sqlite\n"
+            + "QUESTION checks Which checks?\nCHOICES (multi) unit | lint\nANSWER checks unit; lint\n"
+            + "QUESTION q3 Anything else?\nANSWER q3 keep it short\nand simple", ask.text());
+    }
+
+    @Test
+    void format2WritesChatDeclinedAndErrorResultsOfAForm() {
+        var chat = formChunks(FORM_INPUT, "The user wants to talk about this before answering.\n"
+            + "Note from the user: what is lint?\nOpen questions:\n- checks \"Which checks?\"\n"
+            + "Answers so far:\n- db \"Which database?\": sqlite\n"
+            + "Answer in chat. Then call ask_user again if you still need an answer.", false).get(1).text();
+        assertTrue(chat.contains("ANSWER db sqlite") && !chat.contains("ANSWER checks"), chat);
+        assertTrue(chat.endsWith("CHAT what is lint?"), chat);
+        var declined = formChunks(FORM_INPUT, "The user declined to answer.", false).get(1).text();
+        assertTrue(declined.endsWith("DECLINED") && !declined.contains("ANSWER"), declined);
+        var error = formChunks(FORM_INPUT, "cancelled", true).get(1).text();
+        assertTrue(error.endsWith("ERROR cancelled"), error);
+        var legacyChat = formChunks("{\"question\":\"Which?\",\"choices\":[\"a\",\"b\"]}",
+            "The user wants to talk about this before answering.\nAnswer in chat.", false).get(1).text();
+        assertEquals("QUESTION Which?\nCHAT", legacyChat);
+        var legacyDeclined = formChunks("{\"question\":\"Which?\"}", "The user declined to answer.", false).get(1).text();
+        assertEquals("QUESTION Which?\nDECLINED", legacyDeclined);
+    }
+
+    @Test
+    void format2CutsALongAnswer() {
+        var long1 = "x".repeat(5000);
+        var text = formChunks(FORM_INPUT, "User answers:\n- q3 \"Anything else?\": " + long1, false).get(1).text();
+        assertTrue(text.contains("ANSWER q3 " + "x".repeat(TurnChunker.MAX_ANSWER_CHARS) + " [cut]"), text.length() + "");
+        assertTrue(text.length() < 3000);
+        var legacy = formChunks("{\"question\":\"Which?\"}", "User answer: " + long1, false).get(1).text();
+        assertTrue(legacy.endsWith(" [cut]") && legacy.length() < 2100, legacy.length() + "");
+    }
+
     @Test
     void format2AddsAnUnansweredQuestion() {
         var ask = JSON.readTree("{\"question\":\"Which?\"}");

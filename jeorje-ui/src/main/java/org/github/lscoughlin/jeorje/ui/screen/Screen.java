@@ -18,11 +18,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import org.github.lscoughlin.jeorje.core.form.FormAnswer;
 import org.github.lscoughlin.jeorje.core.model.AgentEvent;
 import org.github.lscoughlin.jeorje.core.model.AgentId;
 import org.github.lscoughlin.jeorje.core.model.ToolUse;
 import org.github.lscoughlin.jeorje.ui.keys.KeyBindings;
 import org.github.lscoughlin.jeorje.ui.keys.KeyContext;
+import org.github.lscoughlin.jeorje.ui.keys.KeySpec;
 import org.github.lscoughlin.jeorje.ui.mouse.ClickCounter;
 import org.github.lscoughlin.jeorje.ui.mouse.Rect;
 import org.github.lscoughlin.jeorje.ui.mouse.RegionEvent;
@@ -107,6 +109,17 @@ public final class Screen implements AutoCloseable {
     private final Map<AgentId, ChatView> chats = new ConcurrentHashMap<>();
     private final BlockingQueue<AgentEvent> events = new LinkedBlockingQueue<>();
     private final Deque<PermissionPrompt> prompts = new ArrayDeque<>();
+    private final Deque<PendingForm> forms = new ArrayDeque<>();
+    private volatile int formTop = -1;
+    private volatile int formCursorRow = -1;
+    private volatile int formCursorColumn;
+
+    /** A form that waits for the user, with the receiver of its answer. */
+    private record PendingForm(FormPrompt prompt, Consumer<FormAnswer> onAnswer) {}
+
+    private static final Map<String, String> FORM_KEYS = Map.of("formUp", "up", "formDown", "down",
+            "formNext", "tab", "formPrevious", "shift-tab", "formToggle", "space", "formChat", "c",
+            "formDecline", "esc");
     private final Object drawLock = new Object();
     private final AtomicInteger redraws = new AtomicInteger();
     private final AtomicInteger clears = new AtomicInteger();
@@ -462,11 +475,23 @@ public final class Screen implements AutoCloseable {
         }
         var box = List.<AttributedString>of();
         var prompt = pendingPrompt();
+        var form = prompt == null ? pendingForm() : null;
+        formTop = -1;
+        formCursorRow = -1;
         if (prompt != null) {
             box = prompt.render(columns);
             if (box.size() >= regionRows) box = box.subList(0, Math.max(0, regionRows - 1));
+        } else if (form != null) {
+            box = form.render(columns, Math.max(1, Math.min(regionRows - 1, Math.max(5, regionRows * 6 / 10))));
         }
         var chatRows = Math.max(1, regionRows - box.size());
+        if (form != null) {
+            formTop = chatRows;
+            if (form.cursorRow() >= 0) {
+                formCursorRow = chatRows + form.cursorRow();
+                formCursorColumn = form.cursorColumn();
+            }
+        }
         this.chatRows = chatRows;
         var lines = new ArrayList<>(chat(foreground).visible(columns, chatRows));
         while (lines.size() < chatRows) lines.add(AttributedString.EMPTY);
@@ -519,6 +544,143 @@ public final class Screen implements AutoCloseable {
         drawnRegionRows = -1;
     }
 
+    // ---- forms ----
+
+    /**
+     * Shows a form. The form waits behind a permission prompt. The method can run on any thread. {@code onAnswer}
+     * runs on the input thread when the form ends. It does not run when {@link #cancelForms} removes the form.
+     */
+    public void showForm(FormPrompt prompt, Consumer<FormAnswer> onAnswer) {
+        synchronized (forms) {
+            forms.addLast(new PendingForm(prompt, onAnswer));
+        }
+        wakeInput();
+        draw();
+    }
+
+    /** The row and column of the terminal cursor for a text field of the form, or {-1, 0}. For tests. */
+    int[] formCursor() {
+        return new int[] {formCursorRow, formCursorColumn};
+    }
+
+    /** The form that waits for the user, or null. */
+    public FormPrompt pendingForm() {
+        synchronized (forms) {
+            var first = forms.peekFirst();
+            return first == null ? null : first.prompt();
+        }
+    }
+
+    /** Removes the forms of an agent without an answer. Returns the number of removed forms. */
+    public int cancelForms(AgentId agent) {
+        int removed;
+        synchronized (forms) {
+            var before = forms.size();
+            forms.removeIf(f -> f.prompt().agent().equals(agent));
+            removed = before - forms.size();
+        }
+        if (removed > 0) draw();
+        return removed;
+    }
+
+    /** Sends a key to the first form. Returns the answer when the key ends the form, otherwise null. */
+    public FormAnswer handleFormKey(String key) {
+        PendingForm pending;
+        synchronized (forms) {
+            pending = forms.peekFirst();
+        }
+        if (pending == null || key == null) return null;
+        var prompt = pending.prompt();
+        Optional<FormAnswer> answer;
+        if (key.startsWith("mouse:")) {
+            answer = formMouse(prompt, key);
+        } else {
+            var mapped = translateFormKey(prompt, key);
+            answer = mapped.isEmpty() ? Optional.empty() : prompt.handleKey(mapped);
+        }
+        if (answer.isPresent()) {
+            synchronized (forms) {
+                forms.remove(pending);
+            }
+            chat(prompt.agent()).appendNotice(summary(answer.get()));
+            pending.onAnswer().accept(answer.get());
+        }
+        draw();
+        return answer.orElse(null);
+    }
+
+    private static String summary(FormAnswer answer) {
+        return switch (answer.status()) {
+            case ANSWERED -> {
+                var text = answer.answers().stream().map(FormAnswer.QuestionAnswer::value)
+                        .collect(java.util.stream.Collectors.joining(" | "));
+                yield "form answered: " + (text.length() > 80 ? text.substring(0, 79) + "…" : text);
+            }
+            case CHAT -> "form: chat requested";
+            case DECLINED -> "form declined";
+        };
+    }
+
+    private Optional<FormAnswer> formMouse(FormPrompt prompt, String key) {
+        var parts = key.split(":");
+        if (parts.length < 4) return Optional.empty();
+        try {
+            var button = Integer.parseInt(parts[1]);
+            var y = Integer.parseInt(parts[3]) - 1;
+            return switch (button) {
+                case 0 -> formTop < 0 ? Optional.empty() : prompt.click(y - formTop);
+                case 64 -> prompt.handleKey("up");
+                case 65 -> prompt.handleKey("down");
+                default -> Optional.empty();
+            };
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Maps a key through the form key bindings. A key that is bound to a form action gives the default key name of
+     * that action. A default key of an action that the user moved to another key does nothing. Text fields get
+     * every key as it is.
+     */
+    private String translateFormKey(FormPrompt prompt, String key) {
+        if (prompt.editing()) return key;
+        var bindings = options.keyBindings().bindings(KeyContext.FORM);
+        KeySpec pressed;
+        try {
+            pressed = KeySpec.parse(specText(key));
+        } catch (IllegalArgumentException e) {
+            return key;
+        }
+        for (var b : bindings) {
+            if (b.keys().contains(pressed)) return FORM_KEYS.getOrDefault(b.action().id(), key);
+        }
+        for (var b : bindings) {
+            if (b.action().defaults().contains(pressed)) return "";
+        }
+        return key;
+    }
+
+    private static String specText(String key) {
+        return switch (key) {
+            case "up" -> "Up";
+            case "down" -> "Down";
+            case "left" -> "Left";
+            case "right" -> "Right";
+            case "tab" -> "Tab";
+            case "shift-tab" -> "Shift-Tab";
+            case "space" -> "Space";
+            case "esc" -> "Esc";
+            case "enter" -> "Enter";
+            case "backspace" -> "Backspace";
+            case "delete" -> "Del";
+            case "home" -> "Home";
+            case "end" -> "End";
+            case "ctrl-u" -> "Ctrl-U";
+            default -> key;
+        };
+    }
+
     /** Draws the region, the input row, and the status row. Call it inside the drawing lock. */
     private void drawScreen(boolean whole) {
         var rows = rows();
@@ -541,7 +703,11 @@ public final class Screen implements AutoCloseable {
             terminal.puts(InfoCmp.Capability.cursor_address, rows - 1, 0);
             terminal.writer().print(status.render(cols).toAnsi(terminal));
             terminal.puts(InfoCmp.Capability.clr_eol);
-            terminal.puts(InfoCmp.Capability.cursor_address, Math.max(0, rows - 1 - inputRows), 0);
+            if (formCursorRow >= 0 && pendingPrompt() == null) {
+                terminal.puts(InfoCmp.Capability.cursor_address, formCursorRow, formCursorColumn);
+            } else {
+                terminal.puts(InfoCmp.Capability.cursor_address, Math.max(0, rows - 1 - inputRows), 0);
+            }
             terminal.flush();
         };
         if (terminal.isModeSupported(Terminal.Mode.SYNCHRONIZED_OUTPUT)) terminal.synchronizedUpdate(body);
@@ -609,7 +775,7 @@ public final class Screen implements AutoCloseable {
         var partial = "";
         while (running) {
             runInputTasks();
-            if (pendingPrompt() != null) {
+            if (pendingPrompt() != null || pendingForm() != null) {
                 promptLoop();
                 continue;
             }
@@ -631,7 +797,7 @@ public final class Screen implements AutoCloseable {
             } catch (UserInterruptException e) {
                 reading = false;
                 if (!running) return;
-                if (pendingPrompt() != null || !inputTasks.isEmpty() || Thread.interrupted()) {
+                if (pendingPrompt() != null || pendingForm() != null || !inputTasks.isEmpty() || Thread.interrupted()) {
                     partial = e.getPartialLine() == null ? "" : e.getPartialLine();
                 } else {
                     partial = "";
@@ -645,7 +811,7 @@ public final class Screen implements AutoCloseable {
             } catch (IOError | RuntimeException e) {
                 reading = false;
                 if (!running) return;
-                if (pendingPrompt() == null) {
+                if (pendingPrompt() == null && pendingForm() == null) {
                     log.atWarn().log(() -> "Input failed: " + e);
                     return;
                 }
@@ -664,13 +830,24 @@ public final class Screen implements AutoCloseable {
 
     private void promptLoop() {
         draw();
-        while (running && pendingPrompt() != null) {
+        while (running && (pendingPrompt() != null || pendingForm() != null)) {
             var key = readPromptKey();
-            if (key != null) handlePromptKey(key);
+            if (key == null) continue;
+            if (key.equals("ctrl-c")) {
+                options.onInterrupt().run();
+                handler.handle("interrupt");
+                continue;
+            }
+            if (pendingPrompt() != null) handlePromptKey(key); else handleFormKey(key);
         }
     }
 
-    private String readPromptKey() {
+    /**
+     * Reads one key for a prompt or a form. The names are {@code up down left right home end delete tab shift-tab
+     * enter esc space backspace ctrl-u}, a printable character as a text, or {@code mouse:<button>:<x>:<y>} for a
+     * mouse press or wheel step (the terminal sends it when mouse tracking is on). Other input gives null.
+     */
+    String readPromptKey() {
         try {
             NonBlockingReader reader = terminal.reader();
             var c = reader.read(100);
@@ -680,23 +857,60 @@ public final class Screen implements AutoCloseable {
                 return null;
             }
             if (c == '\r' || c == '\n') return "enter";
+            if (c == '\t') return "tab";
+            if (c == ' ') return "space";
+            if (c == 127 || c == 8) return "backspace";
+            if (c == 21) return "ctrl-u";
+            if (c == 3) return "ctrl-c";
             if (c == 27) {
                 var next = reader.peek(50);
                 if (next == '[' || next == 'O') {
                     reader.read(50);
-                    var code = reader.read(50);
-                    return switch (code) {
-                        case 'A' -> "up";
-                        case 'B' -> "down";
-                        default -> null;
-                    };
+                    return escapeSequence(reader);
                 }
                 return "esc";
+            }
+            if (c < 32) return null;
+            if (Character.isHighSurrogate((char) c)) {
+                var low = reader.read(50);
+                return low >= 0 ? new String(new char[] {(char) c, (char) low}) : null;
             }
             return String.valueOf((char) c);
         } catch (IOException | IOError e) {
             return null;
         }
+    }
+
+    private static String escapeSequence(NonBlockingReader reader) throws IOException {
+        var params = new StringBuilder();
+        int code;
+        while (true) {
+            code = reader.read(50);
+            if (code < 0) return null;
+            if (code >= 0x30 && code <= 0x3F) params.append((char) code); else break;
+        }
+        var text = params.toString();
+        if (text.startsWith("<")) {
+            if (code != 'M') return null;
+            var f = text.substring(1).split(";");
+            return f.length == 3 ? "mouse:" + f[0] + ":" + f[1] + ":" + f[2] : null;
+        }
+        return switch (code) {
+            case 'A' -> "up";
+            case 'B' -> "down";
+            case 'C' -> "right";
+            case 'D' -> "left";
+            case 'H' -> "home";
+            case 'F' -> "end";
+            case 'Z' -> "shift-tab";
+            case '~' -> switch (text) {
+                case "3" -> "delete";
+                case "1", "7" -> "home";
+                case "4", "8" -> "end";
+                default -> null;
+            };
+            default -> null;
+        };
     }
 
     // ---- key actions ----

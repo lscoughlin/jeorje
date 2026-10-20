@@ -35,7 +35,7 @@ The full design is in [doc/design/index.md](doc/design/index.md).
 | `bash` | Run shell commands |
 | `webfetch` | Fetch content from the web |
 | `recall` | Search the context history of the agent |
-| `todo`, `ask_user` | Keep a task list, ask the user a question |
+| `todo`, `ask_user` | Keep a task list, ask the user a form of single choice, multiple choice, and text questions |
 | `spawn_agent`, `agent_status`, `agent_message`, `agent_ask`, `agent_answer` | Start subagents (local or on a peer), and let agents talk to each other |
 | `task_done`, `story_done`, `story_blocked`, `story_read` | Story tools of the workers of `/implement` |
 | `sync_done`, `sync_abort`, `worktree_merge`, `worktree_discard` | Resolve a sync, and manage the worktree of a subagent |
