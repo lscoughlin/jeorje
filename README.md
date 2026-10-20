@@ -65,7 +65,7 @@ Jeorje reads `AGENTS.md` files (user, project, and per directory) and the `.agen
 - `jeorje` opens the interactive interface. `jeorje resume` and `jeorje --resume` open an earlier session.
 - `jeorje run "<task>"` runs one task with no interface and prints the final answer. `jeorje resume --task "<text>"` continues a session the same way.
 - `jeorje index rebuild` embeds the stored history again. `jeorje config` shows the effective config.
-- Useful options: `--dir`, `--model`, `--peer`, `--swarm-token`, `--yes`, `--yolo`, `--trust`, `--config`, and `--no-mouse`.
+- Useful options: `--dir`, `--model`, `--peer`, `--swarm-token`, `--yes`, `--yolo`, `--trust`, `--config`, `--no-mcp`, and `--no-mouse`.
 
 ## Models
 

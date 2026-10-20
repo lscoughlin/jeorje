@@ -31,7 +31,7 @@ Environment variables and command-line flags override file values. See [Preceden
 - `permissions.rules` is a list that adds. The rules of the project config come after the rules of the user config, so a project cannot drop a `deny` rule of the user.
 - `prompts.system` and `prompts.compaction` are replaced as a whole. If a later file sets one of them, the keys that it does not set return to their defaults.
 
-**Unknown keys.** A key that the config does not define is an error. The message names the key and the file. The keys under `llm.headers`, `ui.chat.highlight.aliases`, `ui.keys`, `editor.keys`, and `context.windows` are free-form, so Jeorje does not check their names. A value of the wrong type or outside its range is also an error. The message names the key.
+**Unknown keys.** A key that the config does not define is an error. The message names the key and the file. The keys under `llm.headers`, `ui.chat.highlight.aliases`, `ui.keys`, `editor.keys`, `context.windows`, and `mcp.servers` are free-form, so Jeorje does not check their names. A value of the wrong type or outside its range is also an error. The message names the key.
 
 **Trust and the project config.** The project config comes from the repository. If the user has not trusted the project, Jeorje reads it in restricted mode: it can only make settings stricter (for example more `ask` and `deny` rules and lower limits). It cannot widen permissions, register executables, change prompts, or add directories. For each key that it ignores, Jeorje logs a warning. After the user trusts the project, Jeorje reads it in full. The list of ignored keys is in [instructions-and-skills.md](instructions-and-skills.md#trust). The user config and the file from `--config` are always read in full.
 
@@ -52,6 +52,7 @@ Only a few flags and variables set config values:
 | `--peer host:port` (repeatable) | `swarm.wka`, and `swarm.enabled` is `true` |
 | `--swarm-token` | `swarm.token` |
 | `--no-mouse` | `ui.mouse.enabled` is `false` |
+| `--no-mcp` | No key. The session starts no MCP server. |
 | `JEORJE_SWARM_TOKEN` | `swarm.token` |
 
 The flag `--swarm-token` wins over `JEORJE_SWARM_TOKEN`. Other flags (`--dir`, `--config`, `--trust`, `--yes`, `--yolo`) and other variables do not set config keys. See [Environment variables](#environment-variables).
@@ -217,6 +218,8 @@ editor:
 logging:
   level: INFO
   file: ${HOME}/.jeorje/logs/jeorje.log
+mcp:
+  servers: {}                      # MCP servers by name; see "MCP servers"
 ```
 
 Rules for the keys:
@@ -235,6 +238,36 @@ Rules for the keys:
 - `ui` and `editor` keys are described in [ui.md](ui.md). The interactive launcher reads all `ui` and `editor` keys: `ui.keyboardProtocol`, `ui.chat.highlight`, `ui.mouse`, `ui.keys`, `editor.keys`, and `editor.syntax`. The key `ui.mouse.copyOnSelect` acts in the chat view only. See [ui.md](ui.md#known-limits).
 
 **Rules that Jeorje writes.** One answer to a permission prompt changes a config file. When the user answers "allow in the project", Jeorje adds a rule with `decision: allow` and no `pattern` for the tool to `${CWD}/.jeorje/config.yaml`. Jeorje creates the file when it is missing. It does this only in a trusted project. It does nothing if the same rule exists. It edits the text of the file, so comments stay. If the shape of the file does not allow a text edit, Jeorje writes the parsed data again, and the comments are lost. In an untrusted project, the rule holds for the session only, and the interface shows a notice.
+
+## MCP servers
+
+The key `mcp.servers` is a map. Each key is the name of a server. The name uses only `a-z`, `0-9`, `_`, and `-`. The name becomes a part of the tool names. See [tools.md](tools.md#mcp-tools).
+
+```yaml
+mcp:
+  servers:
+    files:                           # a stdio server
+      command: npx
+      args: [-y, "@modelcontextprotocol/server-filesystem", "${CWD}"]
+      cwd: ${CWD}                    # default: the working directory
+      env: {LOG_LEVEL: warn}         # literal values, added to the child environment
+      envFrom: [GITHUB_TOKEN]        # names of variables to copy from the Jeorje environment
+      timeoutSeconds: 60             # handshake and each call
+    remote:                          # an http server
+      transport: http
+      url: https://mcp.example.com/mcp
+      headers: {Authorization: "Bearer ${MCP_TOKEN}"}
+      enabled: false                 # default: true
+```
+
+- `transport` is `stdio` (default) or `http`.
+- A `stdio` server needs `command`. `args`, `cwd`, `env`, and `envFrom` are optional. Jeorje expands `~`, `${HOME}`, and `${CWD}` in `command` and `cwd`.
+- An `http` server needs `url`. `headers` is optional. Jeorje replaces `${NAME}` in a header value with the environment variable `NAME` when it connects.
+- `timeoutSeconds` is a positive whole number. The default is 60.
+- `enabled: false` keeps the entry but starts nothing.
+- A project config merges with the user config for each server name. Jeorje ignores `mcp` in the project config of an untrusted project.
+- `jeorje config` hides the values of `env` and `headers`.
+- The flag `--no-mcp` starts no server for one run. The command `/mcp` shows each server, its state, and its tools.
 
 ## Prompts
 

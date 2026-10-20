@@ -54,6 +54,7 @@ public final class McpManager implements AutoCloseable {
     private final ClientFactory factory;
     private final Set<String> reserved;
     private final List<McpClient> clients = new CopyOnWriteArrayList<>();
+    private final Map<String, McpClient> clientsByName = new java.util.concurrent.ConcurrentHashMap<>();
     private final List<McpTool> tools = new CopyOnWriteArrayList<>();
     private final List<ServerStatus> statuses = new CopyOnWriteArrayList<>();
     private final Thread hook = new Thread(this::close, "mcp-shutdown");
@@ -126,6 +127,7 @@ public final class McpManager implements AutoCloseable {
             return;
         }
         clients.add(result.client);
+        clientsByName.put(name, result.client);
         var timeout = Duration.ofSeconds(server.timeoutSeconds());
         var names = new ArrayList<String>();
         for (var remote : result.remote) {
@@ -138,8 +140,7 @@ public final class McpManager implements AutoCloseable {
             tools.add(new McpTool(toolName, result.client, remote, timeout));
             names.add(toolName);
         }
-        var stale = result.client.toolsStale() ? " (tool list changed)" : "";
-        statuses.add(new ServerStatus(name, true, "connected" + stale, names));
+        statuses.add(new ServerStatus(name, true, "connected", names));
     }
 
     /** {@code mcp__<server>__<tool>}, limited to letters, digits, {@code _} and {@code -}, and 64 characters. */
@@ -155,7 +156,12 @@ public final class McpManager implements AutoCloseable {
 
     /** One status for each configured server. */
     public List<ServerStatus> status() {
-        return List.copyOf(statuses);
+        return statuses.stream().map(status -> {
+            var client = clientsByName.get(status.name());
+            return status.connected() && client != null && client.toolsStale()
+                    ? new ServerStatus(status.name(), true, "connected (tool list changed)", status.tools())
+                    : status;
+        }).toList();
     }
 
     @Override

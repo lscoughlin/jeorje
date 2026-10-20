@@ -19,13 +19,13 @@ The agent loop handles `ASK`. The tools that Jeorje runs itself (`task_done`, `s
 
 ## Rules
 
-Rules are in the config (`permissions.rules`). See [configuration.md](configuration.md). A rule has a tool name (or `*`), an optional pattern, and a decision. The pattern is a regular expression when it starts with `re:`. It is a glob when it has `*` or `?`. Otherwise it is a prefix. For `webfetch`, the pattern is a domain. The subject of a rule depends on the tool:
+Rules are in the config (`permissions.rules`). See [configuration.md](configuration.md). A rule has a tool name, an optional pattern, and a decision. The tool name is exact, `*`, or a prefix that ends in `*` (for example `mcp__github__*`). The pattern is a regular expression when it starts with `re:`. It is a glob when it has `*` or `?`. Otherwise it is a prefix. For `webfetch`, the pattern is a domain. The subject of a rule depends on the tool:
 
 - For a file tool, the subjects are the path as given and the resolved path.
 - For `bash`, the subject is each part of the command.
 - For `webfetch`, the subject is the host of the URL.
 
-The most specific rule wins. A rule for a named tool is more specific than a rule for `*`, and a rule with a pattern is more specific than a rule without one. If two rules match with the same specificity, `DENY` wins over `ASK`, and `ASK` wins over `ALLOW`. A rule that the user saves for the session ("always allow") counts like a config rule.
+The most specific rule wins. A rule for an exact tool name is more specific than a rule for a tool prefix, a rule for a tool prefix is more specific than a rule for `*`, and a rule with a pattern is more specific than a rule without one. If two rules match with the same specificity, `DENY` wins over `ASK`, and `ASK` wins over `ALLOW`. A rule that the user saves for the session ("always allow") counts like a config rule.
 
 Default rules:
 
@@ -38,15 +38,25 @@ Default rules:
 | `spawn_agent`, `agent_message`, `agent_ask`, `agent_answer`, `story_read`, `skill` | `ALLOW` |
 | `worktree_merge`, `worktree_discard` | `ASK` |
 | `todo`, `ask_user`, `advisor`, `plan_submit` | `ALLOW` |
-| Any other tool, including extension tools | `ASK` |
+| Any other tool, including extension tools and MCP tools | `ASK` |
 
 The user can choose "always allow" in a prompt. Jeorje then saves a rule for the session. The user can also save the rule in the project config (`${CWD}/.jeorje/config.yaml`). For a project that the user does not trust, Jeorje ignores `allow` rules, `permissions.extraDirectories`, and `permissions.webfetch.allow` in the project config. See [instructions-and-skills.md](instructions-and-skills.md#trust).
 
 ## Plan mode and workers
 
-- **Plan mode.** The interactive session puts a gate around the policy. In plan mode the gate allows only these tools: `read`, `ls`, `glob`, `grep`, `recall`, `webfetch`, `skill`, `ask_user`, `advisor`, `todo`, `plan_submit`, and `bash`. It denies all other tools. `bash` follows the normal rules of the policy, as outside plan mode. The gate allows `plan_submit` only in plan mode. The gate comes before the normal rules, so `--yolo` does not change the tool set: plan mode never gets write tools. The policy class has a plan mode of its own (the builder option `planMode`, and `narrow` with the flag `readOnly`). In that mode the allowed tools also include `diff` and `agent_status`, and `plan_submit` is allowed only for a path inside the plan directory. `plan_submit` writes only inside the plan directory.
+- **Plan mode.** The interactive session puts a gate around the policy. In plan mode the gate allows only these tools (MCP tools are not in the list): `read`, `ls`, `glob`, `grep`, `recall`, `webfetch`, `skill`, `ask_user`, `advisor`, `todo`, `plan_submit`, and `bash`. It denies all other tools. `bash` follows the normal rules of the policy, as outside plan mode. The gate allows `plan_submit` only in plan mode. The gate comes before the normal rules, so `--yolo` does not change the tool set: plan mode never gets write tools. The policy class has a plan mode of its own (the builder option `planMode`, and `narrow` with the flag `readOnly`). In that mode the allowed tools also include `diff` and `agent_status`, and `plan_submit` is allowed only for a path inside the plan directory. `plan_submit` writes only inside the plan directory.
 - **Worktrees.** A subagent in a worktree gets a policy that has the same rules, extra directories, and read-only directories as the policy of its parent, but the worktree is its workspace. The main working tree is therefore outside the sandbox of the subagent, so a read or write of a path in the main working tree by absolute path is `DENY`. The subagent gets the work back only through the merge back. The worktree directories are below `.jeorje/worktrees` in the workspace of the parent. The git calls that create and remove worktrees are internal actions, not tool calls. With `worktree.mergeBack: auto` (default), the sync and the merge back at completion are internal actions with no prompt. Manual merges (`worktree_merge`, `/merge`) and discards are `ASK`.
 - **Workers.** A worker of `/implement` gets the policy of the orchestrator, never wider. In the interactive session, an `ASK` of a subagent or worker becomes a question to the user. With `--yolo`, workers run with no checks.
+
+## MCP tools
+
+- **Default.** An MCP tool (`mcp__<server>__<tool>`) gets `ASK`. A rule with a tool prefix, for example `mcp__github__*`, sets the decision for a whole server. A rule for one exact tool name is more specific, so it wins.
+- **No path check.** The policy does not check the input fields of an MCP tool as local paths. The remote server decides what a `path` field means. The only checks are the rules. The user can therefore not limit the arguments of an MCP tool. The user can only allow, ask, or deny the whole tool. A rule pattern has no effect on an MCP tool.
+- **Plan mode and read-only agents.** Plan mode denies all MCP tools. A subagent that is read-only denies them too. A subagent never gets more access than its parent.
+- **Trust.** The key `mcp` in the project config of an untrusted project is ignored. A `stdio` server runs code on this computer, so only a trusted config can start it.
+- **Environment.** A `stdio` server gets the minimal environment (see "Shell commands"). Only the variables that the config names in `envFrom`, and the values in `env`, are added. API keys of Jeorje are not passed unless the config names them.
+- **Network.** An `http` server is checked by the network policy before each request. A domain on the deny list, an address that the policy blocks, and a URL that is not `http` or `https` stop the connection. This includes loopback and private addresses, so a server on the same computer must use `stdio`. A new domain is not a reason to stop, because the config names the URL. The values of `headers` can use `${NAME}`. Jeorje replaces `${NAME}` with the environment variable when it connects. A missing variable is an error.
+- **Secrets.** `jeorje config` and the config tree hide the values of `env` and `headers`. Tool output is cleaned by the secret scrubber like the output of all tools.
 
 ## Path sandbox
 
