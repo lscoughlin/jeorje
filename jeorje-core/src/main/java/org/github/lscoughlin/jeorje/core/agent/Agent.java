@@ -654,6 +654,8 @@ public final class Agent implements AutoCloseable {
     /** The pinned items of the user, and then the latest todo list. The list is read from the history of the agent. */
     private synchronized List<String> pinnedItems(List<Message> current) {
         var items = new ArrayList<>(pinned);
+        var decisions = Decisions.build(completed);
+        if (decisions != null) items.add(decisions);
         var todo = latestTodo(current);
         if (todo != null) items.add(todo);
         return List.copyOf(items);
