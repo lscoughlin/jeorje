@@ -163,7 +163,7 @@ class AgentCompactionTest {
         rig.agent.withCompactor(compactor(5_000, 1, 0, 6));
         for (var t = 1; t <= 4; t++) rig.agent.runTurn("turn " + t);
         var read = rig.agent.workingEntries().stream()
-            .filter(e -> "read".equals(e.chunk().toolName()) && e.chunk().part() > 0).findFirst().orElseThrow();
+            .filter(e -> "read".equals(e.chunk().toolName()) && "tool_result".equals(e.chunk().kind())).findFirst().orElseThrow();
         assertEquals(3, read.level(), read.render());
         assertTrue(read.render().contains("files src/Kept.java"), read.render());
     }
@@ -176,7 +176,7 @@ class AgentCompactionTest {
         rig.agent.withCompactor(compactor(5_000, 1, 0, 1));
         for (var t = 1; t <= 4; t++) rig.agent.runTurn("turn " + t);
         var read = rig.agent.workingEntries().stream()
-            .filter(e -> "read".equals(e.chunk().toolName()) && e.chunk().part() > 0).findFirst().orElseThrow();
+            .filter(e -> "read".equals(e.chunk().toolName()) && "tool_result".equals(e.chunk().kind())).findFirst().orElseThrow();
         assertEquals(3, read.level());
         assertFalse(read.render().contains("files "), read.render());
     }
@@ -188,10 +188,13 @@ class AgentCompactionTest {
         rig.agent.withCompactor(compactor(1_000_000, 1, 12, 6));
         for (var t = 1; t <= 4; t++) rig.agent.runTurn("turn " + t);
         var entries = rig.agent.workingEntries();
-        assertEquals(3, entries.size());
-        assertEquals(Protection.PROTECTED, entries.get(0).protection(), "the first user instruction");
-        assertEquals(Protection.CAREFUL, entries.get(1).protection(), "later turns are not instructions");
-        assertEquals(Protection.CAREFUL, entries.get(2).protection());
+        assertEquals(6, entries.size());
+        for (var e : entries) {
+            var expected = e.chunk().kind().equals("user") ? Protection.PROTECTED : Protection.CAREFUL;
+            assertEquals(expected, e.protection(), e.chunk().chunkId() + " " + e.chunk().kind());
+        }
+        assertEquals(3, entries.stream().filter(e -> e.protection() == Protection.PROTECTED).count(),
+            "the user text of each turn is an instruction");
     }
 
     @Test

@@ -17,13 +17,19 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * The manifest of a session: agent tree, config snapshot, pinned items, pruning table, and run state.
  * {@code runState} is the life-cycle word of the session. {@code implementState} is the JSON state of the
- * {@code /implement} run, or null when no run exists.
+ * {@code /implement} run, or null when no run exists. {@code chunkFormat} is the format that
+ * {@code TurnChunker} uses for the session. A manifest with no value (an older session) has format 1.
  * {@link #write(Path)} replaces the file atomically.
  */
 public record SessionManifest(String sessionId, Instant createdAt, Instant updatedAt, List<AgentNode> agents,
                               JsonNode config, List<PinnedItem> pinned, List<PruneEntry> pruning,
-                              String runState, int lastTurn, JsonNode implementState) {
+                              String runState, int lastTurn, JsonNode implementState, int chunkFormat) {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
+
+    /** The chunk format of sessions that have no {@code chunkFormat} value. */
+    public static final int LEGACY_CHUNK_FORMAT = 1;
+    /** The chunk format of new sessions. */
+    public static final int CURRENT_CHUNK_FORMAT = 2;
 
     /** One agent in the tree. {@code parentId} is null for the root agent. */
     public record AgentNode(String id, String parentId, String name) {}
@@ -43,6 +49,14 @@ public record SessionManifest(String sessionId, Instant createdAt, Instant updat
         }
     }
 
+    /** A manifest with the legacy chunk format. */
+    public SessionManifest(String sessionId, Instant createdAt, Instant updatedAt, List<AgentNode> agents,
+                           JsonNode config, List<PinnedItem> pinned, List<PruneEntry> pruning,
+                           String runState, int lastTurn, JsonNode implementState) {
+        this(sessionId, createdAt, updatedAt, agents, config, pinned, pruning, runState, lastTurn, implementState,
+            LEGACY_CHUNK_FORMAT);
+    }
+
     /** A manifest with no {@code /implement} state. */
     public SessionManifest(String sessionId, Instant createdAt, Instant updatedAt, List<AgentNode> agents,
                            JsonNode config, List<PinnedItem> pinned, List<PruneEntry> pruning,
@@ -57,32 +71,34 @@ public record SessionManifest(String sessionId, Instant createdAt, Instant updat
         agents = agents == null ? List.of() : List.copyOf(agents);
         pinned = pinned == null ? List.of() : List.copyOf(pinned);
         pruning = pruning == null ? List.of() : List.copyOf(pruning);
+        if (chunkFormat <= 0) chunkFormat = LEGACY_CHUNK_FORMAT;
     }
 
     /** A new manifest with no agents, pins, or pruning. */
     public static SessionManifest create(String sessionId, Instant now, JsonNode config) {
-        return new SessionManifest(sessionId, now, now, List.of(), config, List.of(), List.of(), "idle", 0);
+        return new SessionManifest(sessionId, now, now, List.of(), config, List.of(), List.of(), "idle", 0, null,
+            CURRENT_CHUNK_FORMAT);
     }
 
     public SessionManifest withUpdate(Instant now, int turn, String state) {
-        return new SessionManifest(sessionId, createdAt, now, agents, config, pinned, pruning, state, turn, implementState);
+        return new SessionManifest(sessionId, createdAt, now, agents, config, pinned, pruning, state, turn, implementState, chunkFormat);
     }
 
     public SessionManifest withAgents(List<AgentNode> value) {
-        return new SessionManifest(sessionId, createdAt, updatedAt, value, config, pinned, pruning, runState, lastTurn, implementState);
+        return new SessionManifest(sessionId, createdAt, updatedAt, value, config, pinned, pruning, runState, lastTurn, implementState, chunkFormat);
     }
 
     public SessionManifest withPinned(List<PinnedItem> value) {
-        return new SessionManifest(sessionId, createdAt, updatedAt, agents, config, value, pruning, runState, lastTurn, implementState);
+        return new SessionManifest(sessionId, createdAt, updatedAt, agents, config, value, pruning, runState, lastTurn, implementState, chunkFormat);
     }
 
     public SessionManifest withPruning(List<PruneEntry> value) {
-        return new SessionManifest(sessionId, createdAt, updatedAt, agents, config, pinned, value, runState, lastTurn, implementState);
+        return new SessionManifest(sessionId, createdAt, updatedAt, agents, config, pinned, value, runState, lastTurn, implementState, chunkFormat);
     }
 
     public SessionManifest withImplementState(JsonNode value) {
         return new SessionManifest(sessionId, createdAt, updatedAt, agents, config, pinned, pruning, runState,
-            lastTurn, value);
+            lastTurn, value, chunkFormat);
     }
 
     /** Writes a temporary file, forces it to disk, and moves it over the target atomically. */
@@ -104,6 +120,11 @@ public record SessionManifest(String sessionId, Instant createdAt, Instant updat
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /** Parses a manifest from its JSON text. */
+    public static SessionManifest readFrom(String json) {
+        return MAPPER.readValue(json, SessionManifest.class);
     }
 
     public static SessionManifest read(Path file) {

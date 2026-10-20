@@ -94,7 +94,7 @@ public final class Agent implements AutoCloseable {
     private final Consumer<AgentEvent> events;
     private final Clock clock;
     private final ContextBuilder contextBuilder;
-    private final TurnChunker chunker;
+    private volatile TurnChunker chunker;
     private final AgentState state = new AgentState();
     private final BlockingQueue<AgentInput> inbox = new LinkedBlockingQueue<>();
     private final Map<String, CompletableFuture<Boolean>> confirmations = new ConcurrentHashMap<>();
@@ -235,6 +235,12 @@ public final class Agent implements AutoCloseable {
             synchronized (this) {
                 completed.clear();
                 pinned.clear();
+                if (manifest != null) {
+                    chunker = TurnChunker.forFormat(settings.sessionId(), manifest.chunkFormat());
+                    if (manifest.chunkFormat() == SessionManifest.LEGACY_CHUNK_FORMAT) {
+                        log.atInfo().log(() -> "Session " + settings.sessionId() + " resumes with chunk format 1");
+                    }
+                }
                 var own = new ArrayList<TranscriptReader.TimedTurn>();
                 for (var timed : transcript) {
                     if (timed.turn().agent().equals(source)) own.add(timed);

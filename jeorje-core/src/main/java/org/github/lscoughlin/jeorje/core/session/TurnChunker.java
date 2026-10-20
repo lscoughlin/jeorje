@@ -15,34 +15,181 @@ import org.github.lscoughlin.jeorje.core.model.ToolUse;
 import org.github.lscoughlin.jeorje.core.model.Turn;
 
 /**
- * Converts a finished turn to chunks. A turn is one chunk by default. A tool result of more than
- * {@link #MAX_RESULT_CHARS} characters becomes separate chunks, split at paragraph or line boundaries
- * with 10% overlap. A {@code recall} call becomes a reference chunk: the query, the filters, and the
- * ids of the returned chunks, never the recalled text.
+ * Converts a finished turn to chunks. A tool result of more than {@link #MAX_RESULT_CHARS} characters becomes
+ * separate chunks, split at paragraph or line boundaries with 10% overlap. A {@code recall} call becomes a
+ * reference chunk: the query, the filters, and the ids of the returned chunks, never the recalled text.
+ *
+ * <p>Format 1 (legacy) writes the other parts of a turn as one chunk. Format 2 writes each user text and each
+ * {@code ask_user} question with its answer as a separate chunk of the kind {@code user}, and it splits the
+ * remaining text of a large turn into parts of at most {@code maxChars} characters. The format of a session
+ * is in its manifest, so that a resumed session builds the same chunk ids.
  */
 public final class TurnChunker {
     /** The size limit of a tool result before it is split. */
     public static final int MAX_RESULT_CHARS = 8_000;
     /** The name of the recall tool. */
     public static final String RECALL = "recall";
+    /** The name of the ask_user tool. */
+    public static final String ASK_USER = "ask_user";
 
+    private static final String ANSWER_PREFIX = "User answer: ";
     private static final Pattern CHUNK_ID = Pattern.compile("[A-Za-z0-9_-]+(?:[.-][A-Za-z0-9_-]+)*:\\d+\\.\\d+");
 
     private final String sessionId;
     private final int maxChars;
+    private final int format;
 
+    /** A chunker for the current chunk format. */
     public TurnChunker(String sessionId) {
         this(sessionId, MAX_RESULT_CHARS);
     }
 
     public TurnChunker(String sessionId, int maxChars) {
+        this(sessionId, maxChars, SessionManifest.CURRENT_CHUNK_FORMAT);
+    }
+
+    /** A chunker for the given chunk format (1 or 2). */
+    public static TurnChunker forFormat(String sessionId, int format) {
+        return new TurnChunker(sessionId, MAX_RESULT_CHARS, format);
+    }
+
+    public TurnChunker(String sessionId, int maxChars, int format) {
         this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
         if (maxChars < 10) throw new IllegalArgumentException("maxChars too small");
+        if (format != 1 && format != 2) throw new IllegalArgumentException("unknown chunk format: " + format);
         this.maxChars = maxChars;
+        this.format = format;
     }
+
+    /** The chunk format of this chunker. */
+    public int format() { return format; }
 
     /** Chunks one turn. Parts are numbered from 0 in the order of the returned list. */
     public List<Chunk> chunk(Turn turn, Instant timestamp) {
+        return format == 1 ? chunkV1(turn, timestamp) : chunkV2(turn, timestamp);
+    }
+
+    /** One part of the main text of a turn in format 2. */
+    private record Item(String kind, String tool, String text) {}
+
+    private List<Chunk> chunkV2(Turn turn, Instant timestamp) {
+        var toolNames = new java.util.HashMap<String, String>();
+        var toolUses = new java.util.HashMap<String, ToolUse>();
+        for (var m : turn.messages()) {
+            for (var c : m.content()) {
+                if (c instanceof ToolUse tu) {
+                    toolNames.put(tu.id(), tu.tool());
+                    toolUses.put(tu.id(), tu);
+                }
+            }
+        }
+        var users = new ArrayList<String>();
+        var asks = new ArrayList<String>();
+        var answered = new java.util.HashSet<String>();
+        var main = new ArrayList<Item>();
+        var recalls = new ArrayList<String>();
+        var large = new ArrayList<ToolResult>();
+        for (var m : turn.messages()) {
+            for (var c : m.content()) {
+                switch (c) {
+                    case Text t when m.role() == Role.USER -> users.add("USER: " + t.text());
+                    case Text t -> main.add(new Item("assistant", null, "ASSISTANT: " + t.text()));
+                    case ToolUse tu when RECALL.equals(tu.tool()) || ASK_USER.equals(tu.tool()) -> { }
+                    case ToolUse tu -> main.add(new Item("tool_call", tu.tool(),
+                        "TOOL_CALL " + tu.tool() + " " + (tu.input() == null ? "{}" : tu.input())));
+                    case ToolResult tr when RECALL.equals(toolNames.get(tr.toolUseId())) ->
+                        recalls.add(recallReference(toolUses.get(tr.toolUseId()), tr));
+                    case ToolResult tr when ASK_USER.equals(toolNames.get(tr.toolUseId())) -> {
+                        answered.add(tr.toolUseId());
+                        asks.add(askText(toolUses.get(tr.toolUseId()), tr));
+                    }
+                    case ToolResult tr when tr.output().length() > maxChars -> large.add(tr);
+                    case ToolResult tr -> {
+                        var name = toolNames.get(tr.toolUseId());
+                        main.add(new Item("tool_result", name,
+                            "TOOL_RESULT " + (name == null ? "" : name + " ") + tr.output()));
+                    }
+                }
+            }
+        }
+        for (var e : toolUses.entrySet()) {
+            if (ASK_USER.equals(e.getValue().tool()) && !answered.contains(e.getKey())) {
+                asks.add(askText(e.getValue(), null));
+            }
+        }
+        var out = new ArrayList<Chunk>();
+        var agent = turn.agent().value();
+        for (var text : users) out.add(make(agent, turn.number(), out.size(), timestamp, "user", null, text));
+        for (var text : asks) out.add(make(agent, turn.number(), out.size(), timestamp, "user", ASK_USER, text));
+        for (var group : groupItems(main)) {
+            var kinds = new LinkedHashSet<String>();
+            var tools = new LinkedHashSet<String>();
+            var text = new StringBuilder();
+            for (var item : group) {
+                kinds.add(item.kind());
+                if (item.tool() != null) tools.add(item.tool());
+                line(text, item.text());
+            }
+            var kind = kinds.size() == 1 ? kinds.iterator().next() : "mixed";
+            var tool = tools.size() == 1 ? tools.iterator().next() : null;
+            out.add(make(agent, turn.number(), out.size(), timestamp, kind, tool, text.toString().stripTrailing()));
+        }
+        for (var ref : recalls) {
+            out.add(make(agent, turn.number(), out.size(), timestamp, "tool_call", RECALL, ref));
+        }
+        for (var tr : large) {
+            var name = toolNames.get(tr.toolUseId());
+            for (var piece : split(tr.output())) {
+                out.add(make(agent, turn.number(), out.size(), timestamp, "tool_result", name, piece));
+            }
+        }
+        return out;
+    }
+
+    /** Groups the items of the main text. A group has at most {@code maxChars} characters. A tool result is never cut here, because it has at most
+     * {@code maxChars} characters already. A longer text item is split. */
+    private List<List<Item>> groupItems(List<Item> items) {
+        var groups = new ArrayList<List<Item>>();
+        var cur = new ArrayList<Item>();
+        var size = 0;
+        for (var item : items) {
+            if (item.text().length() > maxChars && !"tool_result".equals(item.kind())) {
+                if (!cur.isEmpty()) groups.add(cur);
+                cur = new ArrayList<>();
+                size = 0;
+                for (var piece : split(item.text())) groups.add(List.of(new Item(item.kind(), item.tool(), piece)));
+                continue;
+            }
+            var len = item.text().length() + 1;
+            if (!cur.isEmpty() && size + len > maxChars) {
+                groups.add(cur);
+                cur = new ArrayList<>();
+                size = 0;
+            }
+            cur.add(item);
+            size += len;
+        }
+        if (!cur.isEmpty()) groups.add(cur);
+        return groups;
+    }
+
+    /** The text of an {@code ask_user} chunk: the question, the choices, and the answer. */
+    private static String askText(ToolUse use, ToolResult result) {
+        var sb = new StringBuilder();
+        var input = use == null ? null : use.input();
+        sb.append("QUESTION ").append(input != null && input.has("question") ? input.get("question").asString() : "");
+        if (input != null && input.has("choices") && input.get("choices").isArray() && !input.get("choices").isEmpty()) {
+            var choices = new ArrayList<String>();
+            for (var choice : input.get("choices")) choices.add(choice.asString());
+            sb.append("\nCHOICES ").append(String.join(" | ", choices));
+        }
+        if (result == null) return sb.append("\nANSWER (none)").toString();
+        var output = result.output();
+        if (!result.error() && output.startsWith(ANSWER_PREFIX)) output = output.substring(ANSWER_PREFIX.length());
+        return sb.append(result.error() ? "\nERROR " : "\nANSWER ").append(output).toString();
+    }
+
+    private List<Chunk> chunkV1(Turn turn, Instant timestamp) {
         var toolNames = new java.util.HashMap<String, String>();
         var toolUses = new java.util.HashMap<String, ToolUse>();
         for (var m : turn.messages()) {

@@ -112,4 +112,22 @@ class AgentRestoreTest {
         assertEquals(1, restored.agent.turns().size());
         assertEquals("a1", restored.agent.turns().getFirst().agent().value());
     }
+
+    @Test
+    void aLegacySessionKeepsTheOldChunkIds() {
+        var legacy = new SessionManifest("s1", CLOCK.instant(), CLOCK.instant(), List.of(), null, List.of(), List.of(),
+            "idle", 0);
+        assertEquals(1, legacy.chunkFormat());
+        var rig = new Rig(new Scripted(text("ok")), policy(Decision.ALLOW), settings(dir), big());
+        rig.agent.restore(legacy, List.of());
+        rig.agent.runTurn("hello");
+        assertEquals(List.of("a1:1.0"), rig.store.chunks.stream().map(c -> c.chunkId()).toList());
+        assertEquals("mixed", rig.store.chunks.getFirst().kind());
+
+        var fresh = new Rig(new Scripted(text("ok")), policy(Decision.ALLOW), settings(dir), big());
+        fresh.agent.restore(SessionManifest.create("s1", CLOCK.instant(), null), List.of());
+        fresh.agent.runTurn("hello");
+        assertEquals(List.of("a1:1.0", "a1:1.1"), fresh.store.chunks.stream().map(c -> c.chunkId()).toList());
+        assertEquals("user", fresh.store.chunks.getFirst().kind());
+    }
 }
