@@ -30,6 +30,7 @@
     <slf4j.version>2.0.17</slf4j.version>
     <logback.version>1.5.18</logback.version>
     <jline.version>4.4.8</jline.version>
+    <jmdns.version>3.6.3</jmdns.version>
     <picocli.version>4.7.7</picocli.version>
     <lucene.version>10.5.2</lucene.version>
     <onnxruntime.version>1.31.0</onnxruntime.version>
@@ -105,6 +106,11 @@
         <groupId>org.jline</groupId>
         <artifactId>jline</artifactId>
         <version>${jline.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jmdns</groupId>
+        <artifactId>jmdns</artifactId>
+        <version>${jmdns.version}</version>
       </dependency>
       <dependency>
         <groupId>info.picocli</groupId>

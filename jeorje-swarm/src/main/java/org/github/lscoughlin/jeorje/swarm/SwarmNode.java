@@ -149,7 +149,7 @@ public final class SwarmNode implements AutoCloseable {
     private final Transport transport;
     private final Clock clock;
     private final SwarmHandlers handlers;
-    private final LocalDiscovery discovery;
+    private final PeerDiscovery discovery;
     private final Membership membership;
     private final String selfId;
     private final String selfAddress;
@@ -175,7 +175,7 @@ public final class SwarmNode implements AutoCloseable {
     private final Map<Long, Relay> relays = new HashMap<>();
 
     public SwarmNode(SwarmConfig config, PeerRecord self, Transport transport, Clock clock,
-            SwarmHandlers handlers, LocalDiscovery discovery) {
+            SwarmHandlers handlers, PeerDiscovery discovery) {
         this.config = config;
         this.transport = transport;
         this.clock = clock;
@@ -197,7 +197,11 @@ public final class SwarmNode implements AutoCloseable {
         bootstrap.addAll(config.wka());
         transport.onMessage(this::receive);
         if (discovery != null) {
-            discovery.announce(membership.self());
+            try {
+                discovery.announce(membership.self());
+            } catch (RuntimeException e) {
+                log.atWarn().log(() -> "cannot announce this peer: " + e.getMessage());
+            }
         }
         owner.scheduleWithFixedDelay(this::round, 0, config.gossipIntervalMs(), TimeUnit.MILLISECONDS);
         return this;

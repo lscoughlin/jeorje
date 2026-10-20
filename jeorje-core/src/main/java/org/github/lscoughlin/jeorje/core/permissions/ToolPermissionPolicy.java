@@ -182,12 +182,6 @@ public final class ToolPermissionPolicy implements PermissionPolicy {
     /** Returns DENY for a forbidden action in plan mode, or null if plan mode lets it continue. */
     private Decision planDecision(String tool, JsonNode input) {
         if (!PLAN_TOOLS.contains(tool)) return Decision.DENY;
-        if (tool.equals("bash")) {
-            for (var part : ShellCommands.split(text(input, "command"))) {
-                if (!ShellCommands.isReadOnly(part)) return Decision.DENY;
-            }
-            return null;
-        }
         if (tool.equals("plan_submit")) {
             var path = firstPath(input);
             if (planDirectory == null || path == null) return Decision.DENY;

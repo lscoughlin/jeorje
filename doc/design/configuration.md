@@ -107,7 +107,7 @@ swarm:
   wka: []                            # list of host:port
   token: ""                          # prefer JEORJE_SWARM_TOKEN
   gossipIntervalMs: 1000
-  discovery: false                   # local discovery files in ${HOME}/.jeorje/peers/
+  discovery: false                   # zeroconf (mDNS) discovery of peers on the network
   tls:
     keyStore: ""                     # PKCS12 key store that all peers share. Empty means no TLS.
     passwordEnv: ""                  # name of the environment variable with the key store password
@@ -365,7 +365,6 @@ ${HOME}/.jeorje/                  # user directory
   trust.yaml                      # trusted projects, written by /trust
   history                         # input history of the chat screen
   peer-id                         # PeerId of this instance
-  peers/                          # local discovery files
   logs/jeorje.log
 
 ${CWD}/plan/                         # plans (the default plan.dir, outside .jeorje)

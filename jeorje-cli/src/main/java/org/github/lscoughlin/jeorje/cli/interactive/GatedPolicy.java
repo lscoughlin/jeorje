@@ -43,13 +43,7 @@ public final class GatedPolicy implements PermissionPolicy {
         if (plan != null) {
             var tool = action.tool();
             if (tool.equals(PlanMode.PLAN_SUBMIT)) return plan.active() ? Decision.ALLOW : Decision.DENY;
-            if (plan.active()) {
-                if (!PlanMode.allows(tool)) return Decision.DENY;
-                if (tool.equals("bash") && !PlanMode.bashAllowed(action.input() == null ? ""
-                        : action.input().path("command").asString(""))) {
-                    return Decision.DENY;
-                }
-            }
+            if (plan.active() && !PlanMode.allows(tool)) return Decision.DENY;
         }
         var decision = base.check(action);
         if (decision == Decision.ASK && prompter != null && !INTERNAL.contains(action.tool())) {

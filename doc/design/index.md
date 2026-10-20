@@ -36,7 +36,7 @@ Some design choices have alternatives. [architecture.md](architecture.md#design-
 | [context-index-design.md](context-index-design.md) | Lucene schema, query modes, embeddings |
 | [tools.md](tools.md) | Tool interface, registry, built-in tools |
 | [permissions-and-safety.md](permissions-and-safety.md) | Permission policy, sandbox, audit log |
-| [swarm.md](swarm.md) | Membership, gossip, messages, delegation, token, TLS, local discovery |
+| [swarm.md](swarm.md) | Membership, gossip, messages, delegation, token, TLS, zeroconf discovery |
 | [instructions-and-skills.md](instructions-and-skills.md) | `AGENTS.md` instructions, `.agents/` skills, custom commands, subagent definitions |
 | [subagents.md](subagents.md) | Spawn, life cycle, foreground switching |
 | [planning.md](planning.md) | `/plan` mode, plan files with stories and tasks, `/implement` with story-scoped workers, headless runs |

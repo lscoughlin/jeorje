@@ -33,7 +33,8 @@ import org.github.lscoughlin.jeorje.core.subagent.SubagentEvent;
 import org.github.lscoughlin.jeorje.core.subagent.SubagentRuntime;
 import org.github.lscoughlin.jeorje.swarm.DelegateEvent;
 import org.github.lscoughlin.jeorje.swarm.Messages;
-import org.github.lscoughlin.jeorje.swarm.LocalDiscovery;
+import org.github.lscoughlin.jeorje.swarm.PeerDiscovery;
+import org.github.lscoughlin.jeorje.swarm.ZeroconfDiscovery;
 import org.github.lscoughlin.jeorje.swarm.PeerIdStore;
 import org.github.lscoughlin.jeorje.swarm.PeerRecord;
 import org.github.lscoughlin.jeorje.swarm.PeerState;
@@ -78,7 +79,7 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     private final AtomicInteger hostedCounter = new AtomicInteger();
     private volatile List<String> capabilities = List.of();
     private volatile SwarmNode node;
-    private volatile LocalDiscovery discovery;
+    private volatile PeerDiscovery discovery;
     private volatile SubagentRuntime runtime;
     private volatile PermissionPolicy hostPolicy = action -> PermissionPolicy.Decision.ASK;
     private volatile Consumer<AgentInput> mainInput = input -> { };
@@ -115,7 +116,7 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
 
     /**
      * Makes the bridge with a TCP transport. The key {@code swarm.tls} wraps the transport in TLS. The key
-     * {@code swarm.discovery} writes and reads the discovery files in {@code ${HOME}/.jeorje/peers/}.
+     * {@code swarm.discovery} turns on zeroconf (mDNS) discovery. If zeroconf cannot start, the swarm runs without it.
      *
      * @param environment the environment variables, for the password of the TLS key store
      */
@@ -126,8 +127,7 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         var base = SwarmConfig.defaults().withBind(cfg.bind()).withWka(cfg.wka()).withToken(cfg.token())
                 .withGossipIntervalMs(cfg.gossipIntervalMs());
         var stateDir = home.resolve(".jeorje");
-        LocalDiscovery discovery = cfg.discovery() ? new LocalDiscovery(LocalDiscovery.defaultDirectory(stateDir))
-                : null;
+        var discovery = cfg.discovery() ? zeroconf() : null;
         var savedId = PeerIdStore.loadOrCreate(stateDir);
         // Another instance of the same user can be live and use the saved id. This instance takes its own id then.
         var peerId = discovery != null && discovery.peers("").stream().anyMatch(e -> e.peerId().equals(savedId))
@@ -147,6 +147,18 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         var record = PeerRecord.of(peerId, tcp.address(), name);
         return new SwarmBridge(base, tcp, record, Clock.systemUTC(), historyRule(config), notice, onChange)
                 .withDiscovery(discovery);
+    }
+
+    /** Starts zeroconf discovery and waits a short time for the first answers. Returns null on failure. */
+    private static ZeroconfDiscovery zeroconf() {
+        try {
+            var found = new ZeroconfDiscovery();
+            found.settle(500);
+            return found;
+        } catch (RuntimeException e) {
+            log.atWarn().log(() -> "Zeroconf discovery is not available: " + e.getMessage());
+            return null;
+        }
     }
 
     /** The TLS context of the config, or null when {@code swarm.tls.keyStore} is empty. */
@@ -170,8 +182,8 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         }
     }
 
-    /** Turns on local discovery. Call it before {@link #start}. */
-    public SwarmBridge withDiscovery(LocalDiscovery value) {
+    /** Turns on discovery. Call it before {@link #start}. */
+    public SwarmBridge withDiscovery(PeerDiscovery value) {
         this.discovery = value;
         return this;
     }

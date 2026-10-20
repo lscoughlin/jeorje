@@ -37,8 +37,8 @@ class GatedPolicyTest {
         assertEquals(Decision.DENY, policy.check(use("spawn_agent", null)));
         assertEquals(Decision.ALLOW, policy.check(use("read", null)));
         assertEquals(Decision.ALLOW, policy.check(use("plan_submit", null)));
-        assertEquals(Decision.ALLOW, policy.check(use("bash", "ls -la")));
-        assertEquals(Decision.DENY, policy.check(use("bash", "rm -rf build")));
+        assertEquals(Decision.ALLOW, policy.check(use("bash", "ls -la")), "the base policy decides bash");
+        assertEquals(Decision.ALLOW, policy.check(use("bash", "mvn test")));
         plan.done();
         assertEquals(Decision.ALLOW, policy.check(use("write", null)));
     }

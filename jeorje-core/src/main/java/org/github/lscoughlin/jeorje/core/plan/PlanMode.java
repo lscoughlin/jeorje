@@ -7,16 +7,15 @@ import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import org.github.lscoughlin.jeorje.core.permissions.ShellCommands;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The plan mode service. It holds the mode state, the tool set of the mode, the read-only check for
- * {@code bash}, and the plan-mode section of the system prompt.
+ * The plan mode service. It holds the mode state, the tool set of the mode, and the plan-mode section
+ * of the system prompt.
  *
  * <p>Plan mode does not depend on any permission mode. The option {@code --yolo} does not change the
- * tool set or the {@code bash} check.
+ * tool set. {@code bash} is in the tool set. The normal permission rules decide each {@code bash} call.
  */
 public final class PlanMode {
     private static final Logger log = LoggerFactory.getLogger(PlanMode.class);
@@ -24,7 +23,7 @@ public final class PlanMode {
     /** The name of the tool that writes the plan. */
     public static final String PLAN_SUBMIT = "plan_submit";
 
-    /** The tools of plan mode. {@code bash} is in the set, but only for read-only commands. */
+    /** The tools of plan mode. */
     public static final Set<String> TOOLS = Set.of(
             "read", "ls", "glob", "grep", "recall", "webfetch", "skill", "ask_user", "advisor", "todo",
             PLAN_SUBMIT, "bash");
@@ -45,7 +44,8 @@ public final class PlanMode {
         6. Two stories that can run at the same time must not touch the same path. Add a dependency or merge the stories.
         7. If an advisor model is set, call the advisor tool on your draft before you call plan_submit.
         8. Call plan_submit to write the plan. If it returns errors, correct the plan and call it again.
-        You can use bash only for read-only commands. The tools write, edit, and spawn_agent are not available.
+        You can use bash to explore: to run the build, the tests, and other commands that show how the project works. Do not use bash to change the workspace. Do not create, edit, or delete project files with it.
+        The tools write, edit, and spawn_agent are not available.
         After plan_submit, the user reviews the plan. Change the plan when the user asks. Call plan_submit again to replace it.""";
 
     private volatile boolean active;
@@ -129,16 +129,6 @@ public final class PlanMode {
 
     /** The tools of plan mode in a stable order. */
     public static List<String> toolNames() { return TOOLS.stream().sorted().toList(); }
-
-    /**
-     * True if every part of a shell command is on the read-only allow list. The result does not depend
-     * on the permission mode.
-     */
-    public static boolean bashAllowed(String command) {
-        if (command == null || command.isBlank()) return false;
-        var parts = ShellCommands.split(command);
-        return !parts.isEmpty() && parts.stream().allMatch(ShellCommands::isReadOnly);
-    }
 
     /** The plan-mode section, with the goal if there is one. */
     public String promptSection() {

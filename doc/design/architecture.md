@@ -14,7 +14,7 @@ Jeorje is a multi-module Maven project. The base package is `org.github.lscoughl
 | `jeorje-core` | Domain model, ports, agent loop, compaction, config, sessions, subagent runtime, plan mode, plan parser and writer, `/implement` orchestrator, `WorktreeManager`, the loaders for `AGENTS.md` and `.agents/`, and the `TextDiff` facade | Jackson 3 (JSON and YAML), SLF4J, java-diff-utils |
 | `jeorje-index` | Lucene `ContextStore` and ONNX MiniLM embedder | core, Lucene, ONNX Runtime |
 | `jeorje-tools` | Built-in `Tool` implementations (including the agent, story, plan, and worktree tools) and the registry | core |
-| `jeorje-swarm` | Gossip membership, TCP transport with an optional TLS context, token handshake, peer messages, local discovery files, remote delegation messages | core |
+| `jeorje-swarm` | Gossip membership, TCP transport with an optional TLS context, token handshake, peer messages, zeroconf (mDNS) discovery, remote delegation messages | core, JmDNS |
 | `jeorje-llm` | `LlmClient` implementations. The first one uses the OpenAI-compatible Chat Completions API. The first target is OpenRouter. | core |
 | `jeorje-ui` | JLine terminal interface, file browser, editor, syntax highlighting, mouse and key handling | core, JLine |
 | `jeorje-testkit` | Test-scope stubs for each port. See [testing.md](testing.md). | core |

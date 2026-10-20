@@ -24,17 +24,8 @@ class PlanModeTest {
     }
 
     @Test
-    void bashIsLimitedToReadOnlyCommands() {
-        assertTrue(PlanMode.bashAllowed("ls -la"));
-        assertTrue(PlanMode.bashAllowed("git log --oneline | head -5"));
-        assertTrue(PlanMode.bashAllowed("grep -r foo src && cat README.md"));
-        assertFalse(PlanMode.bashAllowed("rm -rf x"));
-        assertFalse(PlanMode.bashAllowed("ls; touch f"));
-        assertFalse(PlanMode.bashAllowed("echo hi > f.txt"));
-        assertFalse(PlanMode.bashAllowed("git commit -m x"));
-        assertFalse(PlanMode.bashAllowed("mvn test"));
-        assertFalse(PlanMode.bashAllowed(" "));
-        assertFalse(PlanMode.bashAllowed(null));
+    void bashIsInTheToolSet() {
+        assertTrue(PlanMode.allows("bash"));
     }
 
     @Test

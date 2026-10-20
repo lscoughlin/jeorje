@@ -63,20 +63,12 @@ class PlanModeToolsTest {
     }
 
     @Test
-    void bashRunsOnlyReadOnlyCommands() {
+    void bashRunsEveryCommandThatTheRegistryReceives() {
         var registry = PlanModeTools.restrict(full());
         assertFalse(bash(registry, "{\"command\":\"ls -la\"}").error());
-        assertFalse(bash(registry, "{\"command\":\"git log --oneline | head -3\"}").error());
-        assertEquals(List.of("bash", "bash"), ran);
-        var refused = bash(registry, "{\"command\":\"rm -rf build\"}");
-        assertTrue(refused.error());
-        assertTrue(refused.output().contains("read-only"));
-        assertTrue(bash(registry, "{\"command\":\"ls; touch x\"}").error());
-        assertTrue(bash(registry, "{\"command\":\"cat a > b\"}").error());
-        assertTrue(bash(registry, "{\"command\":\"ls\",\"background\":true}").error());
-        assertTrue(bash(registry, "{}").error());
-        assertEquals(2, ran.size());
+        assertFalse(bash(registry, "{\"command\":\"mvn -q test\"}").error());
         assertFalse(bash(registry, "{\"operation\":\"poll\",\"id\":\"p1\"}").error());
+        assertEquals(List.of("bash", "bash", "bash"), ran);
     }
 
     @Test
@@ -85,7 +77,6 @@ class PlanModeToolsTest {
         var a = PlanModeTools.restrict(full());
         var b = PlanModeTools.restrict(full());
         assertEquals(a.names(), b.names());
-        assertTrue(bash(b, "{\"command\":\"rm file\"}").error());
         assertFalse(PlanMode.allows("write"));
     }
 }

@@ -316,30 +316,6 @@ class SwarmProcessTest {
     }
 
     @Test
-    void twoInstancesFindEachOtherByLocalDiscoveryWithNoWellKnownAddress() throws Exception {
-        var home = dir.resolve("home-shared");
-        var host = new Options("host-disc", home, "127.0.0.1:0", true, null, List.of(), Map.of());
-        var delegator = new Options("deleg-disc", home, "127.0.0.1:0", true, null, List.of(), Map.of());
-        var hostChat = stub(hostScript(FINISH_AT_ONCE));
-        var delegatorChat = stub(delegatorScript(host.name(), "wait", body -> Reply.text("relay done")));
-        launch(host, hostChat, "hold the line");
-        var peers = home.resolve(".jeorje").resolve("peers");
-        await(() -> {
-            try (var files = Files.isDirectory(peers) ? Files.list(peers) : java.util.stream.Stream.<Path>empty()) {
-                return files.anyMatch(f -> f.toString().endsWith(".json"));
-            } catch (IOException e) {
-                return false;
-            }
-        }, "the host writes its discovery file");
-        var process = launch(delegator, delegatorChat, "delegate the work");
-        assertTrue(process.waitFor(120, TimeUnit.SECONDS), "the delegator did not end: " + err(delegator.name()));
-        assertEquals(0, process.exitValue(), err(delegator.name()) + out(delegator.name()));
-        assertTrue(delegatorChat.requests.getLast().contains(RESULT), delegatorChat.requests.getLast());
-        assertTrue(Files.readString(peers.resolve(
-                Files.readString(home.resolve(".jeorje").resolve("peer-id")).strip() + ".json")).contains("127.0.0.1"));
-    }
-
-    @Test
     void aQuestionGoesFromTheDelegatorToTheRemoteSubagentAndTheAnswerComesBack() throws Exception {
         var port = freePort();
         var host = new Options("host-ask", dir.resolve("home-host"), "127.0.0.1:" + port, false, null, List.of(),

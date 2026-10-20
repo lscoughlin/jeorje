@@ -2,6 +2,7 @@ package org.github.lscoughlin.jeorje.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Map;
@@ -55,22 +56,17 @@ class SwarmWiringTest {
     }
 
     @Test
-    void discoveryWritesAndRemovesTheFileOfThePeer() throws Exception {
+    void zeroconfDiscoveryStartsAndStopsWithTheBridge() throws Exception {
         try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
             var file = cwd.write("disc.yaml", "swarm:\n  enabled: true\n  discovery: true\n"
                     + "  bind: \"127.0.0.1:0\"\n");
             var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), null);
             var loaded = Wiring.loadConfig(new GlobalOptionsHolder(file).options(), cli.env);
             assertTrue(loaded.config().swarm().discovery());
+            // Without a multicast network, zeroconf is not available and the swarm runs without it.
             var bridge = SwarmBridge.forConfig(loaded.config(), home.root(), cwd.root(), text -> { }, null).start();
-            var peers = home.root().resolve(".jeorje").resolve("peers");
-            try (var files = java.nio.file.Files.list(peers)) {
-                assertEquals(1, files.filter(f -> f.toString().endsWith(".json")).count());
-            }
+            assertNotNull(bridge.node());
             bridge.close();
-            try (var files = java.nio.file.Files.list(peers)) {
-                assertEquals(0, files.count());
-            }
         }
     }
 

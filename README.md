@@ -5,7 +5,7 @@ Jeorje is a coding agent written in Java, built to work in a swarm.
 ## Swarm
 
 - Jeorje instances discover each other with a gossip protocol (SWIM style, over TCP).
-- An instance can be given a well-known-address (WKA) list on startup (`--peer host:port`). Instances on one host can also find each other with discovery files (`swarm.discovery`).
+- An instance can be given a well-known-address (WKA) list on startup (`--peer host:port`). Instances can also find each other on the network with zeroconf (mDNS) discovery (`swarm.discovery`).
 - A shared token (`--swarm-token` or `JEORJE_SWARM_TOKEN`) protects the swarm. TLS is optional (`swarm.tls.keyStore`).
 - An agent can delegate a task to a subagent on a peer with `spawn_agent`.
 - Subagents spawned by an instance are first-class: you can switch into one, at which point it becomes the foreground chat and can be steered directly.
@@ -47,7 +47,7 @@ The full design is in [doc/design/index.md](doc/design/index.md).
 
 ## Planning and Implementation
 
-- `/plan <goal>` starts a read-only plan mode. The agent explores the project and writes a plan: a list of stories, each with tasks.
+- `/plan <goal>` starts plan mode. The agent cannot write or edit files. It explores the project, with `bash` under the normal permission rules, and writes a plan: a list of stories, each with tasks.
 - `/implement <plan>` runs a team of subagents. Each subagent implements one story and sees only that story in its context. The orchestrator checks each story with its verification command and an optional advisor review.
 
 [doc/design/planning.md](doc/design/planning.md) describes both commands.

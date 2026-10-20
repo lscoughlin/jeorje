@@ -128,13 +128,12 @@ class ShellNetworkSecretTest {
     }
 
     @Test
-    void planModeStaysReadOnlyEvenInYolo() {
+    void planModeKeepsWriteToolsOffEvenInYolo() {
         var plans = ws.resolve("plans");
         var p = builder().flags(false, true).planMode(true, plans).build();
         assertEquals(Decision.DENY, p.check(path("write", "a.txt")));
         assertEquals(Decision.DENY, p.check(use("worktree_merge", Map.of())));
-        assertEquals(Decision.DENY, p.check(bash("make")));
-        assertEquals(Decision.DENY, p.check(bash("ls && make")));
+        assertEquals(Decision.ALLOW, p.check(bash("make")), "bash follows the normal rules (ASK becomes ALLOW)");
         assertEquals(Decision.ALLOW, p.check(bash("ls")));
         assertEquals(Decision.ALLOW, p.check(path("read", "a.txt")));
         assertEquals(Decision.ALLOW, p.check(path("plan_submit", "plans/p.md")));
