@@ -170,6 +170,48 @@ When the agent loop sends `ConfirmationRequested`, the UI shows a box with the a
 
 The up and down keys move the mark, and `Enter` chooses the marked line. The agent waits for the answer. Prompts from several agents queue, and the box shows the first one. "Allow in the project" adds an `allow` rule for the tool to the project config. See [configuration.md](configuration.md). See [permissions-and-safety.md](permissions-and-safety.md). The same box asks the trust question and the approval of a plan.
 
+## Forms
+
+When an agent calls `ask_user`, the UI shows a form in the same place as the permission box. See [tools.md](tools.md#ask_user) for the input. The form is drawn with JLine `Display`. It takes at most 60% of the rows of the terminal, and the chat view above it gets smaller. The agent waits for the answer. The input line does not get keys while a form waits.
+
+**Layout.** A border box shows the title and a row of marks, one for each question and one for the review page: `[x]` answered, `[ ]` open, and `[>]` current. Then it shows the number of the question and the agent name, the question, its options, and a footer with a message and a list of keys. The form shows one question at a time. A long form scrolls so that the cursor row stays in view. The marks `^ more` and `v more` show hidden rows.
+
+**Question kinds.**
+
+- `single`: the options show as `( ) label`. The chosen option shows as `(o) label`.
+- `multi`: the options show as `[ ] label` and `[x] label`. The footer shows the allowed number of choices. The form does not leave the question when the number is below `minChoices`, and it refuses a choice above `maxChoices`.
+- `text`: one text field. It starts in edit mode.
+- An option can have a description. It shows under the label, dimmed.
+- With `allowOther`, the last option row is `Other:` with a text field. For `single`, a typed text replaces the chosen option. For `multi`, it adds to the chosen options.
+- A question that is not required can stay empty.
+
+**Chat about this.** The last row of each question is `Chat about this`. It ends the form with the status `chat`. The user can first type a note for the agent. The agent gets the answers so far and the note. It then answers in the chat view, and the user types the next message as usual. The agent can call `ask_user` again.
+
+**Review page.** After the last question, the review page lists the answers. It has three actions: `Submit`, `Edit answers`, and `Decline`. `Submit` checks that all required questions are valid. If one is not, the form goes to that question and shows the reason.
+
+**Decline.** `Esc` asks `Decline this form? y/n`. `y` ends the form with the status `declined`.
+
+**Keys.** The keys in the form context are the actions `formUp`, `formDown`, `formNext`, `formPrevious`, `formToggle`, `formChat`, and `formDecline`. They are rebindable. See [configuration.md](configuration.md#action-ids-and-defaults). A key that the user moves to another action does nothing at its old place. These keys do not change:
+
+| Key | Action |
+|-----|--------|
+| `k`, `j` | Move up and down. |
+| `1` to `9` | Choose or toggle the option with this number. |
+| `Enter` | `single`: choose the row and go to the next question. `multi`: go to the next question. On a text field, `Other`, or a note: accept the text. On `Chat about this`: start the note. On the review page: run the action. |
+| `Left`, `Right` | Go to the previous or next question. In a text field they move the cursor. |
+
+In a text field the keys are `Left`, `Right`, `Home`, `End`, `Backspace`, `Delete`, and `Ctrl-U` (clear), and every printable character, also `c` and Unicode text. `Esc` leaves the field. `Ctrl-C` interrupts the agent that asked, as it does in every other state. It removes the open forms of that agent.
+
+**Mouse.** A click on an option row moves the cursor to it and chooses it (it toggles it in a `multi` question). A click on `Chat about this` starts the note, and a click on a review action runs it. The wheel moves the cursor. All actions also work with the keyboard only.
+
+**Terminal cursor.** The terminal cursor shows in the text field that has the keys. In every other state it stays on the input row.
+
+**Several forms.** Forms queue in the order they arrive, also when they come from different agents. The box names the agent. A permission prompt shows before a form, because a tool waits for it. When the user switches to another agent, the forms stay. After an answer, the chat view of the agent gets the line `form answered: <answers>`, `form: chat requested`, or `form declined`. The full answer is in the tool result.
+
+**Size.** The form works in a terminal as small as 30 columns and 8 rows. It reduces the rows of the form and shows the key list in one line. A resize redraws the form and keeps the state.
+
+**Plain text.** A run with no UI does not show a box. `jeorje run --ask` asks the questions as numbered text and reads the answers line by line from standard input. An empty line accepts the default or skips an optional question. `c` chooses chat and `q` declines the form. See [Headless runs](planning.md#headless-runs).
+
 ## Agent switcher
 
 `Ctrl-X a` opens the agent switcher as a pane in the chat region. The pane has a title row and a list of agents and peers.
