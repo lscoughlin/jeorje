@@ -35,7 +35,7 @@ public final class ActionRegistry {
         browser("browserClose", "Close a directory or move to the parent", "Left");
         browser("browserEdit", "Open the file in the editor", "Enter");
         browser("browserAdd", "Add the path to the prompt", "a");
-        browser("browserFilter", "Filter by name", "/");
+        browser("browserFilter", "Filter by name or by glob", "/");
         browser("browserHidden", "Show or hide the data of git and of Jeorje", ".");
         browser("browserExit", "Close the browser", "Esc");
 

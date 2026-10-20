@@ -192,14 +192,23 @@ The file browser is a small file app in the chat region. It shows the tree of th
 - `Esc` and the files key close the pane.
 - The last row of the pane names the keys.
 - `a` adds the selected path to the next prompt. The next message then starts with a line `Files: <paths>`.
-- `/` starts a filter by name. `Enter` ends the filter text, and `Esc` clears it.
-- `.` shows or hides the ignored paths.
+- `/` starts a filter. The filter is plain text or a glob. `Enter` ends the filter text, and `Esc` clears it.
+- `.` shows or hides the data of git and of Jeorje.
 
-`/files` opens the browser. `/files list` prints the tree in the chat view. `/files list <filter>` prints the tree of the paths that contain the filter text. The first line of the print names the working directory and the filter. The last line names `/edit`.
+`/files` opens the browser. `/files list` prints the tree in the chat view. `/files list <filter>` prints the tree of the paths that match the filter. The filter is plain text or a glob, as in the pane. The first line of the print names the working directory and the filter. The last line names `/edit`.
 
-**Path mentions.** A word that starts with `@` and names a file or a directory in the working directory adds that path to the next message. The message keeps the `@path` word. The message starts with a line `Files: <paths>`. A word ends at a space, a tab, a newline, or a comma. A word that does not name a path is plain text.
+**Filter.** Text with none of the characters `*`, `?`, `[`, and `{` matches part of a name. Text with one of these characters is a glob. The match ignores case.
 
-The browser hides `.git/` and the paths in the `.gitignore` of the working directory unless the user presses `.`. It reads the names, the globs, a leading slash, and a trailing slash of the file. It does not read negation lines. This is a display filter. It is not a sandbox. The keys of the pane come from the `browser*` actions. See [configuration.md](configuration.md#key-bindings).
+- A glob without `/` matches the name of a file or a directory. Example: `*.java`.
+- A glob with `/` matches the path from the working directory, with `/` as separator. Example: `src/util/*`.
+- `**` crosses directories. A glob that starts with `**/` also matches a path with no directory part.
+- A glob that is not complete, such as `[a` or `*.{java`, matches as plain text until the user finishes it.
+- A directory stays in the list when it matches or when it holds a match. A directory that matches shows only the matching rows below it.
+- The filter walk does not enter a symbolic link to a directory. It visits at most 20,000 entries for each update of the list.
+
+**Path mentions.** A word that starts with `@` and names a file or a directory in the working directory adds that path to the next message. This holds also for a path that `.gitignore` lists. Jeorje reads no ignore file. The message keeps the `@path` word. The message starts with a line `Files: <paths>`. A word ends at a space, a tab, a newline, or a comma. A word that does not name a path is plain text.
+
+The browser shows every path, also a path that `.gitignore` lists. It does not read `.gitignore`. It hides `.git/`, `.jeorje/sessions/`, and `.jeorje/worktrees/` of the working directory unless the user presses `.`. These are the data of git and of Jeorje. A nested `.git` directory is an ordinary directory. Other files in `.jeorje/`, such as `config.yaml`, show as normal files. This is a display filter. It is not a sandbox. The keys of the pane come from the `browser*` actions. See [configuration.md](configuration.md#key-bindings).
 
 ## Editor
 

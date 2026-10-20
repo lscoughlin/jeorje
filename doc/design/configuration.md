@@ -354,8 +354,8 @@ File browser (`ui.keys`). The browser pane reads these keys. A key that the conf
 | `browserClose` | `Left` | Close a directory or move to the parent |
 | `browserEdit` | `Enter` | Open the file in the editor |
 | `browserAdd` | `a` | Add the path to the prompt |
-| `browserFilter` | `/` | Filter by name |
-| `browserHidden` | `.` | Show or hide ignored paths |
+| `browserFilter` | `/` | Filter by name or by glob |
+| `browserHidden` | `.` | Show or hide the data of git and of Jeorje |
 | `browserExit` | `Esc` | Close the browser |
 
 Editor (`editor.keys`):
