@@ -78,6 +78,16 @@ public final class Agent implements AutoCloseable {
         List<String> messages();
     }
 
+    /**
+     * A hook that sees every tool call of the model before it runs. It can refuse a call. The hook runs once for
+     * each call, so it can count calls.
+     */
+    @FunctionalInterface
+    public interface ToolFilter {
+        /** Returns the text of a refusal, which is the error result of the call, or empty to let the call go on. */
+        java.util.Optional<String> refuse(ToolUse use);
+    }
+
     /** The live agents by id. The references are weak. Callers use {@link #live} to reach a subagent. */
     private static final Map<AgentId, WeakReference<Agent>> LIVE = new ConcurrentHashMap<>();
 
@@ -118,6 +128,8 @@ public final class Agent implements AutoCloseable {
     private volatile CancellationToken current = CancellationToken.none();
     private volatile Thread thread;
     private volatile StepBoundary stepBoundary = List::of;
+    private volatile ToolFilter toolFilter = use -> java.util.Optional.empty();
+    private final RepeatGuard repeatGuard;
     private volatile Consumer<List<Chunk>> pruneListener = chunks -> { };
 
     public Agent(AgentId id, AgentSettings settings, LlmClient llm, List<Tool> toolList, PermissionPolicy policy,
@@ -134,6 +146,7 @@ public final class Agent implements AutoCloseable {
         this.contextBuilder = new ContextBuilder(settings.contextWindowTokens(), settings.budgetPercent(),
             settings.maxOutputTokens());
         this.chunker = new TurnChunker(settings.sessionId());
+        this.repeatGuard = new RepeatGuard(settings.workingDirectory());
         LIVE.values().removeIf(ref -> ref.get() == null);
         LIVE.put(id, new WeakReference<>(this));
     }
@@ -168,6 +181,12 @@ public final class Agent implements AutoCloseable {
      */
     public synchronized Agent withHardCompactor(ContextCompactor next) {
         this.hardCompactor = next;
+        return this;
+    }
+
+    /** Sets the hook that can refuse a tool call. Null removes the hook. */
+    public Agent withToolFilter(ToolFilter filter) {
+        this.toolFilter = filter == null ? use -> java.util.Optional.empty() : filter;
         return this;
     }
 
@@ -306,6 +325,7 @@ public final class Agent implements AutoCloseable {
                 completed.clear();
                 forcedStart = 0;
                 pinned.clear();
+                repeatGuard.reset();
                 older = List.of();
             }
             steering.clear();
@@ -1030,7 +1050,7 @@ public final class Agent implements AutoCloseable {
         var results = new ArrayList<ToolResult>();
         if (allReadOnly) {
             var gates = new ArrayList<ToolResultData>();
-            for (var use : uses) gates.add(token.isCancelled() ? interrupted() : gate(use, token));
+            for (var use : uses) gates.add(token.isCancelled() ? interrupted() : preflight(use, token));
             try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
                 var futures = new ArrayList<CompletableFuture<ToolResultData>>();
                 for (var i = 0; i < uses.size(); i++) {
@@ -1046,7 +1066,7 @@ public final class Agent implements AutoCloseable {
             }
         } else {
             for (var use : uses) {
-                var data = token.isCancelled() ? interrupted() : gate(use, token);
+                var data = token.isCancelled() ? interrupted() : preflight(use, token);
                 if (data == null) data = execute(use, token);
                 results.add(finish(use, data));
             }
@@ -1054,7 +1074,26 @@ public final class Agent implements AutoCloseable {
         return results;
     }
 
+    /**
+     * Runs the checks before a call: the tool filter, the repeat guard, and then the permission. Returns the result
+     * when the call must not run, or null when it can run.
+     */
+    private ToolResultData preflight(ToolUse use, CancellationToken token) {
+        var refusal = toolFilter.refuse(use);
+        if (refusal.isPresent()) return ToolResultData.error(refusal.get());
+        if (settings.repeatGuard()) {
+            var repeat = repeatGuard.check(use, turnNumber);
+            if (repeat != null) return repeat;
+        }
+        return gate(use, token);
+    }
+
     private ToolResult finish(ToolUse use, ToolResultData data) {
+        if (settings.repeatGuard()) {
+            var tool = tools.get(use.tool());
+            if (tool != null && !tool.readOnly()) repeatGuard.invalidate();
+            repeatGuard.record(use, data, turnNumber);
+        }
         if (!data.updates().isEmpty()) state.apply(data.updates());
         publish(new AgentEvent.ToolFinished(id, use.id(), data));
         return new ToolResult(use.id(), data.output(), data.error());

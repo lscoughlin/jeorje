@@ -93,8 +93,10 @@ final class ConfigDefaults {
             agents:
               dirs: []
               stepLimit: 200
+              repeatGuard: true
             plan:
               dir: plan
+              maxExploreCalls: 40
             subagents:
               askTimeoutSeconds: 120
               maxAsks: 10

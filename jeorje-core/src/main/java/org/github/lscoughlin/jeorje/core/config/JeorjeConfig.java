@@ -185,13 +185,13 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
     }
 
     /** The agent keys. {@code stepLimit} is the number of model calls in one turn. */
-    public record Agents(List<String> dirs, int stepLimit) {
+    public record Agents(List<String> dirs, int stepLimit, boolean repeatGuard) {
         public Agents {
             dirs = list(dirs);
         }
     }
 
-    public record Plan(String dir) {
+    public record Plan(String dir, int maxExploreCalls) {
     }
 
     /** The subagent keys. {@code stepLimit} is the number of model calls of one subagent task. */

@@ -74,6 +74,22 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void theExploreLimitAndTheRepeatGuardHaveDefaultsAndRanges() throws IOException {
+        var c = ConfigLoader.load(opts()).config();
+        assertEquals(40, c.plan().maxExploreCalls());
+        assertTrue(c.agents().repeatGuard());
+        write(home.resolve(".jeorje"), "config.yaml", "plan:\n  maxExploreCalls: 60\nagents:\n  repeatGuard: false\n");
+        var changed = ConfigLoader.load(opts()).config();
+        assertEquals(60, changed.plan().maxExploreCalls());
+        assertFalse(changed.agents().repeatGuard());
+        for (var bad : new String[] {"4", "501"}) {
+            write(home.resolve(".jeorje"), "config.yaml", "plan:\n  maxExploreCalls: " + bad + "\n");
+            var e = assertThrows(ConfigException.class, () -> ConfigLoader.load(opts()));
+            assertTrue(e.getMessage().contains("plan.maxExploreCalls"), e.getMessage());
+        }
+    }
+
+    @Test
     void theRecentTokenShareHasADefaultAndARange() throws IOException {
         assertEquals(40, ConfigLoader.load(opts()).config().context().recentMaxPercent());
         write(home.resolve(".jeorje"), "config.yaml", "context:\n  recentMaxPercent: 25\n");

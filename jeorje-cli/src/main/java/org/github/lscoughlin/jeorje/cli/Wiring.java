@@ -561,7 +561,8 @@ public final class Wiring {
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(promptInstructions(config, cwd, () -> visibleSkills)::text)
                 .withMaxProtectedTokens(config.skills().maxProtectedTokens())
-                .withRecentMaxPercent(config.context().recentMaxPercent());
+                .withRecentMaxPercent(config.context().recentMaxPercent())
+                .withRepeatGuard(config.agents().repeatGuard());
 
         var errors = new java.util.concurrent.CopyOnWriteArrayList<String>();
         var transcript = new TranscriptWriter(session.transcriptPath(), scrubber);

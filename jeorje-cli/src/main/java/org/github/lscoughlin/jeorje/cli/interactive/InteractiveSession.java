@@ -451,7 +451,8 @@ public final class InteractiveSession implements AutoCloseable {
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(Wiring.promptInstructions(config, cwd, () -> toolSkills)::text)
                 .withMaxProtectedTokens(config.skills().maxProtectedTokens())
-                .withRecentMaxPercent(config.context().recentMaxPercent());
+                .withRecentMaxPercent(config.context().recentMaxPercent())
+                .withRepeatGuard(config.agents().repeatGuard());
     }
 
     private SubagentLimits limits() {
@@ -580,6 +581,9 @@ public final class InteractiveSession implements AutoCloseable {
         agent = new Agent(MAIN, settings, llm, List.copyOf(tools.values()), mainPolicy, store, transcript::writeTurn,
                 this::onEvent, Clock.systemUTC());
         self.set(agent);
+        planMode.maxExploreCalls(config.plan().maxExploreCalls());
+        agent.withToolFilter(planMode::refuse)
+                .withStepBoundary(() -> planMode.notes());
         agent.withPruneListener(chunks -> releaseSkills(MAIN.value(), chunks));
         var compaction = config.context().compaction();
         pruner = new Pruner(compactorClient, store, TermStats.of(store, countingStore::appendedCount),
@@ -993,6 +997,7 @@ public final class InteractiveSession implements AutoCloseable {
             var target = screen.foreground();
             if (target.equals(MAIN)) {
                 mainBusy = true;
+                planMode.resetExploration();
                 // A text during a turn joins that turn. A text when the agent has no turn starts a turn.
                 if (!agent.steer(text)) agent.submit(new AgentInput.UserInput(text));
             } else {
