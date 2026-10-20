@@ -84,6 +84,16 @@ class InputCompletionTest {
     }
 
     @Test
+    void pathsThatGitignoreListsStillComplete() throws Exception {
+        FakeBackend.write(project.resolve(".gitignore"), "build/\n*.log\n");
+        FakeBackend.write(project.resolve("build/out.class"), "x");
+        FakeBackend.write(project.resolve("debug.log"), "x");
+        assertEquals("/edit debug.log ", completion.complete("/edit de").line());
+        assertEquals("/edit build/", completion.complete("/edit bu").line());
+        assertEquals("/edit build/out.class ", completion.complete("/edit build/o").line());
+    }
+
+    @Test
     void implementCompletesTheFirstArgumentOnly() {
         assertEquals("/implement docs/", completion.complete("/implement do").line());
         assertEquals("/implement docs/ x", completion.complete("/implement docs/ x").line());

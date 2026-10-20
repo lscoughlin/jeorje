@@ -1,14 +1,18 @@
 package org.github.lscoughlin.jeorje.ui.browser;
 
 import java.io.IOException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Stream;
 import org.github.lscoughlin.jeorje.ui.mouse.Rect;
 import org.github.lscoughlin.jeorje.ui.mouse.Region;
@@ -32,6 +36,9 @@ public final class FileBrowser implements Region {
     /** The most entries that one name filter walk visits. */
     private static final int MAX_FILTER_ENTRIES = 20_000;
 
+    /** A filter with one of these characters is a glob. */
+    private static final String GLOB_CHARACTERS = "*?[{";
+
     private final Path root;
     private final ScrollModel scroll;
     private final Set<Path> expanded = new HashSet<>();
@@ -41,6 +48,8 @@ public final class FileBrowser implements Region {
     private boolean showHidden;
     private boolean filtering;
     private String filter = "";
+    private List<PathMatcher> globs = List.of();
+    private boolean globByPath;
     private int selected;
     private Consumer<Path> opener = p -> { };
     private Consumer<Path> adder = p -> { };
@@ -132,8 +141,41 @@ public final class FileBrowser implements Region {
         }
     }
 
+    /**
+     * True when the entry matches the filter. A filter with {@code *}, {@code ?}, {@code [}, or {@code {} is a glob:
+     * without {@code /} it matches the name, with {@code /} it matches the path from the root. Other text matches
+     * part of the name. The match ignores case.
+     */
     private boolean matches(Path p) {
-        return p.getFileName().toString().toLowerCase().contains(filter.toLowerCase());
+        if (globs.isEmpty()) {
+            return p.getFileName().toString().toLowerCase(Locale.ROOT).contains(filter.toLowerCase(Locale.ROOT));
+        }
+        var subject = (globByPath ? root.relativize(p) : p.getFileName()).toString().toLowerCase(Locale.ROOT);
+        var path = Path.of(subject);
+        for (var glob : globs) {
+            if (glob.matches(path)) return true;
+        }
+        return false;
+    }
+
+    /** Compiles the filter as a glob. An incomplete glob, such as {@code [a}, leaves the list empty. */
+    private void compileGlob() {
+        globs = List.of();
+        globByPath = false;
+        if (filter.chars().noneMatch(c -> GLOB_CHARACTERS.indexOf(c) >= 0)) return;
+        var pattern = filter.toLowerCase(Locale.ROOT);
+        try {
+            var list = new ArrayList<PathMatcher>();
+            list.add(FileSystems.getDefault().getPathMatcher("glob:" + pattern));
+            // A leading **/ also matches a path with no directory part.
+            if (pattern.startsWith("**/")) {
+                list.add(FileSystems.getDefault().getPathMatcher("glob:" + pattern.substring(3)));
+            }
+            globs = List.copyOf(list);
+            globByPath = pattern.indexOf('/') >= 0;
+        } catch (PatternSyntaxException | UnsupportedOperationException e) {
+            globs = List.of();
+        }
     }
 
     private List<Path> children(Path dir) {
@@ -240,6 +282,7 @@ public final class FileBrowser implements Region {
 
     public void setFilter(String text) {
         filter = text;
+        compileGlob();
         select(0);
     }
 

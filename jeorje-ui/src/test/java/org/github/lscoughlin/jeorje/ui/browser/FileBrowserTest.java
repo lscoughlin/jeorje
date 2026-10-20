@@ -238,6 +238,94 @@ class FileBrowserTest {
     }
 
     @Test
+    void aGlobWithoutASlashMatchesNames() {
+        fb.setFilter("*.java");
+        assertEquals(List.of("src", "util", "Helper.java", "Main.java"), names());
+        assertTrue(fb.rows().get(0).expanded());
+        assertTrue(fb.rows().get(1).expanded());
+        fb.setFilter("*.log");
+        assertEquals(List.of("debug.log"), names());
+        fb.setFilter("m?in.*");
+        assertEquals(List.of("src", "Main.java"), names());
+        fb.setFilter("{README,debug}.*");
+        assertEquals(List.of("debug.log", "README.md"), names());
+    }
+
+    @Test
+    void aGlobWithASlashMatchesThePathFromTheRoot() {
+        fb.setFilter("src/util/*");
+        assertEquals(List.of("src", "util", "Helper.java"), names());
+        fb.setFilter("**/Helper.java");
+        assertEquals(List.of("src", "util", "Helper.java"), names());
+        fb.setFilter("src/*.java");
+        assertEquals(List.of("src", "Main.java"), names());
+    }
+
+    @Test
+    void aLeadingDoubleStarAlsoMatchesAFileAtTheRoot() {
+        fb.setFilter("**/README.md");
+        assertEquals(List.of("README.md"), names());
+    }
+
+    @Test
+    void aGlobIgnoresCase() {
+        fb.setFilter("*.JAVA");
+        assertEquals(List.of("src", "util", "Helper.java", "Main.java"), names());
+    }
+
+    @Test
+    void textWithoutGlobCharactersStillMatchesPartOfAName() {
+        fb.setFilter("readme");
+        assertEquals(List.of("README.md"), names());
+    }
+
+    @Test
+    void anIncompleteGlobMatchesAsTextAndThrowsNothing() {
+        fb.setFilter("[");
+        assertTrue(names().isEmpty());
+        fb.setFilter("*.{java");
+        assertTrue(names().isEmpty());
+        fb.setFilter("[a");
+        assertTrue(names().isEmpty());
+    }
+
+    @Test
+    void anIncompleteGlobMatchesAFileNameThatHoldsTheText() throws IOException {
+        file("odd[name.txt");
+        fb.setFilter("[name");
+        assertEquals(List.of("odd[name.txt"), names());
+    }
+
+    @Test
+    void typingAGlobKeyByKeyBuildsTheFilter() {
+        press("/", "*", ".", "j");
+        assertEquals("*.j", fb.filter());
+        assertTrue(names().isEmpty());
+        press("a", "v", "a");
+        assertEquals("*.java", fb.filter());
+        assertTrue(fb.isFiltering());
+        assertEquals(List.of("src", "util", "Helper.java", "Main.java"), names());
+        press("ESC");
+        assertEquals("", fb.filter());
+        assertEquals(List.of("build", "src", ".gitignore", "debug.log", "README.md"), names());
+    }
+
+    @Test
+    void aSlashInsideTheFilterTextDoesNotLeaveFilterMode() {
+        press("/", "s", "r", "c", "/", "*");
+        assertTrue(fb.isFiltering());
+        assertEquals("src/*", fb.filter());
+        assertEquals(List.of("src", "util", "Main.java"), names());
+    }
+
+    @Test
+    void aGlobFilterEndsOnALinkToTheParent() throws IOException {
+        Files.createSymbolicLink(tmp.resolve("loop"), tmp);
+        fb.setFilter("*.java");
+        assertEquals(List.of("src", "util", "Helper.java", "Main.java"), names());
+    }
+
+    @Test
     void escClosesBrowser() {
         fb.handleKey("ESC");
         assertFalse(fb.isOpen());
