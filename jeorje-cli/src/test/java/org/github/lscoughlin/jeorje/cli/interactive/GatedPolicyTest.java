@@ -44,6 +44,16 @@ class GatedPolicyTest {
     }
 
     @Test
+    void planModeDeniesMcpTools() {
+        var plan = new PlanMode();
+        var policy = new GatedPolicy(u -> Decision.ALLOW, plan, null);
+        assertEquals(Decision.ALLOW, policy.check(use("mcp__git__status", null)), "plan mode is off");
+        plan.enter("goal");
+        assertEquals(Decision.DENY, policy.check(use("mcp__git__status", null)));
+        assertFalse(PlanMode.allows("mcp__git__status"));
+    }
+
+    @Test
     void workerAskBlocksUntilTheUserAnswers() throws Exception {
         var posted = new ArrayList<AgentEvent>();
         var gate = new PromptGate(posted::add);

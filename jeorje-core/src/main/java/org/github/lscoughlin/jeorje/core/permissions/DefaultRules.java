@@ -14,6 +14,9 @@ public final class DefaultRules {
     /** Tools that change files. */
     public static final Set<String> WRITE_TOOLS = Set.of("write", "edit", "patch");
 
+    /** The name prefix of every MCP tool. */
+    public static final String MCP_PREFIX = "mcp__";
+
     private static final Map<String, Decision> TABLE = Map.ofEntries(
             Map.entry("write", Decision.ASK),
             Map.entry("edit", Decision.ASK),
