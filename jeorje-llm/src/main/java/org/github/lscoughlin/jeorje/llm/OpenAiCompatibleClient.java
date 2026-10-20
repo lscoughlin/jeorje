@@ -191,6 +191,7 @@ public final class OpenAiCompatibleClient implements LlmClient {
             if (!done && !assembler.finished()) {
                 throw new LlmException("Stream ended before the model finished", 0, false);
             }
+            for (var event : assembler.flush()) emit(event);
             emit(assembler.finish());
         }
 

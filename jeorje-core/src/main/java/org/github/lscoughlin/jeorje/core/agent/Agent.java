@@ -54,7 +54,9 @@ import org.github.lscoughlin.jeorje.core.session.TurnChunker;
 import org.github.lscoughlin.jeorje.core.state.AgentState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectReader;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -65,6 +67,15 @@ import tools.jackson.databind.json.JsonMapper;
 public final class Agent implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(Agent.class);
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
+    /** Reads one JSON value and fails when text follows it, so that two calls joined in one text are caught. */
+    private static final ObjectReader STRICT = MAPPER.readerFor(JsonNode.class)
+        .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    /** The start of the error text for a call with broken arguments. */
+    static final String BROKEN_CALL = "The arguments of your call to ";
+    /** The sentence that the input check adds for an empty call. */
+    static final String EMPTY_CALL = "The arguments of the call were empty.";
+    /** Broken or empty calls in a row at which the agent tells the user. */
+    static final int BAD_CALL_WARNING = 2;
     /** The text of the result of a tool call that did not finish. */
     public static final String INTERRUPTED = "interrupted";
 
@@ -600,8 +611,9 @@ public final class Agent implements AutoCloseable {
                 }
                 emptyReplies = 0;
                 if (uses.isEmpty()) break;
-                var results = dispatch(uses, token);
+                var results = dispatch(uses, token, assistant.broken());
                 messages.add(new Message(Role.USER, List.copyOf(results)));
+                noteBadCalls(results);
                 if (token.isCancelled()) break;
             }
             var finished = new Turn(id, number, messages);
@@ -939,7 +951,17 @@ public final class Agent implements AutoCloseable {
 
     // ---- model call ----
 
-    private record Assistant(List<Content> content, String error) {}
+    /**
+     * The reply of the model.
+     *
+     * @param broken the tool calls whose arguments were cut off or are not valid JSON: the id of the call and the
+     *               error text for the model
+     */
+    private record Assistant(List<Content> content, String error, Map<String, String> broken) {}
+
+    private Assistant reply(Assembler assembler, String error) {
+        return new Assistant(assembler.content(), error, assembler.broken());
+    }
 
     private Assistant callModel(ContextBuilder.Built built, CancellationToken token) {
         var retry = settings.retry();
@@ -948,14 +970,14 @@ public final class Agent implements AutoCloseable {
             try {
                 stream(built.request(), token, assembler);
                 if (assembler.usage != null) contextBuilder.observe(built.rawEstimate(), assembler.usage.inputTokens());
-                return new Assistant(assembler.content(), null);
+                return reply(assembler, null);
             } catch (CancellationException e) {
-                return new Assistant(assembler.content(), null);
+                return reply(assembler, null);
             } catch (RuntimeException e) {
-                if (token.isCancelled()) return new Assistant(assembler.content(), null);
+                if (token.isCancelled()) return reply(assembler, null);
                 var retryable = !assembler.received && retry.isRetryable(e);
                 if (!retryable || attempt >= retry.maxAttempts()) {
-                    return new Assistant(assembler.content(), "Model call failed: " + message(e));
+                    return reply(assembler, "Model call failed: " + message(e));
                 }
                 var delay = retry.delay(attempt, e);
                 var number = attempt;
@@ -964,7 +986,7 @@ public final class Agent implements AutoCloseable {
                     settings.sleeper().sleep(delay);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    return new Assistant(assembler.content(), null);
+                    return reply(assembler, null);
                 }
             }
         }
@@ -1018,6 +1040,7 @@ public final class Agent implements AutoCloseable {
         private final Map<String, StringBuilder> inputs = new LinkedHashMap<>();
         volatile LlmEvent.Usage usage;
         volatile boolean received;
+        volatile String finishReason;
 
         Assembler(CancellationToken token) { this.token = token; }
 
@@ -1034,9 +1057,48 @@ public final class Agent implements AutoCloseable {
                 }
                 case LlmEvent.ToolUseInput i -> inputs.computeIfAbsent(i.id(), k -> new StringBuilder())
                     .append(i.jsonFragment());
-                case LlmEvent.MessageStop s -> { }
+                case LlmEvent.MessageStop s -> finishReason = s.stopReason();
                 case LlmEvent.Usage u -> usage = u;
             }
+        }
+
+        /**
+         * The tool calls whose arguments are not a valid JSON object: the id and the error text for the model. A
+         * call with blank arguments is not in the map. The input check of the tool handles it. Each broken call is
+         * in the log with the start and the end of its raw text, so that someone can find out whether the provider
+         * or Jeorje lost the arguments.
+         */
+        Map<String, String> broken() {
+            var out = new LinkedHashMap<String, String>();
+            if (token.isCancelled()) return out;
+            for (var entry : names.entrySet()) {
+                var raw = inputs.get(entry.getKey()).toString();
+                if (raw.isBlank()) continue;
+                String problem;
+                try {
+                    JsonNode value = STRICT.readValue(raw);
+                    if (value.isObject()) continue;
+                    problem = "The arguments are not a JSON object.";
+                } catch (RuntimeException e) {
+                    var text = String.valueOf(e.getMessage());
+                    problem = text.contains("end-of-input") ? "The stream ended in the middle of the arguments."
+                        : "The arguments are not valid JSON.";
+                }
+                var cut = "length".equals(finishReason);
+                var reason = cut ? "The output limit of the model was reached, so the call was cut off. "
+                    + "Make the call shorter or split the work in steps." : problem;
+                var tool = entry.getValue();
+                var chars = raw.length();
+                var reasonName = finishReason;
+                var shown = problem;
+                var head = raw.substring(0, Math.min(200, chars));
+                var tail = raw.substring(Math.max(0, chars - 200));
+                log.atWarn().log(() -> "Broken tool call " + tool + " (" + chars + " characters, finish reason "
+                    + reasonName + "): " + shown + " Start: " + head + " End: " + tail);
+                out.put(entry.getKey(), BROKEN_CALL + tool + " were not valid JSON (" + chars
+                    + " characters were received). " + reason + " Send the call again.");
+            }
+            return out;
         }
 
         List<Content> content() {
@@ -1060,13 +1122,34 @@ public final class Agent implements AutoCloseable {
 
     // ---- tool dispatch ----
 
-    private List<ToolResult> dispatch(List<ToolUse> uses, CancellationToken token) {
+    /**
+     * Counts the steps in a row in which a call had broken or empty arguments. The second step in a row gives an
+     * error event, because a model or a provider that cuts the arguments of calls needs a change that only the user
+     * can make. A step with no such call starts the count again.
+     */
+    private void noteBadCalls(List<ToolResult> results) {
+        var bad = results.stream().anyMatch(r -> r.error()
+            && (r.output().startsWith(BROKEN_CALL) || r.output().contains(EMPTY_CALL)));
+        if (!bad) {
+            badSteps = 0;
+            return;
+        }
+        badSteps++;
+        if (badSteps == BAD_CALL_WARNING) {
+            publish(new AgentEvent.Error(id, "The model sent a tool call with broken arguments " + BAD_CALL_WARNING
+                + " times in a row. The provider may be at fault. Try another model or provider."));
+        }
+    }
+
+    private int badSteps;
+
+    private List<ToolResult> dispatch(List<ToolUse> uses, CancellationToken token, Map<String, String> broken) {
         var allReadOnly = uses.size() > 1 && uses.stream().allMatch(u -> tools.get(u.tool()) != null
             && tools.get(u.tool()).readOnly());
         var results = new ArrayList<ToolResult>();
         if (allReadOnly) {
             var gates = new ArrayList<ToolResultData>();
-            for (var use : uses) gates.add(token.isCancelled() ? interrupted() : preflight(use, token));
+            for (var use : uses) gates.add(token.isCancelled() ? interrupted() : preflight(use, token, broken));
             try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
                 var futures = new ArrayList<CompletableFuture<ToolResultData>>();
                 for (var i = 0; i < uses.size(); i++) {
@@ -1082,7 +1165,7 @@ public final class Agent implements AutoCloseable {
             }
         } else {
             for (var use : uses) {
-                var data = token.isCancelled() ? interrupted() : preflight(use, token);
+                var data = token.isCancelled() ? interrupted() : preflight(use, token, broken);
                 if (data == null) data = execute(use, token);
                 results.add(finish(use, data));
             }
@@ -1094,7 +1177,9 @@ public final class Agent implements AutoCloseable {
      * Runs the checks before a call: the tool filter, the repeat guard, and then the permission. Returns the result
      * when the call must not run, or null when it can run.
      */
-    private ToolResultData preflight(ToolUse use, CancellationToken token) {
+    private ToolResultData preflight(ToolUse use, CancellationToken token, Map<String, String> broken) {
+        var cut = broken.get(use.id());
+        if (cut != null) return ToolResultData.error(cut);
         var refusal = toolFilter.refuse(use);
         if (refusal.isPresent()) return ToolResultData.error(refusal.get());
         if (settings.repeatGuard()) {
