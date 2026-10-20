@@ -97,6 +97,58 @@ class PlanSubmitToolTest {
     }
 
     @Test
+    void aCallWithNoNameReplacesTheDraftOfThisMode() throws IOException {
+        submit(plan("First title", story("S1", "[]", "[\"a/\"]", "First version.")));
+        var file = work.resolve("plan/first-title.md");
+        var result = submit(plan("Another title", story("S1", "[]", "[\"a/\"]", "Second version.")));
+        assertFalse(result.error(), result.output());
+        assertTrue(Files.readString(file).contains("Second version."));
+        assertEquals(List.of("first-title.md", "first-title.prev.md"), listing());
+        assertEquals("Another title", PlanParser.parse(file).title());
+    }
+
+    @Test
+    void aNewNameMovesTheDraftAndRemovesTheOldFile() throws IOException {
+        submit(plan("First title", story("S1", "[]", "[\"a/\"]", "First version.")));
+        var result = submit(plan("First title", story("S1", "[]", "[\"a/\"]", "Moved.")).replace("{\"title\"",
+                "{\"name\":\"better-name\",\"title\""));
+        assertFalse(result.error(), result.output());
+        assertEquals(List.of("better-name.md"), listing());
+        assertTrue(result.output().contains("first-title.md is removed"), result.output());
+        assertEquals(work.resolve("plan/better-name.md"), mode.submittedPlan().orElseThrow());
+    }
+
+    @Test
+    void aDraftThatTheUserChangedIsNotRemoved() throws IOException {
+        submit(plan("First title", story("S1", "[]", "[\"a/\"]", "First version.")));
+        var old = work.resolve("plan/first-title.md");
+        Files.writeString(old, Files.readString(old) + "\nMy note.\n");
+        var result = submit(plan("First title", story("S1", "[]", "[\"a/\"]", "Moved.")).replace("{\"title\"",
+                "{\"name\":\"other\",\"title\""));
+        assertFalse(result.error(), result.output());
+        assertEquals(List.of("first-title.md", "other.md"), listing());
+    }
+
+    @Test
+    void frontMatterWithSpecialTextReadsBackTheSame() throws IOException {
+        var title = "Fix: the \"parser\" # 1 [a]";
+        var result = submit(plan(title.replace("\"", "\\\""), story("S1", "[]", "[\"a/\"]", "Text.")));
+        assertFalse(result.error(), result.output());
+        var parsed = PlanParser.parse(work.resolve("plan/" + PlanSubmitTool.slug(title) + ".md"));
+        assertEquals(title, parsed.title());
+        for (var value : List.of("plain", "a: b", "x #y", "#lead", "- dash", "ends:", "say \"hi\"", "back\\slash", "it's")) {
+            var text = "---\ntitle: " + PlanSubmitTool.yaml(value) + "\n---\n";
+            assertEquals(value, PlanParser.parse(text).title(), text);
+        }
+    }
+
+    private List<String> listing() throws IOException {
+        try (var s = Files.list(work.resolve("plan"))) {
+            return s.map(p -> p.getFileName().toString()).sorted().toList();
+        }
+    }
+
+    @Test
     void failedChecksReturnAnErrorAndWriteNothing() {
         var result = submit(plan("Bad plan",
                 story("S1", "[]", "[\"a/\"]", "As discussed, use the helper."),
