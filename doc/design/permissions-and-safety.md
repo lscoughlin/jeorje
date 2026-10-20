@@ -96,7 +96,7 @@ A subagent cannot get more permission than its parent. A subagent policy denies 
 
 ## Audit log
 
-Jeorje writes one JSON line for each policy check to `${CWD}/.jeorje/sessions/<sessionId>/audit.jsonl`. A line has the time, the agent id, the tool, a shortened input (200 characters at most, with secrets removed), the decision, the source of the decision (`rule`, `user`, or `yolo`), and a status. The status is always `decided`. A tool that checks a path itself adds a line for that check, so one tool call can write more than one line. When the user answers an `ASK`, Jeorje writes a line with the source `user`. The audit log never contains secrets.
+Jeorje writes one JSON line for each policy check to `${CWD}/.jeorje/sessions/<sessionId>/audit.jsonl`. A line has the time, the agent id, the tool, a shortened input (200 characters at most, with secrets removed), the decision, the source of the decision (`rule`, `user`, or `yolo`), and a status. The status is always `decided`. A tool that checks a path itself adds a line for that check, so one tool call can write more than one line. The search tools `grep`, `glob`, and `ls` check the root of the call and write one line for it. They check each file of the tree without a line when the policy allows the file. A refused file gets a line. See [tools.md](tools.md). When the user answers an `ASK`, Jeorje writes a line with the source `user`. The audit log never contains secrets.
 
 ## Unattended modes
 

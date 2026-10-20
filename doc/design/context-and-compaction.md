@@ -49,7 +49,8 @@ A user chunk is short, so the index finds it easily and the embedding covers all
 ```
 
 - **Pinned items** are texts that the user pins with `/pin`, followed by the latest todo list. The agent reads the text of the latest successful `todo` result from the current turn or from the finished turns, and pins it in every request. Pruning never removes the list. An empty list is not pinned. The request puts the pinned items and the earlier context in front of the first user message, under the headings `[Pinned items]` and `[Earlier context]`.
-- **Recent turns** stay verbatim. These are the last N turns (default 6, `context.recentTurns`).
+- **Decisions of the user** are a third pinned item. The agent builds the block `Decisions of the user:` again for each request from the finished turns. It has one line for each answer to `ask_user`: `- <question>: <answer>`. It handles the plain answer (`User answer: ...`), the structured answers of a form (`User answers:` with one line for each question), and a chat request (`(the user wanted to chat: <note>)`). A declined or failed question has no line. The block has at most 4,000 characters. When it is longer, the oldest lines are cut, and the second line says `(older decisions: use recall with the filter kind user)`. The turn that runs is not in the block, because the request always holds it. The block is never pruned. It stays visible when its turn is pruned or leaves the request. Other texts of the user are not in the block: compaction never changes them, and `recall` with the filter `kind` set to `user` finds them.
+- **Recent turns** stay verbatim. These are the last N turns (default 6, `context.recentTurns`) that use at most `context.recentMaxPercent` of the budget (default 40). The last finished turn is always recent. A recent turn that is too big moves to the earlier context when the next turn ends. Compaction then prunes it at once, because it is big.
 - **Protected content** is never pruned. See [Protection classes](#protection-classes).
 - **Pruned chunks** are the chunks of older turns. A chunk that compaction has not touched shows its original text. A pruned chunk has fewer tokens than the original and ends with a keyword hint.
 - When a request is over the budget, the builder drops the oldest recent turns. See [agent-loop.md](agent-loop.md#token-budget).
@@ -174,6 +175,20 @@ A keyword hint helps the model find the full text again. The compactor chooses t
 - A keyword hint stays when a chunk goes to a higher level. The keywords of the earlier level come first. The compactor can add keywords at each level.
 - A chunk of the `skill` tool also gets the keyword `skill:<name>`.
 - At level 3, the header, the topics line, and the hint stay. The topics line has the tool name, the file name of the first path in the text, and the first error name, for example: `read Config.java; found NullPointerException`.
+
+## Spilled results
+
+A running turn can grow without a limit, because compaction runs when a turn ends. The agent therefore **spills** old tool results of the running turn. See [agent-loop.md](agent-loop.md#token-budget) for the rules. A spilled result is in two places:
+
+- The index has the full text as chunks of the kind `tool_result` with the tool name. The chunk id is `<agentId>:<turn>.<part>`, where the part starts at 1000 and counts up for the turn. The final chunks of the turn use small part numbers, so the ids never clash. A result of more than 8,000 characters has more than one chunk, and the stub names the first.
+- The message has a stub. The stub keeps the first 5 lines of the result:
+
+```
+[spilled: read {"path":"src/Foo.java"} | 400 lines, 16464 chars | recall: src/Foo.java, FooService, id=main:3.1004]
+<the first 5 lines>
+```
+
+The header has the tool, the input (80 characters at most), the size, and the `recall:` hint. The keywords are the paths of the call and the most frequent identifiers of the result. The model reads the full text with `recall` and the chunk id. The final chunk of the turn holds the stub, not the full text a second time. The transcript file keeps the full text of every result, so a resumed session builds its chunks from the full text.
 
 ## Compaction policy
 
