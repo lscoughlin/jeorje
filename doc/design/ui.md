@@ -425,6 +425,7 @@ The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of li
 | `/pin` | Pin the last assistant message |
 | `/recall <query>` | Search the history and show the best five hits |
 | `/peers` | List swarm peers |
+| `/mcp` | List the MCP servers, their state, and their tools. See [tools.md](tools.md#mcp-tools). |
 | `/init`, `/instructions` | Ask the agent to write an `AGENTS.md`, or show the user files and the project file that apply. See [instructions-and-skills.md](instructions-and-skills.md). |
 | `/skills`, `/commands`, `/agent-types`, `/trust` | List skills, custom commands, and subagent definitions, and trust the project |
 | `/<skill-name> [args]`, `/<command-name> [args]` | Start a skill or a custom command from `.agents/` |
@@ -447,7 +448,7 @@ picocli parses the command line. `JeorjeMain` is the entry point.
 | `jeorje index rebuild [--session <id>]` | Build the index again from the transcript of a session. The default is the latest session. |
 | `jeorje config [--format yaml\|json] [--init] [--show-prompts] [--keys]` | Print the effective config, write a new `config.yaml`, print the assembled prompts, or print the effective key bindings |
 
-Common options: `--dir`, `--no-mouse`, `--model`, `--base-url`, `--peer host:port` (repeatable), `--swarm-token`, `--yes`, `--yolo`, `--trust`, and `--config`. They can stand before or after the command name. The option `--trust` trusts the project config of the directory for this run. See [configuration.md](configuration.md#precedence) for the config keys that the options set. `jeorje config --show-prompts` prints the assembled system prompt and compaction prompt. `--yes` approves all prompts. `--yolo` turns off all permission checks. See [permissions-and-safety.md](permissions-and-safety.md#unattended-modes).
+Common options: `--dir`, `--no-mouse`, `--no-mcp`, `--model`, `--base-url`, `--peer host:port` (repeatable), `--swarm-token`, `--yes`, `--yolo`, `--trust`, and `--config`. They can stand before or after the command name. The option `--trust` trusts the project config of the directory for this run. See [configuration.md](configuration.md#precedence) for the config keys that the options set. `jeorje config --show-prompts` prints the assembled system prompt and compaction prompt. `--yes` approves all prompts. `--yolo` turns off all permission checks. See [permissions-and-safety.md](permissions-and-safety.md#unattended-modes).
 
 ## Terminal handling
 

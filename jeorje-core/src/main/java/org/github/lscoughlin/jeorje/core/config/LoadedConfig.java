@@ -43,7 +43,7 @@ public record LoadedConfig(JeorjeConfig config, Map<String, Object> tree, Map<St
             var path = prefix.isEmpty() ? k : prefix + "." + k;
             if (v instanceof Map<?, ?> m) {
                 out.put(k, redact((Map<String, Object>) m, path));
-            } else if (ConfigDefaults.SECRET_KEYS.contains(path) && v instanceof String s && !s.isEmpty()) {
+            } else if (ConfigDefaults.isSecret(path) && v instanceof String s && !s.isEmpty()) {
                 out.put(k, SecretScrubber.MASK);
             } else {
                 out.put(k, v);

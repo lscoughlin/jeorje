@@ -217,6 +217,22 @@ The advisor is a second model. It is usually stronger than the default model. Th
 
 You can add external tools in the config key `tools.extensions` as command tools. A command tool has a name, a description, a JSON schema, a command, and optional `readOnly` (default `false`) and `timeoutSeconds` values. The executable reads the input as JSON on stdin and writes the result to stdout. A non-zero exit code makes an error result. The process gets a minimal environment with no API keys. Jeorje skips an entry that is not valid or that uses the name of another tool, and logs a warning.
 
+## MCP tools
+
+Jeorje is a client for the Model Context Protocol (MCP). It offers the tools of the MCP servers in the config key `mcp.servers` to the agent. It uses only the tools part of the protocol. It does not use resources, prompts, sampling, or roots. The code is in the package `tools.mcp` of `jeorje-tools`. It has no extra dependency.
+
+- **Transports.** A server is a `stdio` server or an `http` server. A `stdio` server is a child process. The messages are lines of JSON on stdin and stdout. An `http` server uses Streamable HTTP. Each message is a POST. The reply is one JSON body or an event stream. Jeorje keeps the `Mcp-Session-Id` header and ends the session with a DELETE. Jeorje never follows a redirect. The legacy SSE transport is not supported.
+- **Start.** The `McpManager` connects all enabled servers at the same time when the session needs its tools first. For each server it does the handshake and reads the tool list, page by page. A server that fails is skipped, and its error shows in `/mcp`. A failed server never stops the session. The tool list does not change during the session. If a server says that its tools changed, `/mcp` shows a notice.
+- **Names.** A remote tool `echo` of the server `files` is the tool `mcp__files__echo`. Jeorje replaces each character that is not a letter, a digit, `_`, or `-` with `_`. A name has at most 64 characters. Jeorje skips a tool whose name is already in use, and logs a warning.
+- **Schema and input.** The input schema of the remote tool is the schema of the tool. The registry checks the input against the schema before the call.
+- **Run.** An MCP tool is never `readOnly`, so it never runs at the same time as another tool. The call timeout is `timeoutSeconds` of the server (default 60). The registry waits five seconds longer. When the server does not answer in time, Jeorje sends `notifications/cancelled` and the tool returns an error result.
+- **Result.** Jeorje joins the `text` blocks of the result. An image, audio, or binary block becomes one short line that names the type. A result with `isError: true` is an error result. A transport error or a JSON-RPC error is also an error result. The tool never throws. Output limits and secret removal apply as for all tools.
+- **Server requests.** The client has no server-side features. It answers each request of the server with the JSON-RPC error "method not found".
+- **End.** When the session ends, Jeorje closes the clients. A `stdio` server gets a short time to exit after its stdin closes. After that, Jeorje kills the process tree. A shutdown hook does the same when the JVM exits.
+- **Subagents.** A subagent in the same process uses the same server connections as its parent. The permission policy of the subagent still decides each call. A peer in the swarm starts its own servers from its own config.
+
+The permission rules for MCP tools are in [permissions-and-safety.md](permissions-and-safety.md#mcp-tools). The config keys are in [configuration.md](configuration.md#mcp-servers).
+
 ## Concurrency
 
 Calls from one assistant message run at the same time only if all calls are `readOnly`. Otherwise, Jeorje runs the calls one after the other, in the order of the message. The agent loop checks the permission of each call in order before it starts a group of read-only calls.

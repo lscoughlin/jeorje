@@ -40,6 +40,7 @@ final class SessionCommands {
         slash.register("files", "/files [list [filter]]", "Open the file browser, or print the tree", this::files);
         slash.register("edit", "/edit <path>", "Open a file in the editor", this::edit);
         slash.register("peers", "/peers", "List the peers of the swarm", a -> peers());
+        slash.register("mcp", "/mcp", "List the MCP servers and their tools", a -> CommandResult.ok(session.mcpReport()));
     }
 
     // ---- plan ----

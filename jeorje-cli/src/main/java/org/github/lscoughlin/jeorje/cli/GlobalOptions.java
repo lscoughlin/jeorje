@@ -34,6 +34,9 @@ public final class GlobalOptions {
     @Option(names = "--trust", scope = ScopeType.INHERIT, description = "Trust the project config in this directory.")
     private boolean trust;
 
+    @Option(names = "--no-mcp", scope = ScopeType.INHERIT, description = "Do not start the MCP servers of the config.")
+    private boolean noMcp;
+
     @Option(names = "--no-mouse", scope = ScopeType.INHERIT, description = "Turn off mouse support in the interface.")
     private boolean noMouse;
 
@@ -57,6 +60,8 @@ public final class GlobalOptions {
     public boolean trust() { return trust; }
 
     public boolean noMouse() { return noMouse; }
+
+    public boolean noMcp() { return noMcp; }
 
     public Path configFile() { return configFile; }
 }

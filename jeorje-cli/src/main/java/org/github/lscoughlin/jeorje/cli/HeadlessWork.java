@@ -184,6 +184,8 @@ public final class HeadlessWork implements AutoCloseable {
     private Agent agent;
     private volatile List<org.github.lscoughlin.jeorje.core.instructions.Skill> toolSkills = List.of();
     private volatile SkillTool skillTool;
+    private org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp;
+    private boolean mcpStarted;
     private volatile UserQuestion stoppedBy;
 
     private HeadlessWork(CliEnvironment env, GlobalOptions options) {
@@ -463,7 +465,8 @@ public final class HeadlessWork implements AutoCloseable {
     /** The tools of the coding agent as agent tools. */
     private List<Tool> baseTools() {
         var state = new AgentState();
-        var registry = Wiring.registry(config, grants, policy.network(), state, session.id(), options.yolo());
+        var registry = Wiring.registry(config, grants, policy.network(), state, session.id(), options.yolo(),
+                mcpManager());
         var out = new ArrayList<Tool>();
         for (var name : registry.names()) {
             var tool = registry.find(name).orElseThrow();
@@ -490,6 +493,15 @@ public final class HeadlessWork implements AutoCloseable {
             out.add(t);
         });
         return out;
+    }
+
+    /** The MCP servers of the run. They start once, at the first use. */
+    private synchronized org.github.lscoughlin.jeorje.tools.mcp.McpManager mcpManager() {
+        if (!mcpStarted) {
+            mcpStarted = true;
+            mcp = Wiring.mcp(config, options, policy.network(), cwd, env.env());
+        }
+        return mcp;
     }
 
     /** Holds a tool call of a worker until its worktree exists. */
@@ -531,6 +543,7 @@ public final class HeadlessWork implements AutoCloseable {
             log.atWarn().log(() -> "Cannot stop the run: " + e);
         }
         if (agent != null) agent.close();
+        if (mcp != null) closeQuietly(mcp);
         closeQuietly(transcript);
         closeQuietly(store);
         if (embedder instanceof AutoCloseable c) closeQuietly(c);

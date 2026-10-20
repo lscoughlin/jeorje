@@ -174,4 +174,50 @@ class RuleAndSandboxTest {
         assertEquals(Decision.DENY, child.check(path("write", "a.txt")));
         assertEquals(Decision.ALLOW, child.check(path("read", "a.txt")));
     }
+
+    @Test
+    void mcpToolsAskByDefaultAndFollowPrefixRules() {
+        var mcp = use("mcp__git__status", java.util.Map.of());
+        assertEquals(Decision.ASK, builder().build().check(mcp));
+        var allowed = builder().rules(List.of(new Rule("mcp__git__*", null, Decision.ALLOW))).build();
+        assertEquals(Decision.ALLOW, allowed.check(mcp));
+        assertEquals(Decision.ASK, allowed.check(use("mcp__other__status", java.util.Map.of())));
+        var exact = builder().rules(List.of(new Rule("mcp__git__*", null, Decision.ALLOW),
+                new Rule("mcp__git__push", null, Decision.DENY))).build();
+        assertEquals(Decision.DENY, exact.check(use("mcp__git__push", java.util.Map.of())));
+        assertEquals(Decision.ALLOW, exact.check(mcp));
+    }
+
+    @Test
+    void mcpPrefixRuleBeatsAllowAll() {
+        var p = builder().rules(List.of(new Rule("*", null, Decision.ALLOW),
+                new Rule("mcp__git__*", null, Decision.DENY))).build();
+        assertEquals(Decision.DENY, p.check(use("mcp__git__status", java.util.Map.of())));
+        assertEquals(Decision.ALLOW, p.check(use("mcp__x__y", java.util.Map.of())));
+    }
+
+    @Test
+    void mcpPathInputIsNotSandboxChecked() {
+        var p = builder().build();
+        assertEquals(Decision.ASK, p.check(use("mcp__fs__read", java.util.Map.of("path", outside.resolve("secret.txt").toString()))));
+        assertEquals(Decision.ASK, p.check(use("mcp__fs__read", java.util.Map.of("path", "../../etc/passwd"))));
+    }
+
+    @Test
+    void mcpToolsAreDeniedInPlanModeAndReadOnlyChildren() {
+        var plans = ws.resolve("plans");
+        var allowAll = new Rule("mcp__git__*", null, Decision.ALLOW);
+        var planMode = builder().rules(List.of(allowAll)).planMode(true, plans).build();
+        assertEquals(Decision.DENY, planMode.check(use("mcp__git__status", java.util.Map.of())));
+        var parent = builder().rules(List.of(allowAll)).build();
+        var child = parent.narrow(new org.github.lscoughlin.jeorje.core.model.AgentId("c"), List.of(), true);
+        assertEquals(Decision.DENY, child.check(use("mcp__git__status", java.util.Map.of())));
+        var wide = parent.narrow(new org.github.lscoughlin.jeorje.core.model.AgentId("c"),
+                List.of(new Rule("mcp__git__*", null, Decision.ALLOW)), false);
+        var strict = builder().rules(List.of(new Rule("mcp__git__*", null, Decision.DENY))).build()
+                .narrow(new org.github.lscoughlin.jeorje.core.model.AgentId("c"),
+                        List.of(new Rule("mcp__git__*", null, Decision.ALLOW)), false);
+        assertEquals(Decision.ALLOW, wide.check(use("mcp__git__status", java.util.Map.of())));
+        assertEquals(Decision.DENY, strict.check(use("mcp__git__status", java.util.Map.of())));
+    }
 }

@@ -10,7 +10,8 @@ import org.github.lscoughlin.jeorje.core.config.JeorjeConfig;
 import org.github.lscoughlin.jeorje.core.port.PermissionPolicy.Decision;
 
 /**
- * A permission rule. The tool is a tool name or {@code *}. The pattern is optional. A pattern
+ * A permission rule. The tool is a tool name, a prefix with a trailing {@code *} such as
+ * {@code mcp__github__*}, or {@code *} alone. The pattern is optional. A pattern
  * that starts with {@code re:} is a regular expression. A pattern with {@code *} or {@code ?} is
  * a glob. Any other pattern is a prefix. For {@code webfetch}, the pattern is a domain.
  */
@@ -30,7 +31,7 @@ public record Rule(String tool, String pattern, Decision decision) {
 
     /** True if the rule applies to the tool and to one of the subjects. */
     public boolean matches(String toolName, List<String> subjects) {
-        if (!tool.equals("*") && !tool.equals(toolName)) return false;
+        if (!matchesTool(toolName)) return false;
         if (pattern == null) return true;
         for (var subject : subjects) {
             if (matchesSubject(subject, toolName)) return true;
@@ -38,9 +39,18 @@ public record Rule(String tool, String pattern, Decision decision) {
         return false;
     }
 
-    /** A higher number is more specific. */
+    private boolean isToolGlob() {
+        return tool.length() > 1 && tool.endsWith("*");
+    }
+
+    private boolean matchesTool(String toolName) {
+        if (tool.equals("*") || tool.equals(toolName)) return true;
+        return isToolGlob() && toolName.startsWith(tool.substring(0, tool.length() - 1));
+    }
+
+    /** A higher number is more specific. An exact tool beats a tool prefix, and a prefix beats {@code *}. */
     public int specificity() {
-        var score = tool.equals("*") ? 0 : 1000;
+        var score = tool.equals("*") ? 0 : isToolGlob() ? 500 + Math.min(tool.length(), 400) : 1000;
         if (pattern != null) score += 100 + pattern.length();
         return score;
     }

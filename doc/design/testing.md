@@ -25,6 +25,8 @@ Each port in [architecture.md](architecture.md) has a stub in a shared test-supp
 | `PermissionPolicy` | `FixedPolicy` | Returns a set decision. |
 | `Clock` | `ManualClock` | Time moves only when the test moves it. |
 
+The MCP tests use fake servers instead of a testkit stub. `jeorje-tools` has a fake stdio server (`FakeMcpServer`), which a test starts as a child process with the class path of the test, and a fake Streamable HTTP server (`FakeMcpHttpServer`) on a free port of the loopback address. `jeorje-cli` has a small stdio server for the wiring tests. The e2e scenario `mcp` uses a Python server.
+
 `jeorje-testkit` also has two helpers: `TempWorkspace` makes a temporary workspace, and `InMemoryContextStore` is an in-memory store for context tests. The stub `InMemoryTransport` and its helper `InMemoryNetwork` are in the package `testkit.swarm`.
 
 ## Live tests
@@ -148,6 +150,7 @@ Each scenario is a file in `scripts/e2e/scenarios/` with a function `run(check)`
 | `editor` | `/edit`, typing, selection, cut and paste, undo, find, save, syntax colors, injected colors in a Markdown fence, and the return to the chat. |
 | `instructions_skills` | `AGENTS.md` and the skill catalog in the system prompt, nested `AGENTS.md` in `read` results, the `skill` tool, `/<skill>`, and a custom command. |
 | `keys_config` | A project config rebinds hotkeys, and a conflict stops the start. |
+| `mcp` | A configured stdio MCP server: its tool reaches the model, a call returns its result, `/mcp` lists the server, and the server process ends with the session. |
 | `panes` | The agent switcher and the file browser. |
 | `secrets` | A secret from the environment appears in no project file, no log file, no index chunk, and no tool result sent to the model. |
 | `slash_help` | `/help` shows the commands. |

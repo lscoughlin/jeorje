@@ -213,6 +213,8 @@ public final class InteractiveSession implements AutoCloseable {
     private volatile SkillGrantPolicy skillGrants;
     private volatile List<org.github.lscoughlin.jeorje.core.instructions.Skill> toolSkills = List.of();
     private volatile SkillTool skillTool;
+    private org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp;
+    private boolean mcpStarted;
     private volatile QEditor activeEditor;
     private final Map<String, String> startedTools = new ConcurrentHashMap<>();
     private boolean screenStarted;
@@ -458,12 +460,27 @@ public final class InteractiveSession implements AutoCloseable {
                 .withMaxModelCalls(config.subagents().stepLimit());
     }
 
+    /** The MCP servers of the session. They start once, at the first use. */
+    private synchronized org.github.lscoughlin.jeorje.tools.mcp.McpManager mcpManager() {
+        if (!mcpStarted) {
+            mcpStarted = true;
+            mcp = Wiring.mcp(config, options, policy.network(), cwd, env.env());
+        }
+        return mcp;
+    }
+
+    /** The text of the {@code /mcp} command. */
+    String mcpReport() {
+        return Wiring.mcpReport(mcpManager(), config, options.noMcp());
+    }
+
     /** The tools of the coding agent as agent tools. */
     private List<Tool> baseTools(PermissionPolicy toolPolicy) {
         var state = new AgentState();
         if (toolState == null) toolState = state;
         var grants = skillGrants();
-        var registry = Wiring.registry(config, grants, policy.network(), state, session.id(), options.yolo());
+        var registry = Wiring.registry(config, grants, policy.network(), state, session.id(), options.yolo(),
+                mcpManager());
         var out = new ArrayList<Tool>();
         for (var name : registry.names()) {
             var tool = registry.find(name).orElseThrow();
@@ -1299,6 +1316,7 @@ public final class InteractiveSession implements AutoCloseable {
         if (ticker != null) ticker.interrupt();
         if (agent != null) agent.close();
         if (runtime != null) runtime.close();
+        if (mcp != null) closeQuietly(mcp);
         if (orchestrator != null) orchestrator.close();
         if (mouse != null) mouse.close();
         if (screen != null) screen.close();

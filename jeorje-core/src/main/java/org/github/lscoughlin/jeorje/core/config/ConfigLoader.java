@@ -228,6 +228,17 @@ public final class ConfigLoader {
 
     @SuppressWarnings("unchecked")
     static void expandPaths(Map<String, Object> tree, Path home, Path cwd) {
+        if (tree.get("mcp") instanceof Map<?, ?> mcp && mcp.get("servers") instanceof Map<?, ?> servers) {
+            for (var server : servers.values()) {
+                if (server instanceof Map<?, ?> m) {
+                    for (var key : List.of("cwd", "command")) {
+                        if (m.get(key) instanceof String s) {
+                            ((Map<String, Object>) m).put(key, PathExpander.expand(s, home, cwd));
+                        }
+                    }
+                }
+            }
+        }
         for (var key : ConfigDefaults.PATH_KEYS) {
             var parts = key.split("\\.");
             Object node = tree;
@@ -380,6 +391,9 @@ public final class ConfigLoader {
                 "must be quiet, normal, or verbose");
         require(c.agents().stepLimit() > 0, "agents.stepLimit", "must be a positive integer");
         require(c.subagents().stepLimit() > 0, "subagents.stepLimit", "must be a positive integer");
+        for (var entry : c.mcp().servers().entrySet()) {
+            validateMcp(entry.getKey(), entry.getValue());
+        }
         for (var rule : c.permissions().rules()) {
             require(rule.tool() != null && !rule.tool().isBlank(), "permissions.rules.tool", "is required");
             require(rule.decision() != null && Set.of("allow", "ask", "deny").contains(rule.decision()),
@@ -390,6 +404,17 @@ public final class ConfigLoader {
             require(ENUM_MODES.contains(p.mode()), entry.getKey() + ".mode", "must be append or replace");
             require(p.text().isEmpty() || p.file().isEmpty(), entry.getKey(), "must set text or file, not both");
         }
+    }
+
+    private static void validateMcp(String name, JeorjeConfig.McpServer s) {
+        var key = "mcp.servers." + name;
+        require(name.matches("[a-z0-9_-]+"), key, "has a bad name (use a-z, 0-9, _ and -)");
+        require(Set.of("stdio", "http").contains(s.transport()), key + ".transport", "must be stdio or http");
+        switch (s.transport()) {
+            case "stdio" -> require(s.command() != null && !s.command().isBlank(), key + ".command", "is required");
+            default -> require(s.url() != null && !s.url().isBlank(), key + ".url", "is required");
+        }
+        require(s.timeoutSeconds() > 0, key + ".timeoutSeconds", "must be a positive integer");
     }
 
     private static boolean percent(int v) {

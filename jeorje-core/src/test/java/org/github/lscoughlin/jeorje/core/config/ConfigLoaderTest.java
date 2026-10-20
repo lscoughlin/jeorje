@@ -347,4 +347,80 @@ class ConfigLoaderTest {
             }
         }
     }
+
+    private static final String MCP_YAML = """
+            mcp:
+              servers:
+                files:
+                  command: ${HOME}/bin/files-server
+                  args: [--root, /data]
+                  cwd: ${CWD}
+                  env: {TOKEN: s3cret}
+                  envFrom: [GITHUB_TOKEN]
+                remote:
+                  transport: http
+                  url: https://mcp.example/api
+                  headers: {Authorization: "Bearer ${MCP_TOKEN}"}
+                  enabled: false
+            """;
+
+    @Test
+    void mcpServersLoadWithDefaultsAndExpandedPaths() throws IOException {
+        write(home.resolve(".jeorje"), "config.yaml", MCP_YAML);
+        var servers = ConfigLoader.load(opts()).config().mcp().servers();
+        var files = servers.get("files");
+        assertEquals("stdio", files.transport());
+        assertEquals(home + "/bin/files-server", files.command());
+        assertEquals(cwd.toString(), files.cwd());
+        assertEquals(java.util.List.of("--root", "/data"), files.args());
+        assertEquals(java.util.List.of("GITHUB_TOKEN"), files.envFrom());
+        assertEquals(60, files.timeoutSeconds());
+        assertTrue(files.enabled());
+        var remote = servers.get("remote");
+        assertEquals("http", remote.transport());
+        assertFalse(remote.enabled());
+        assertEquals("Bearer ${MCP_TOKEN}", remote.headers().get("Authorization"));
+    }
+
+    @Test
+    void mcpServersMergePerServerKey() throws IOException {
+        write(home.resolve(".jeorje"), "config.yaml", MCP_YAML);
+        write(cwd.resolve(".jeorje"), "config.yaml", "trust:\n  projects: []\nmcp:\n  servers:\n    files:\n      timeoutSeconds: 5\n");
+        var explicit = tmp.resolve("x.yaml");
+        Files.writeString(explicit, "mcp:\n  servers:\n    files:\n      timeoutSeconds: 9\n");
+        var servers = ConfigLoader.load(opts().withConfigFile(explicit)).config().mcp().servers();
+        assertEquals(9, servers.get("files").timeoutSeconds());
+        assertEquals(home + "/bin/files-server", servers.get("files").command());
+        assertTrue(servers.containsKey("remote"));
+    }
+
+    @Test
+    void mcpServerNeedsCommandOrUrlAndAGoodName() throws IOException {
+        for (var bad : java.util.List.of(
+                "mcp:\n  servers:\n    a:\n      transport: stdio\n",
+                "mcp:\n  servers:\n    a:\n      transport: http\n",
+                "mcp:\n  servers:\n    a:\n      transport: ftp\n      command: x\n",
+                "mcp:\n  servers:\n    Bad Name:\n      command: x\n")) {
+            write(home.resolve(".jeorje"), "config.yaml", bad);
+            assertThrows(ConfigException.class, () -> ConfigLoader.load(opts()), bad);
+        }
+    }
+
+    @Test
+    void untrustedProjectLosesMcp() throws IOException {
+        write(cwd.resolve(".jeorje"), "config.yaml", MCP_YAML);
+        var loaded = ConfigLoader.load(opts());
+        assertFalse(loaded.trusted());
+        assertTrue(loaded.config().mcp().servers().isEmpty());
+        assertTrue(loaded.warnings().stream().anyMatch(w -> w.contains("mcp")));
+    }
+
+    @Test
+    void mcpEnvAndHeaderValuesAreHidden() throws IOException {
+        write(home.resolve(".jeorje"), "config.yaml", MCP_YAML);
+        var text = ConfigLoader.load(opts()).toYaml();
+        assertFalse(text.contains("s3cret"), text);
+        assertFalse(text.contains("MCP_TOKEN"), text);
+        assertTrue(text.contains("GITHUB_TOKEN"), text);
+    }
 }

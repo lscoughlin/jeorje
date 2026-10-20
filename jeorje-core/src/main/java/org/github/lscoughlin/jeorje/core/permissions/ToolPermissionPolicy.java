@@ -229,6 +229,11 @@ public final class ToolPermissionPolicy implements PermissionPolicy {
 
     private Decision checkGeneric(String tool, JsonNode input) {
         var all = allRules();
+        if (tool.startsWith(DefaultRules.MCP_PREFIX)) {
+            // The remote server owns the meaning of the input. A path field is not a local path.
+            var ruled = Rule.resolve(all, tool, List.of(""));
+            return ruled != null ? ruled : DefaultRules.forTool(tool);
+        }
         var write = DefaultRules.WRITE_TOOLS.contains(tool);
         var subjects = new ArrayList<String>();
         var floor = Decision.ALLOW;
