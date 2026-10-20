@@ -477,6 +477,20 @@ class LuceneContextStoreTest {
     }
 
     @Test
+    void aFormAnswerIsFoundByAWordOfTheAnswerWithTheUserFilter() {
+        var form = "FORM Setup\nQUESTION db Which database?\nCHOICES sqlite | postgres\nANSWER db sqlite\n"
+            + "QUESTION note Anything else?\nANSWER note keep the zebrafish tables";
+        try (var s = store(null)) {
+            s.append(List.of(chunk("a", 1, 1, "mixed", null, "TOOL_RESULT read the zebrafish module list"),
+                chunk("a", 2, 0, "user", "ask_user", form)));
+            var hits = s.search(q("zebrafish", Syntax.TEXT, filters(Set.of(), OptionalInt.empty(), OptionalInt.empty(),
+                Set.of("user"), Set.of()), 5));
+            assertEquals(List.of("a:2.0"), ids(hits));
+            assertTrue(hits.getFirst().snippet().contains("QUESTION note"), hits.getFirst().snippet());
+        }
+    }
+
+    @Test
     void theUserBoostRaisesTheScoreOfUserChunks() {
         var text = "the answer is sqlite";
         var assistantFirst = List.of(chunk("a", 1, 0, "assistant", null, text), chunk("a", 2, 0, "user", null, text));
