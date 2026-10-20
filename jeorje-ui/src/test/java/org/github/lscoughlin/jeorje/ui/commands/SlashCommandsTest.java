@@ -77,11 +77,22 @@ class SlashCommandsTest {
     }
 
     @Test
+    void contextShowsTheReportOfTheBackendAndTakesNoArguments() {
+        var result = commands.execute("/context");
+        assertTrue(result.handled() && !result.error());
+        assertEquals("Context report.", result.output());
+        assertTrue(backend.calls.contains("context"));
+        var bad = commands.execute("/context now");
+        assertTrue(bad.error(), bad.output());
+        assertEquals("Usage: /context", bad.output());
+    }
+
+    @Test
     void completesNames() {
         var all = commands.complete("/").stream().map(Candidate::text).toList();
         assertTrue(all.containsAll(List.of("/help", "/model", "/quit", "/review", "/pdf", "/team:ship")));
         var co = commands.complete("/co").stream().map(Candidate::text).toList();
-        assertEquals(List.of("/commands", "/compact", "/compactor"), co);
+        assertEquals(List.of("/commands", "/compact", "/compactor", "/context"), co);
         assertEquals(List.of("/clear"), commands.complete("/cl").stream().map(Candidate::text).toList());
         var review = commands.complete("/rev").getFirst();
         assertEquals("/review", review.text());
@@ -108,7 +119,7 @@ class SlashCommandsTest {
     @Test
     void helpListsEverything() {
         var out = commands.execute("/help").output();
-        for (var name : List.of("/help", "/model", "/compactor", "/advisor", "/compact", "/pin", "/clear", "/recall",
+        for (var name : List.of("/help", "/model", "/compactor", "/advisor", "/compact", "/context", "/pin", "/clear", "/recall",
                 "/keys", "/init", "/instructions", "/skills", "/commands", "/agent-types", "/trust", "/cancel",
                 "/back", "/quit")) {
             assertTrue(out.contains(name), name);

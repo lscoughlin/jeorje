@@ -86,6 +86,14 @@ public final class StatusLine {
         var s = text();
         if (s.length() > w) s = s.substring(0, Math.max(0, w - 1)) + "…";
         var padded = s + " ".repeat(Math.max(0, w - s.length()));
-        return new AttributedString(padded, AttributedStyle.DEFAULT.inverse());
+        var style = contextPercent() >= WARN_PERCENT
+                ? AttributedStyle.DEFAULT.inverse().foreground(AttributedStyle.YELLOW) : AttributedStyle.DEFAULT.inverse();
+        return new AttributedString(padded, style);
     }
+
+    /** The context use at which the status line changes its color. */
+    public static final int WARN_PERCENT = 85;
+
+    /** The context use in percent, or -1 when it is unknown. */
+    public synchronized int contextPercent() { return contextPercent; }
 }

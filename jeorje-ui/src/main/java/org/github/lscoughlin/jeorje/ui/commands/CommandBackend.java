@@ -23,6 +23,12 @@ public interface CommandBackend {
     /** Runs compaction now and returns a one-line result. */
     String compactNow();
 
+    /**
+     * Tells how full the context of the foreground agent was at its last model call: the tokens of each part of the
+     * request, the budget, the results moved out of a running turn, and the turns that left the request.
+     */
+    String contextReport();
+
     /** Pins the last message and returns a one-line result. */
     String pinLast();
 

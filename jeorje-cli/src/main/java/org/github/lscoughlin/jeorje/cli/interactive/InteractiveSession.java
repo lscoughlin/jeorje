@@ -1390,6 +1390,14 @@ public final class InteractiveSession implements AutoCloseable {
                 + " tokens. The next request is smaller.";
     }
 
+    /** The context report of the foreground agent, for the {@code /context} command. */
+    String contextReport() {
+        var foreground = screen.foreground();
+        var target = foreground.equals(MAIN) ? agent : Agent.live(foreground).orElse(null);
+        if (target == null) return "The agent of this view is not running. There is no context to show.";
+        return target.contextReport().render();
+    }
+
     /** A compactor with a budget so small that every old chunk is over the hard limit. */
     private ContextCompactor hardCompactor(AgentId who) {
         var base = CompactionSettings.from(config.context(), window);
@@ -1441,6 +1449,11 @@ public final class InteractiveSession implements AutoCloseable {
         @Override
         public String compactNow() {
             return compactForeground();
+        }
+
+        @Override
+        public String contextReport() {
+            return InteractiveSession.this.contextReport();
         }
 
         @Override

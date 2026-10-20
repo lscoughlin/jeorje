@@ -49,6 +49,7 @@ final class FakeBackend implements CommandBackend {
     @Override public ModelRoles roles() { return roles; }
     @Override public void applyRoles(ModelRoles r) { applied.add(r); roles = r; }
     @Override public String compactNow() { calls.add("compact"); return "Compacted."; }
+    @Override public String contextReport() { calls.add("context"); return "Context report."; }
     @Override public String pinLast() { calls.add("pin"); return "Pinned."; }
     @Override public String clearConversation() { calls.add("clear"); return "Cleared."; }
     @Override public List<String> recall(String query) { calls.add("recall:" + query); return hits; }

@@ -294,6 +294,7 @@ public final class ChatView {
                 add(new TextEntry("[compacted: " + c.chunksPruned() + " chunks, " + c.tokensFreed()
                         + " tokens freed]", false, DIM));
             }
+            case AgentEvent.ContextUsage u -> { }
             case AgentEvent.ContextTrimmed t -> {
                 streaming = null;
                 var text = new StringBuilder("[context: ");

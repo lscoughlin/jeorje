@@ -112,8 +112,20 @@ public final class Agent implements AutoCloseable {
     private final List<Turn> completed = new ArrayList<>();
     /** The index in {@code completed} before which turns count as older, because the agent moved them out. */
     private int forcedStart;
+    /** Tools that are not read-only but never change the files of the workspace, so they keep the repeat guard. */
+    private static final java.util.Set<String> KEEPS_WORKSPACE = java.util.Set.of("ask_user", "todo", "advisor",
+        "plan_submit", "skill", "recall", "agent_status", "agent_message", "agent_ask", "agent_answer");
     /** The turn that already published a notice about a request that stays over the budget. */
     private int overBudgetNoticeTurn = -1;
+    private int spilledTotal;
+    private volatile ContextReport lastReport;
+
+    /** How full the context was at the last model call, or a report with no numbers before the first call. */
+    public ContextReport contextReport() {
+        var report = lastReport;
+        return report != null ? report
+            : new ContextReport(id.value(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, contextBuilder.budget(), 0, List.of());
+    }
     private final List<String> pinned = new ArrayList<>();
     /** The texts of the user for the running turn. {@link #steeringOpen} says whether a turn takes them. */
     private final Queue<String> steering = new ConcurrentLinkedQueue<>();
@@ -551,6 +563,7 @@ public final class Agent implements AutoCloseable {
                     var chars = (long) ((built.estimate() - target) * 4 / Math.max(0.25, contextBuilder.scale()));
                     var outcome = spill.spill(messages, chunker, chars);
                     if (outcome.spilled() > 0) {
+                        spilledTotal += outcome.spilled();
                         log.atDebug().log(() -> "spilled " + outcome.spilled() + " tool results of turn " + number);
                         publish(new AgentEvent.Compacted(id, outcome.spilled(), outcome.freedChars() / 4));
                         built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
@@ -558,6 +571,9 @@ public final class Agent implements AutoCloseable {
                     }
                 }
                 built = fitRecent(built, messages);
+                lastReport = ContextReport.of(id.value(), new ContextBuilder.Input(systemPrompt(),
+                    pinnedItems(messages), olderEntries(), recentTurns(), messages, definitions()), built, spilledTotal);
+                publish(new AgentEvent.ContextUsage(id, built.estimate(), built.budget()));
                 var assistant = callModel(built, token);
                 if (assistant.error() != null) {
                     publish(new AgentEvent.Error(id, assistant.error()));
@@ -1091,7 +1107,7 @@ public final class Agent implements AutoCloseable {
     private ToolResult finish(ToolUse use, ToolResultData data) {
         if (settings.repeatGuard()) {
             var tool = tools.get(use.tool());
-            if (tool != null && !tool.readOnly()) repeatGuard.invalidate();
+            if (tool != null && !tool.readOnly() && !KEEPS_WORKSPACE.contains(use.tool())) repeatGuard.invalidate();
             repeatGuard.record(use, data, turnNumber);
         }
         if (!data.updates().isEmpty()) state.apply(data.updates());

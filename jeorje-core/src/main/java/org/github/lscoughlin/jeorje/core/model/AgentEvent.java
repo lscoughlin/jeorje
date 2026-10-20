@@ -27,6 +27,12 @@ public sealed interface AgentEvent {
     record ContextTrimmed(AgentId agent, java.util.List<Integer> droppedTurns, int prunedChunks, boolean overBudget)
             implements AgentEvent {}
 
+    /**
+     * The size of the request of the last model call, as estimated tokens and the budget of the working context.
+     * The status line shows the share.
+     */
+    record ContextUsage(AgentId agent, int tokens, int budget) implements AgentEvent {}
+
     record Error(AgentId agent, String message) implements AgentEvent {}
 
     /**

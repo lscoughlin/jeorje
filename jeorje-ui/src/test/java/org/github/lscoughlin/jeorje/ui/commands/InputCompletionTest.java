@@ -49,9 +49,13 @@ class InputCompletionTest {
     @Test
     void severalCommandsGiveTheCommonPrefixAndTheList() {
         var result = completion.complete("/co");
-        assertEquals("/com", result.line());
+        assertEquals("/co", result.line(), "/context and /com... share only /co");
         assertTrue(result.shown().stream().anyMatch(s -> s.startsWith("/compact")), result.shown().toString());
         assertTrue(result.shown().stream().anyMatch(s -> s.startsWith("/commands")), result.shown().toString());
+        assertTrue(result.shown().stream().anyMatch(s -> s.startsWith("/context")), result.shown().toString());
+        var narrow = completion.complete("/com");
+        assertEquals("/com", narrow.line());
+        assertTrue(narrow.shown().stream().noneMatch(s -> s.startsWith("/context")), narrow.shown().toString());
     }
 
     @Test

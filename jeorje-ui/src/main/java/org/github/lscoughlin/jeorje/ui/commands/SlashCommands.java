@@ -186,6 +186,8 @@ public final class SlashCommands {
                 a -> role("compactor", a, true));
         register("advisor", "/advisor [slug|none]", "Set the advisor model (default " + DEFAULT_ADVISOR + "). none turns it off", a -> role("advisor", a, true));
         register("compact", "/compact", "Run compaction now", a -> CommandResult.ok(backend.compactNow()));
+        register("context", "/context", "Show how full the context is",
+                a -> a.isBlank() ? CommandResult.ok(backend.contextReport()) : CommandResult.fail("Usage: /context"));
         register("pin", "/pin", "Pin the last message", a -> CommandResult.ok(backend.pinLast()));
         register("clear", "/clear", "Start a fresh conversation",
                 a -> a.isBlank() ? CommandResult.ok(backend.clearConversation())
