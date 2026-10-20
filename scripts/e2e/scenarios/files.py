@@ -9,8 +9,10 @@ def run(check):
     env = harness.Env()
     try:
         p = env.project
-        # The app keeps its state in .jeorje/, so the ignore rules hide that directory from the tree.
-        p.write(".gitignore", ".jeorje/\n")
+        # The browser reads no .gitignore: it shows ignored.txt, which the file lists. The app keeps its state in
+        # .jeorje/sessions, which the browser hides by its own rule.
+        p.write(".gitignore", "ignored.txt\n")
+        p.write("ignored.txt", "ignored\n")
         p.write("alpha.txt", "alpha\n")
         p.write("notes.md", "notes\n")
         p.write("src/Gamma.java", "class Gamma {}\n")
@@ -29,9 +31,30 @@ def run(check):
         tree = s.view.text()
         check.ok("src/ comes before the files", 0 <= tree.find("src/") < tree.find("alpha.txt"), s.view.text())
         check.ok("the keys row shows", s.view.find("Up/Down move") is not None, s.view.text())
+        check.ok("the tree lists a path that .gitignore lists", s.view.find("ignored.txt") is not None, s.view.text())
+        check.ok("the tree lists .jeorje/", s.view.find("> .jeorje/") is not None, s.view.text())
 
-        # Down and Up move the selection
-        check.ok("src/ is selected first", s.view.find("*> src/") is not None, s.view.text())
+        # A glob in the filter limits the rows. Esc clears it.
+        s.send("/")
+        s.wait_idle(0.3)
+        s.send("*.md")
+        s.wait_idle(0.5)
+        check.ok("the title shows the glob", s.view.find("[filter: *.md]") is not None, s.view.text())
+        check.ok("the glob keeps notes.md", s.view.find("notes.md") is not None, s.view.text())
+        check.ok("the glob hides alpha.txt", s.view.find("alpha.txt") is None, s.view.text())
+        check.ok("the glob hides ignored.txt", s.view.find("ignored.txt") is None, s.view.text())
+        s.key("Esc")
+        s.wait_idle(0.5)
+        check.ok("Esc clears the glob and the tree returns", s.view.find("alpha.txt") is not None
+                 and s.view.find("[filter:") is None, s.view.text())
+        check.ok("the pane stays open after Esc in the filter", s.view.find("open/close, ") is not None,
+                 s.view.text())
+
+        # Down and Up move the selection. .jeorje/ is the first row, so one Down reaches src/.
+        check.ok(".jeorje/ is selected first", s.view.find("*> .jeorje/") is not None, s.view.text())
+        s.key("Down")
+        s.wait_idle(0.3)
+        check.ok("src/ is selected next", s.view.find("*> src/") is not None, s.view.text())
         s.key("Down")
         s.wait_idle(0.3)
         check.ok("Down selects the next row", s.view.find("*  .gitignore") is not None, s.view.text())
@@ -103,6 +126,16 @@ def run(check):
         s.key("Enter")
         check.ok("the list takes a filter", s.wait_for("(filter: ", 10) and s.view.find("Gamma.java") is not None,
                  s.view.text())
+        s.wait_idle(0.5)
+        s.send("/files list *.md")
+        s.key("Enter")
+        # The line "Files in ... (filter: *.md)" wraps on the screen, so wait for the row of the match.
+        check.ok("the list takes a glob", s.wait_for("*  notes.md", 10), s.view.text())
+        listing = s.view.text()
+        tail = listing[listing.rfind("> /files list *.md"):]
+        check.ok("the glob list has notes.md", "notes.md" in tail, tail)
+        check.ok("the glob list has no alpha.txt", "alpha.txt" not in tail, tail)
+        check.ok("the glob list has no src/", "src/" not in tail, tail)
         s.wait_idle(0.5)
 
         # an @path mention adds the file to the next message
