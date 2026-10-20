@@ -155,11 +155,13 @@ final class ConfigDefaults {
             logging:
               level: INFO
               file: ${HOME}/.jeorje/logs/jeorje.log
+            mcp:
+              servers: {}
             """;
 
     /** Maps with user-chosen keys. The unknown-key check stops here. */
     static final Set<String> FREE_FORM = Set.of("llm.headers", "ui.chat.highlight.aliases", "ui.keys",
-            "editor.keys", "context.windows");
+            "editor.keys", "context.windows", "mcp.servers");
 
     /** Maps that a layer replaces as one unit. Unset fields come back to the defaults. */
     static final Set<String> ATOMIC = Set.of("prompts.system", "prompts.compaction");
@@ -171,6 +173,16 @@ final class ConfigDefaults {
 
     /** Keys that hold secrets. Output hides them. */
     static final Set<String> SECRET_KEYS = Set.of("swarm.token");
+
+    /** True for a value that holds a secret: a listed key, or an MCP server env or header value. */
+    static boolean isSecret(String path) {
+        if (SECRET_KEYS.contains(path)) {
+            return true;
+        }
+        var parts = path.split("\\.");
+        return parts.length >= 5 && parts[0].equals("mcp") && parts[1].equals("servers")
+                && (parts[3].equals("env") || parts[3].equals("headers"));
+    }
 
     static final Set<String> RULE_KEYS = Set.of("tool", "pattern", "decision");
 

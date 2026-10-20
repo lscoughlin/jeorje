@@ -4,11 +4,11 @@ import java.util.LinkedHashSet;
 import java.util.concurrent.TimeUnit;
 
 /** Kills a process and all its descendants. */
-final class ProcessTree {
+public final class ProcessTree {
     private ProcessTree() {}
 
     /** Kills the descendants first, then the process. It repeats to catch new children. */
-    static void kill(Process process) {
+    public static void kill(Process process) {
         var handle = process.toHandle();
         var seen = new LinkedHashSet<ProcessHandle>();
         for (var round = 0; round < 3; round++) {

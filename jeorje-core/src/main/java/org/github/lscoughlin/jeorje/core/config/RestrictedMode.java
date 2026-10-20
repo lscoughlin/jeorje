@@ -15,7 +15,7 @@ final class RestrictedMode {
     static final List<String> IGNORED = List.of("permissions.extraDirectories", "permissions.webfetch.allow",
             "tools.extensions", "tools.bash.shell", "prompts.*", "skills.dirs", "skills.compat",
             "skills.honorAllowedTools", "agents.dirs", "editor.syntax.dirs", "swarm.*", "llm.baseUrl",
-            "llm.headers", "models.*");
+            "llm.headers", "models.*", "mcp.*");
 
     private RestrictedMode() {
     }

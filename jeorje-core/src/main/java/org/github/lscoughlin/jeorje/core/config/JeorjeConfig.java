@@ -15,7 +15,7 @@ import java.util.Map;
 public record JeorjeConfig(Llm llm, Models models, Context context, Index index, Permissions permissions,
                            Swarm swarm, Tools tools, Instructions instructions, Skills skills, Trust trust,
                            Agents agents, Plan plan, Subagents subagents, Worktree worktree,
-                           Implement implement, Prompts prompts, Ui ui, Editor editor, Logging logging) {
+                           Implement implement, Prompts prompts, Ui ui, Editor editor, Logging logging, Mcp mcp) {
 
     /** The built-in defaults. */
     public static JeorjeConfig defaults() {
@@ -247,5 +247,31 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
     }
 
     public record Logging(String level, String file) {
+    }
+
+    /** MCP client settings. The map key of each server is its name. */
+    public record Mcp(Map<String, McpServer> servers) {
+        public Mcp {
+            servers = servers == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(servers));
+        }
+    }
+
+    /**
+     * One MCP server. The transport is {@code stdio} or {@code http}. A stdio server uses command,
+     * args, cwd, env, and envFrom. An http server uses url and headers. A header value can hold
+     * {@code ${NAME}}, which the client replaces with the environment variable at connect time.
+     */
+    public record McpServer(String transport, String command, List<String> args, String cwd,
+                            Map<String, String> env, List<String> envFrom, String url,
+                            Map<String, String> headers, Integer timeoutSeconds, Boolean enabled) {
+        public McpServer {
+            transport = transport == null || transport.isBlank() ? "stdio" : transport;
+            args = list(args);
+            envFrom = list(envFrom);
+            env = env == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(env));
+            headers = headers == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(headers));
+            timeoutSeconds = timeoutSeconds == null ? 60 : timeoutSeconds;
+            enabled = enabled == null || enabled;
+        }
     }
 }
