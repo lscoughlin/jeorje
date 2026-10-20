@@ -48,7 +48,7 @@ public final class FileBrowserPane implements Pane<Path> {
         return "Files" + (browser.filter().isEmpty() ? "" : " [filter: " + browser.filter() + "]")
                 + " - Up/Down move, " + shown("browserOpen", "Right") + "/" + shown("browserClose", "Left")
                 + " open/close, " + shown("browserEdit", "Enter") + " pick, " + shown("browserFilter", "/")
-                + " filter, " + shown("browserHidden", ".") + " ignored, " + shown("browserExit", "Esc") + " cancel";
+                + " filter, " + shown("browserHidden", ".") + " hidden, " + shown("browserExit", "Esc") + " cancel";
     }
 
     @Override
@@ -107,7 +107,7 @@ public final class FileBrowserPane implements Pane<Path> {
             case "browserEdit" -> browser.enter();
             case "browserAdd" -> browser.addSelected();
             case "browserFilter" -> browser.startFilter();
-            case "browserHidden" -> browser.toggleIgnored();
+            case "browserHidden" -> browser.toggleHidden();
             case "browserExit" -> browser.close();
             default -> { }
         }

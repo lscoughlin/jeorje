@@ -35,6 +35,7 @@ All output is formatted in ASD-STE100 Simplified Technical English: short senten
 - Use `var` wherever possible.
 - Prefer enhanced (arrow-form) `switch` statements and expressions.
 - Log with the lazy fluent form: `log.atLevel(level).log(() -> "stuff")`.
+- Only git reads `.gitignore`. Jeorje code never reads it to hide, skip, or filter paths. Jeorje may write `.jeorje/.gitignore`.
 
 ## Tech Stack
 

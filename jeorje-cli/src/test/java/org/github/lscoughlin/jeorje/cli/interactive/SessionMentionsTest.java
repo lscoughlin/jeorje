@@ -58,4 +58,14 @@ class SessionMentionsTest {
     void aPathOutsideTheWorkingDirectoryAddsNothing() {
         assertTrue(paths("@../escape.txt").isEmpty());
     }
+
+    @Test
+    void pathsThatGitignoreListsStillCount() throws IOException {
+        Files.writeString(tmp.resolve(".gitignore"), "build/\n*.log\n");
+        Files.createDirectories(tmp.resolve("build"));
+        Files.writeString(tmp.resolve("build/out.class"), "x");
+        Files.writeString(tmp.resolve("debug.log"), "x");
+        assertEquals(List.of("build/out.class", "debug.log"), paths("@build/out.class and @debug.log"));
+        assertEquals(List.of("build"), paths("@build"));
+    }
 }
