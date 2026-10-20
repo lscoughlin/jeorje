@@ -19,14 +19,20 @@ public final class LsTool extends RecordTool<LsTool.Input> {
     public record Input(
             @Describe("Directory to list. Default is the working directory.") String path,
             @Describe("Number of entries to skip. Default 0.") Integer offset,
-            @Describe("Most entries to return. Default 500.") Integer limit) {}
+            @Describe("Most entries to return. Default 500.") Integer limit,
+            @Describe("Also search build and editor directories, such as target and node_modules. Default false.")
+            Boolean includeIgnored) {}
 
     private final SearchSupport support;
 
     public LsTool(PermissionPolicy policy) {
+        this(policy, SearchOptions.defaults());
+    }
+
+    public LsTool(PermissionPolicy policy, SearchOptions options) {
         super("ls", "List the entries of a directory. Directories come first and end with /. "
                 + "Files show their size in bytes.", Input.class, true);
-        this.support = new SearchSupport(policy, "ls");
+        this.support = new SearchSupport(policy, "ls", options);
     }
 
     @Override
@@ -40,10 +46,16 @@ public final class LsTool extends RecordTool<LsTool.Input> {
         if (!Files.isDirectory(root)) return ToolResultData.error("Not a directory: " + input.path());
         var entries = new ArrayList<Path>();
         var hidden = 0;
+        var ignored = 0;
+        var includeIgnored = Boolean.TRUE.equals(input.includeIgnored());
         try (var stream = Files.newDirectoryStream(root)) {
             for (var entry : stream) {
                 context.cancel().throwIfCancelled();
-                if (support.allowed(entry)) entries.add(entry); else hidden++;
+                var name = entry.getFileName().toString();
+                var skip = Files.isDirectory(entry) ? support.options().skipsDir(name) : support.options().skipsFile(name);
+                if (skip && !includeIgnored) ignored++;
+                else if (support.allowedFile(entry)) entries.add(entry);
+                else hidden++;
             }
         } catch (IOException e) {
             return ToolResultData.error("Cannot list " + root + ": " + e.getMessage());
@@ -74,6 +86,7 @@ public final class LsTool extends RecordTool<LsTool.Input> {
             out.append("[").append(entries.size() - end).append(" more entries. Use offset ")
                     .append(end).append(" to continue.]\n");
         }
+        if (ignored > 0) out.append(SearchSupport.skippedNote(ignored));
         if (hidden > 0) out.append("[").append(hidden).append(" entries hidden by the permission policy.]\n");
         return ToolResultData.ok(out.toString());
     }

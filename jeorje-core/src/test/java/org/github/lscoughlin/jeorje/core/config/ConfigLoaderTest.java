@@ -74,6 +74,19 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void theSearchSkipListsHaveDefaultsAndCanChange() throws IOException {
+        var search = ConfigLoader.load(opts()).config().tools().search();
+        assertTrue(search.skipDirs().containsAll(java.util.List.of("target", "node_modules", ".idea")));
+        assertTrue(search.skipFiles().contains(".DS_Store"));
+        write(home.resolve(".jeorje"), "config.yaml", "tools:\n  search:\n    skipDirs: [dist]\n");
+        var changed = ConfigLoader.load(opts()).config().tools().search();
+        assertEquals(java.util.List.of("dist"), changed.skipDirs());
+        assertTrue(changed.skipFiles().contains(".DS_Store"), "the other list keeps its default");
+        write(home.resolve(".jeorje"), "config.yaml", "tools:\n  search:\n    skipDirs: {a: 1}\n");
+        assertThrows(ConfigException.class, () -> ConfigLoader.load(opts()));
+    }
+
+    @Test
     void projectBeatsUser() throws IOException {
         write(home.resolve(".jeorje"), "config.yaml", "context:\n  recentTurns: 3\n");
         write(cwd.resolve(".jeorje"), "config.yaml", "context:\n  recentTurns: 9\n");

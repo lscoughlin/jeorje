@@ -71,6 +71,9 @@ final class ConfigDefaults {
               bash:
                 shell: /bin/sh
                 timeoutSeconds: 120
+              search:
+                skipDirs: [target, build, out, node_modules, .gradle, .idea, .vscode, __pycache__, .venv]
+                skipFiles: [.DS_Store, "*.class", "*.jar", "*.o", "*.so", "*.dylib", "*.pyc"]
               extensions: []
             instructions:
               enabled: true

@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.github.lscoughlin.jeorje.core.model.CancellationToken;
 import org.github.lscoughlin.jeorje.core.model.ToolUse;
+import org.github.lscoughlin.jeorje.core.permissions.ToolPermissionPolicy;
 import org.github.lscoughlin.jeorje.core.port.PermissionPolicy;
 import org.github.lscoughlin.jeorje.core.port.ToolContext;
 import tools.jackson.databind.json.JsonMapper;
@@ -27,10 +28,19 @@ final class SearchSupport {
 
     private final PermissionPolicy policy;
     private final String tool;
+    private final SearchOptions options;
 
-    SearchSupport(PermissionPolicy policy, String tool) {
+    SearchSupport(PermissionPolicy policy, String tool, SearchOptions options) {
         this.policy = policy;
         this.tool = tool;
+        this.options = options;
+    }
+
+    SearchOptions options() { return options; }
+
+    /** The text for the result when the tool skipped build or editor paths. */
+    static String skippedNote(int skipped) {
+        return "[" + skipped + " build or editor paths were skipped. Use includeIgnored to search them.]\n";
     }
 
     /** Thrown when a path is refused. The message goes to the model. */
@@ -40,10 +50,20 @@ final class SearchSupport {
         }
     }
 
-    /** True if the policy allows the tool to read this path. */
+    /** True if the policy allows the tool to read this path. The audit log gets one entry for the call. */
     boolean allowed(Path path) {
         var input = JSON.createObjectNode().put("path", path.toString());
         return policy.check(new ToolUse("search-" + tool, tool, input)) == PermissionPolicy.Decision.ALLOW;
+    }
+
+    /**
+     * True if the policy allows the tool to read this file of a tree walk. The policy writes an audit entry for
+     * a refusal only, so that a search of thousands of files does not fill the audit log.
+     */
+    boolean allowedFile(Path path) {
+        var input = JSON.createObjectNode().put("path", path.toString());
+        return policy.check(new ToolUse(ToolPermissionPolicy.SEARCH_FILE_PREFIX + tool, tool, input))
+                == PermissionPolicy.Decision.ALLOW;
     }
 
     /** Resolves the search root. A relative path is relative to the working directory. */
@@ -59,7 +79,8 @@ final class SearchSupport {
     }
 
     /** The files below a root, or the root itself if it is a file. The list is sorted by path. */
-    List<Path> files(Path root, CancellationToken cancel, AtomicInteger refused) throws IOException {
+    List<Path> files(Path root, CancellationToken cancel, AtomicInteger refused, AtomicInteger skipped,
+                     boolean includeIgnored) throws IOException {
         var out = new ArrayList<Path>();
         if (Files.isRegularFile(root)) {
             out.add(root);
@@ -69,7 +90,11 @@ final class SearchSupport {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                 cancel.throwIfCancelled();
-                if (!dir.equals(root) && SKIPPED_DIRECTORIES.contains(dir.getFileName().toString())) {
+                if (dir.equals(root)) return FileVisitResult.CONTINUE;
+                var name = dir.getFileName().toString();
+                if (SKIPPED_DIRECTORIES.contains(name)) return FileVisitResult.SKIP_SUBTREE;
+                if (!includeIgnored && options.skipsDir(name)) {
+                    skipped.incrementAndGet();
                     return FileVisitResult.SKIP_SUBTREE;
                 }
                 return FileVisitResult.CONTINUE;
@@ -79,7 +104,11 @@ final class SearchSupport {
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 cancel.throwIfCancelled();
                 if (!attrs.isRegularFile()) return FileVisitResult.CONTINUE;
-                if (allowed(file)) {
+                if (!includeIgnored && options.skipsFile(file.getFileName().toString())) {
+                    skipped.incrementAndGet();
+                    return FileVisitResult.CONTINUE;
+                }
+                if (allowedFile(file)) {
                     out.add(file);
                 } else {
                     refused.incrementAndGet();
