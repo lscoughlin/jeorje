@@ -206,6 +206,14 @@ public final class Wiring {
     public static ToolRegistry registry(JeorjeConfig config, PermissionPolicy policy,
                                         org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy network,
                                         AgentState state, String sessionId, boolean yolo) {
+        return registry(config, policy, network, state, sessionId, yolo, null);
+    }
+
+    /** The tools of the agent as a registry, with the tools of the MCP servers when {@code mcp} is not null. */
+    public static ToolRegistry registry(JeorjeConfig config, PermissionPolicy policy,
+                                        org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy network,
+                                        AgentState state, String sessionId, boolean yolo,
+                                        org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp) {
         var builtInNames = BUILT_IN_NAMES;
         var read = config.tools().read();
         var nestedOn = config.instructions().enabled() && read.directoryDocs().contains("AGENTS.md");
@@ -236,7 +244,40 @@ public final class Wiring {
                 .register(new RecallTool(sessionId, id -> id))
                 .register(new TodoTool())
                 .registerAll(extensionTools(config, builtInNames))
+                .registerAll(mcp == null ? List.<Tool>of() : mcp.tools())
                 .build();
+    }
+
+    /**
+     * Starts the MCP servers of the config and returns the manager, or null when there is nothing to start: no
+     * enabled server, or {@code --no-mcp}. A server that fails to start is reported in the status, not thrown.
+     */
+    public static org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp(
+            JeorjeConfig config, GlobalOptions options,
+            org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy network, Path cwd,
+            java.util.Map<String, String> environment) {
+        if (options.noMcp() || config.mcp().servers().values().stream().noneMatch(s -> s.enabled())) return null;
+        var reserved = new java.util.HashSet<>(BUILT_IN_NAMES);
+        extensionTools(config, BUILT_IN_NAMES).forEach(t -> reserved.add(t.definition().name()));
+        var manager = new org.github.lscoughlin.jeorje.tools.mcp.McpManager(config.mcp().servers(),
+                org.github.lscoughlin.jeorje.tools.mcp.McpManager.ClientFactory.standard(network, cwd, environment),
+                reserved);
+        manager.connect();
+        return manager;
+    }
+
+    /** The text of the {@code /mcp} command. */
+    public static String mcpReport(org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp, JeorjeConfig config,
+                                   boolean disabledByFlag) {
+        if (disabledByFlag) return "MCP is off: the session started with --no-mcp.";
+        if (config.mcp().servers().isEmpty()) return "No MCP servers are configured. Set mcp.servers in the config.";
+        if (mcp == null) return "No MCP server is enabled.";
+        var sb = new StringBuilder("MCP servers\n");
+        for (var status : mcp.status()) {
+            sb.append("  ").append(status.name()).append(": ").append(status.detail()).append('\n');
+            status.tools().forEach(t -> sb.append("    ").append(t).append('\n'));
+        }
+        return sb.toString().stripTrailing();
     }
 
     private static final java.util.Set<String> BUILT_IN_NAMES = java.util.Set.of("read", "write", "edit", "patch",
@@ -381,10 +422,12 @@ public final class Wiring {
         private final List<String> errors;
         private final SwarmBridge swarm;
         private final SubagentRuntime subagents;
+        private final org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp;
 
         Runtime(LoadedConfig loaded, Session session, SessionStore sessions, ContextStore store, Embedder embedder,
                 TranscriptWriter transcript, Agent agent, List<String> errors, SwarmBridge swarm,
-                SubagentRuntime subagents) {
+                SubagentRuntime subagents, org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp) {
+            this.mcp = mcp;
             this.swarm = swarm;
             this.subagents = subagents;
             this.loaded = loaded;
@@ -410,6 +453,9 @@ public final class Wiring {
         /** The swarm bridge, or null when the swarm is off. */
         public SwarmBridge swarm() { return swarm; }
 
+        /** The MCP manager, or null when no MCP server runs. */
+        public org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp() { return mcp; }
+
         /** The subagent runtime, or null when the swarm is off. */
         public SubagentRuntime subagents() { return subagents; }
 
@@ -431,6 +477,7 @@ public final class Wiring {
             agent.close();
             if (swarm != null) closeQuietly(swarm);
             if (subagents != null) closeQuietly(subagents);
+            if (mcp != null) closeQuietly(mcp);
             closeQuietly(transcript);
             closeQuietly(store);
             if (embedder instanceof AutoCloseable c) closeQuietly(c);
@@ -496,7 +543,8 @@ public final class Wiring {
         var grants = new SkillGrantPolicy(basePolicy, config.skills().honorAllowedTools());
         PermissionPolicy policy = grants;
         var state = new AgentState();
-        var registry = registry(config, grants, basePolicy.network(), state, session.id(), options.yolo());
+        var mcp = mcp(config, options, basePolicy.network(), cwd, env.env());
+        var registry = registry(config, grants, basePolicy.network(), state, session.id(), options.yolo(), mcp);
         var tools = new ArrayList<>(adapt(registry, state, scrubber));
         var window = contextWindow(loaded, roles.defaultModel());
         var skillRegistry = skills(config, env.home(), cwd, loaded.trusted());
@@ -571,6 +619,6 @@ public final class Wiring {
                 CompactionSettings.from(config.context(), window), id));
         log.atInfo().log(() -> "session " + session.id() + " opened in " + cwd + " with model "
                 + roles.defaultModel() + (embedder == null ? " (text-only index)" : ""));
-        return new Runtime(loaded, session, sessions, store, embedder, transcript, agent, errors, bridge, subagents);
+        return new Runtime(loaded, session, sessions, store, embedder, transcript, agent, errors, bridge, subagents, mcp);
     }
 }
