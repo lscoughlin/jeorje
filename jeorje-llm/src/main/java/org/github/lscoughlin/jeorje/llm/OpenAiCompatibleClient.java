@@ -111,7 +111,7 @@ public final class OpenAiCompatibleClient implements LlmClient {
         }
 
         private void call() throws Exception {
-            var json = mapper.writeValueAsString(wire.request(settings.model(), request));
+            var json = mapper.writeValueAsString(wire.request(settings.model(), request, settings.extraBody()));
             var http1 = buildRequest(json);
             for (var attempt = 1; ; attempt++) {
                 if (cancel.isCancelled()) return;

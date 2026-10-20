@@ -157,7 +157,23 @@ public final class Wiring {
                     : config.llm().apiKeyEnv();
             throw new CliException("No API key found. Set the environment variable " + String.join(" or ", names) + ".");
         }
-        return new OpenAiCompatibleClient(OpenAiSettings.fromConfig(config, model, key.get()));
+        var settings = OpenAiSettings.fromConfig(config, model, key.get());
+        if (!settings.extraBody().isEmpty() && EXTRA_BODY_LOGGED.compareAndSet(false, true)) {
+            log.atInfo().log(() -> "Extra fields in each model request: " + describeExtraBody(settings.extraBody()));
+        }
+        return new OpenAiCompatibleClient(settings);
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean EXTRA_BODY_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static final java.util.regex.Pattern SECRET_NAME = java.util.regex.Pattern.compile(
+            "(?i)key|token|secret|auth|password");
+
+    /** The extra body fields as text for the log. The value of a field with a secret-like name is hidden. */
+    static String describeExtraBody(java.util.Map<String, Object> extra) {
+        var parts = new ArrayList<String>();
+        new java.util.TreeMap<>(extra).forEach((k, v) -> parts.add(k + "=" + (SECRET_NAME.matcher(k).find() ? "***" : v)));
+        return String.join(", ", parts);
     }
 
     /**

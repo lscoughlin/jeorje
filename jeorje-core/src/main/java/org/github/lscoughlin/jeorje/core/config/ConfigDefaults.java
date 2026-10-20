@@ -16,6 +16,7 @@ final class ConfigDefaults {
               apiKeyEnv: [OPENROUTER_API_KEY]
               maxOutputTokens: 8192
               headers: {}
+              extraBody: {}
             models:
               default: ~deepseek/deepseek-flash-latest
               compactor: ""
@@ -167,7 +168,7 @@ final class ConfigDefaults {
             """;
 
     /** Maps with user-chosen keys. The unknown-key check stops here. */
-    static final Set<String> FREE_FORM = Set.of("llm.headers", "ui.chat.highlight.aliases", "ui.keys",
+    static final Set<String> FREE_FORM = Set.of("llm.headers", "llm.extraBody", "ui.chat.highlight.aliases", "ui.keys",
             "editor.keys", "context.windows", "mcp.servers");
 
     /** Maps that a layer replaces as one unit. Unset fields come back to the defaults. */
