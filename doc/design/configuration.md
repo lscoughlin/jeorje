@@ -31,7 +31,7 @@ Environment variables and command-line flags override file values. See [Preceden
 - `permissions.rules` is a list that adds. The rules of the project config come after the rules of the user config, so a project cannot drop a `deny` rule of the user.
 - `prompts.system` and `prompts.compaction` are replaced as a whole. If a later file sets one of them, the keys that it does not set return to their defaults.
 
-**Unknown keys.** A key that the config does not define is an error. The message names the key and the file. The keys under `llm.headers`, `ui.chat.highlight.aliases`, `ui.keys`, `editor.keys`, `context.windows`, and `mcp.servers` are free-form, so Jeorje does not check their names. A value of the wrong type or outside its range is also an error. The message names the key.
+**Unknown keys.** A key that the config does not define is an error. The message names the key and the file. The keys under `llm.headers`, `llm.extraBody`, `ui.chat.highlight.aliases`, `ui.keys`, `editor.keys`, `context.windows`, and `mcp.servers` are free-form, so Jeorje does not check their names. A value of the wrong type or outside its range is also an error. The message names the key.
 
 **Trust and the project config.** The project config comes from the repository. If the user has not trusted the project, Jeorje reads it in restricted mode: it can only make settings stricter (for example more `ask` and `deny` rules and lower limits). It cannot widen permissions, register executables, change prompts, or add directories. For each key that it ignores, Jeorje logs a warning. After the user trusts the project, Jeorje reads it in full. The list of ignored keys is in [instructions-and-skills.md](instructions-and-skills.md#trust). The user config and the file from `--config` are always read in full.
 
@@ -70,10 +70,13 @@ llm:
   headers:                           # optional
     HTTP-Referer: https://example.org
     X-Title: Jeorje
+  extraBody: {}                      # optional. Fields for the top level of each request body.
+  # extraBody:
+  #   provider: {order: [DeepInfra], allow_fallbacks: false}
 models:
   default: ~deepseek/deepseek-flash-latest   # OpenRouter slug. Set with /model.
   compactor: vendor/cheap-model  # optional. Set with /compactor. Empty means the fallback pruner.
-  advisor: vendor/strong-model   # optional. Set with /advisor. Empty removes the advisor tool.
+  advisor: ~deepseek/deepseek-pro-latest   # Set with /advisor. The value none turns the advisor off. Empty means the default.
 context:
   window: 128000                     # context window in tokens, for all models
   windows: {}                        # window in tokens for single models, by slug. It wins over window.

@@ -57,8 +57,8 @@ In plan mode the agent cannot change the workspace.
   The notes are system notes, not words of the user. See [agent-loop.md](agent-loop.md#token-budget). The repeat guard also works in plan mode. See [tools.md](tools.md#repeat-guard).
 - **Plan file.** `plan_submit` is the only tool that writes. It writes only to the plan directory (`plan.dir`, default `plan/`, relative to `${CWD}`). The plan directory is not inside `.jeorje`. It follows the `AGENTS.md` convention for plans, and the user can commit it.
 - **System prompt.** Jeorje adds a plan-mode section to the system prompt. It tells the agent to explore first, to ask the user when a requirement is open, and to write stories that a worker can finish with no other context.
-- **Review.** After `plan_submit`, the UI shows the plan. The user can edit it with `/plan edit`, ask the agent for changes, or leave plan mode with `/plan done`. A call of `plan_submit` for the same plan replaces the file, and Jeorje keeps the previous version as `<name>.prev.md`.
-- **Advisor.** If an advisor model is set, the agent can call `advisor` on the draft. The default plan-mode prompt tells it to do so before `plan_submit`.
+- **Review.** After `plan_submit`, the UI shows the plan. The user can edit it with `/plan edit`, ask the agent for changes, or leave plan mode with `/plan done`. A call of `plan_submit` for the same plan replaces the file, and Jeorje keeps the previous version as `<name>.prev.md`. A call with no `name` replaces the file that plan mode wrote before, also when the title changed. A call with a new `name` writes the new file and removes the earlier draft of plan mode, unless the user changed that file. Jeorje writes a front matter value in quotes when it has a colon and a space, a space and `#`, or a special first character, and the parser reads the value back.
+- **Advisor.** The advisor is on by default (`/advisor none` turns it off). The default plan-mode prompt tells the agent to call `advisor` on the draft before `plan_submit`, and to go on without it if the tool answers that the advisor is off.
 
 ### The `plan_submit` tool
 
@@ -156,7 +156,7 @@ A worker is a subagent. The orchestrator creates it with the rules of `spawn_age
 
 - **Name:** the story id and title, for example `S1 Token bucket class`.
 - **Model:** the `Model` of the story, or `implement.model`, or the default model (`/model`).
-- **Tools:** the full coding toolset without `spawn_agent`, `plan_submit`, and `ask_user`. A worker has `advisor` if an advisor model is set. It has the agent tools `agent_message`, `agent_ask`, `agent_answer`, and `agent_status` (see [Talking to other agents](subagents.md#talking-to-other-agents)), `recall`, and the read tool `story_read`. When worktrees are on, it has `sync_done` and `sync_abort`. It also has these story tools:
+- **Tools:** the full coding toolset without `spawn_agent`, `plan_submit`, and `ask_user`. A worker has `advisor` unless the advisor is off. It has the agent tools `agent_message`, `agent_ask`, `agent_answer`, and `agent_status` (see [Talking to other agents](subagents.md#talking-to-other-agents)), `recall`, and the read tool `story_read`. When worktrees are on, it has `sync_done` and `sync_abort`. It also has these story tools:
   - `task_done(taskId, note)` marks a task done. The orchestrator writes `[x]` in the plan file.
   - `story_done(summary, filesChanged)` ends the story. The worker calls it after it ran the verification and all acceptance criteria are true. The `summary` is a **draft** of the completion summary, with the labeled parts of [subagents.md](subagents.md#completion-summary) (outcome, done, files, branch, decisions, verification, open issues, keywords). The runtime writes the final summary after the merge back, because the final summary has the merge result and the resolved conflicts. See [Completion summary](subagents.md#completion-summary). The orchestrator gets the final summary as a `subagent_summary` chunk in its history. The draft goes to the review only. `story_done` is refused while a task of the story is not done.
   - `story_blocked(reason)` ends the attempt with a reason that the worker cannot fix.
@@ -211,7 +211,7 @@ Workers can run at the same time, so they must not change the same files in a ha
 After a worker calls `story_done`:
 
 1. After the worker finishes the sync, Jeorje runs the verification command of the story in the worktree of the worker with a shell. A failing command returns the worker to the state `RESOLVING` with the output. After three failed runs, the attempt fails (see [Failure](#failure)). A worker with no worktree gets two fix rounds.
-2. If `implement.review` is `advisor` and an advisor model is set, the advisor model gets: the story text, the `story_done` summary, the list of changed files, and the diff against the source branch. It returns `approve` or a list of problems. A list of problems ends the attempt (see [Failure](#failure)). If the review cannot run, Jeorje shows a notice and continues without it. The review runs one time for each attempt.
+2. If `implement.review` is `advisor` and the advisor is not `none`, the advisor model gets: the story text, the `story_done` summary, the list of changed files, and the diff against the source branch. It returns `approve` or a list of problems. A list of problems ends the attempt (see [Failure](#failure)). If the review cannot run, Jeorje shows a notice and continues without it. The review runs one time for each attempt.
 3. If both steps pass, Jeorje merges back and the story is done.
 
 The setting `implement.review: none` skips step 2. Step 1 always runs when the story or the plan has a verification command.

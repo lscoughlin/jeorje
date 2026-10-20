@@ -33,7 +33,8 @@ Each external concern has an interface in `jeorje-core`:
 
 - `LlmClient` streams a model response for a message list and tool definitions.
 - `ContextStore` adds turns, searches history, and returns chunks by id.
-- `Tool` is a named capability with a JSON schema and an `execute` method.
+- `Tool` is a named capability with a JSON schema, a `check` method for the input, and an `execute` method.
+- `TranscriptSink` takes the transcript rows: `writeMessage` for each final message of a running turn, and `writeTurn` for the end of a turn.
 - `PermissionPolicy` decides allow, ask, or deny for an action.
 - `Transport` sends and receives swarm messages.
 - `Embedder` converts text to a vector of fixed size.
