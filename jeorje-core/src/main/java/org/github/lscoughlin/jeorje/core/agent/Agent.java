@@ -506,6 +506,7 @@ public final class Agent implements AutoCloseable {
             var calls = 0;
             var total = 0;
             var emptyReplies = 0;
+            var spill = new TurnSpill(store, settings.sessionId(), id, number, clock);
             while (true) {
                 if (token.isCancelled()) break;
                 // A text of the user starts a new count, so the step limit gives the turn a new budget.
@@ -519,6 +520,17 @@ public final class Agent implements AutoCloseable {
                 total++;
                 var built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
                     olderEntries(), recentTurns(), messages, definitions()));
+                if (built.estimate() > spillTrigger(built.budget())) {
+                    var target = (long) (built.budget() * SPILL_TARGET_PERCENT / 100.0);
+                    var chars = (long) ((built.estimate() - target) * 4 / Math.max(0.25, contextBuilder.scale()));
+                    var outcome = spill.spill(messages, chunker, chars);
+                    if (outcome.spilled() > 0) {
+                        log.atDebug().log(() -> "spilled " + outcome.spilled() + " tool results of turn " + number);
+                        publish(new AgentEvent.Compacted(id, outcome.spilled(), outcome.freedChars() / 4));
+                        built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
+                            olderEntries(), recentTurns(), messages, definitions()));
+                    }
+                }
                 var assistant = callModel(built, token);
                 if (assistant.error() != null) {
                     publish(new AgentEvent.Error(id, assistant.error()));
@@ -549,7 +561,8 @@ public final class Agent implements AutoCloseable {
                 messages.add(new Message(Role.USER, List.copyOf(results)));
                 if (token.isCancelled()) break;
             }
-            finishTurn(new Turn(id, number, messages));
+            var finished = new Turn(id, number, messages);
+            finishTurn(finished, spill.full(finished));
             return new TurnOutcome(total, token.isCancelled(), closeSteering());
         } catch (RuntimeException | Error e) {
             closeSteering();
@@ -707,14 +720,28 @@ public final class Agent implements AutoCloseable {
             settings.instructionsFor(settings.workingDirectory()), plan));
     }
 
-    private void finishTurn(Turn turn) {
+    /** The share of the budget at which a spill of the turn that runs starts, from the soft trigger. */
+    private long spillTrigger(int budget) {
+        var compaction = compactor;
+        var percent = compaction == null ? 50 : compaction.settings().softPercent();
+        return (long) budget * percent / 100;
+    }
+
+    /** The share of the budget that a spill tries to reach. */
+    static final int SPILL_TARGET_PERCENT = 40;
+
+    /**
+     * @param turn the turn as the model saw it: a spilled result is a stub
+     * @param full the turn with the full text of every result, for the transcript
+     */
+    private void finishTurn(Turn turn, Turn full) {
         var now = clock.instant();
         synchronized (this) {
             completed.add(turn);
         }
         try {
             store.append(chunker.chunk(turn, now));
-            transcript.writeTurn(turn, now);
+            transcript.writeTurn(full, now);
         } catch (RuntimeException e) {
             log.atError().setCause(e).log(() -> "Cannot store turn " + turn.id());
             publish(new AgentEvent.Error(id, "Cannot store turn " + turn.id() + ": " + message(e)));
