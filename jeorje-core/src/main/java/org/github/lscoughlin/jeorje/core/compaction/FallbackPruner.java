@@ -10,7 +10,8 @@ import org.github.lscoughlin.jeorje.core.session.SessionManifest.Span;
 /**
  * Prunes without a model. It removes blank lines, repeated lines, English stop words, and then the lines with
  * the lowest score, until the text reaches the target. A line score is the sum of the inverse document
- * frequency of its terms. Lines with a path, an error word, or a number stay.
+ * frequency of its terms. Lines with a path, an error word, or a number stay. The stop-word stage never
+ * removes a negation word such as {@code not}, {@code never}, or a word that ends in {@code n't}.
  */
 public final class FallbackPruner {
     private record Tok(int start, int end, int line, boolean forced) {}
@@ -66,7 +67,8 @@ public final class FallbackPruner {
         // Stage 3: stop words.
         for (var k = 0; k < toks.size() && size(toks, alive) > goal; k++) {
             var t = toks.get(k);
-            if (alive[k] && !t.forced() && Tokens.STOP_WORDS.contains(text.substring(t.start(), t.end()).toLowerCase())) {
+            var word = text.substring(t.start(), t.end());
+            if (alive[k] && !t.forced() && !Tokens.isKeepWord(word) && Tokens.STOP_WORDS.contains(word.toLowerCase())) {
                 alive[k] = false;
             }
         }
