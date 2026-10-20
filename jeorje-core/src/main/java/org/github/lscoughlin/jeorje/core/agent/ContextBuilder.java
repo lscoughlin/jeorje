@@ -2,6 +2,7 @@ package org.github.lscoughlin.jeorje.core.agent;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 import org.github.lscoughlin.jeorje.core.compaction.ContextEntry;
 import org.github.lscoughlin.jeorje.core.model.Content;
 import org.github.lscoughlin.jeorje.core.model.LlmRequest;
@@ -42,9 +43,14 @@ public final class ContextBuilder {
      * @param estimate the estimate with the scale
      * @param droppedTurns recent turns that left the request to meet the budget
      * @param overBudget true if the request is still over the budget
+     * @param droppedTurnNumbers the numbers of the dropped turns, oldest first
      */
     public record Built(LlmRequest request, int rawEstimate, int estimate, int budget, int droppedTurns,
-                        boolean overBudget) {}
+                        boolean overBudget, List<Integer> droppedTurnNumbers) {
+        public Built {
+            droppedTurnNumbers = List.copyOf(droppedTurnNumbers);
+        }
+    }
 
     private final int contextWindow;
     private final int budgetPercent;
@@ -75,17 +81,26 @@ public final class ContextBuilder {
     public synchronized Built build(Input in) {
         var budget = budget();
         var turns = new ArrayList<>(in.recentTurns());
-        var dropped = 0;
+        var dropped = new ArrayList<Turn>();
         while (true) {
-            var request = request(in, turns);
+            var request = request(in, turns, dropped);
             var raw = rawEstimate(request);
             var scaled = (int) Math.ceil(raw * scale);
             if (scaled <= budget || turns.isEmpty()) {
-                return new Built(request, raw, scaled, budget, dropped, scaled > budget);
+                return new Built(request, raw, scaled, budget, dropped.size(), scaled > budget,
+                    dropped.stream().map(Turn::number).toList());
             }
-            turns.removeFirst();
-            dropped++;
+            dropped.add(turns.removeFirst());
         }
+    }
+
+    /** The line that tells the model that turns left the request. */
+    static String droppedNote(List<Turn> dropped) {
+        var numbers = dropped.stream().map(t -> Integer.toString(t.number())).collect(Collectors.joining(", "));
+        var agent = dropped.getFirst().agent().value();
+        var one = dropped.size() == 1;
+        return "[" + (one ? "Turn " : "Turns ") + numbers + " of " + agent + " left the context to fit the budget. "
+            + "Search " + (one ? "it" : "them") + " with recall (the filter kind user finds the words of the user).]";
     }
 
     /** The estimate of a request before the scale. */
@@ -113,11 +128,11 @@ public final class ContextBuilder {
         return (chars + 3) / 4 + 4;
     }
 
-    private LlmRequest request(Input in, List<Turn> turns) {
+    private LlmRequest request(Input in, List<Turn> turns, List<Turn> dropped) {
         var messages = new ArrayList<Message>();
         for (var turn : turns) messages.addAll(turn.messages());
         messages.addAll(in.current());
-        var preamble = preamble(in);
+        var preamble = preamble(in, dropped);
         if (!preamble.isEmpty()) {
             if (!messages.isEmpty() && messages.getFirst().role() == Role.USER) {
                 var first = messages.removeFirst();
@@ -132,15 +147,16 @@ public final class ContextBuilder {
         return new LlmRequest(in.system(), messages, in.tools(), maxOutputTokens);
     }
 
-    private static String preamble(Input in) {
+    private static String preamble(Input in, List<Turn> dropped) {
         var sb = new StringBuilder();
         if (!in.pinned().isEmpty()) {
             sb.append("[Pinned items]\n");
             for (var item : in.pinned()) sb.append(item).append("\n\n");
         }
-        if (!in.older().isEmpty()) {
+        if (!in.older().isEmpty() || !dropped.isEmpty()) {
             sb.append("[Earlier context]\n");
             for (var entry : in.older()) sb.append(entry.render()).append("\n\n");
+            if (!dropped.isEmpty()) sb.append(droppedNote(dropped)).append("\n\n");
         }
         return sb.toString().stripTrailing();
     }

@@ -25,6 +25,7 @@ final class ConfigDefaults {
               windows: {}
               budgetPercent: 60
               recentTurns: 6
+              recentMaxPercent: 40
               compaction:
                 softPercent: 50
                 hardPercent: 80
@@ -71,6 +72,9 @@ final class ConfigDefaults {
               bash:
                 shell: /bin/sh
                 timeoutSeconds: 120
+              search:
+                skipDirs: [target, build, out, node_modules, .gradle, .idea, .vscode, __pycache__, .venv]
+                skipFiles: [.DS_Store, "*.class", "*.jar", "*.o", "*.so", "*.dylib", "*.pyc"]
               extensions: []
             instructions:
               enabled: true
@@ -89,8 +93,10 @@ final class ConfigDefaults {
             agents:
               dirs: []
               stepLimit: 200
+              repeatGuard: true
             plan:
               dir: plan
+              maxExploreCalls: 40
             subagents:
               askTimeoutSeconds: 120
               maxAsks: 10

@@ -75,7 +75,7 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
      * @param windows the context window in tokens for single models, by model slug. It wins over window.
      */
     public record Context(int window, Map<String, Integer> windows, int budgetPercent, int recentTurns,
-                          Compaction compaction) {
+                          int recentMaxPercent, Compaction compaction) {
         public Context {
             windows = windows == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(windows));
         }
@@ -148,7 +148,16 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
     public record Bash(String shell, int timeoutSeconds) {
     }
 
-    public record Tools(Read read, Diff diff, Patch patch, Bash bash, List<Map<String, Object>> extensions) {
+    /** The names that {@code grep}, {@code glob}, and {@code ls} skip. */
+    public record Search(List<String> skipDirs, List<String> skipFiles) {
+        public Search {
+            skipDirs = list(skipDirs);
+            skipFiles = list(skipFiles);
+        }
+    }
+
+    public record Tools(Read read, Diff diff, Patch patch, Bash bash, Search search,
+                        List<Map<String, Object>> extensions) {
         public Tools {
             extensions = extensions == null ? List.of()
                     : extensions.stream().map(JeorjeConfig::freezeMap).toList();
@@ -176,13 +185,13 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
     }
 
     /** The agent keys. {@code stepLimit} is the number of model calls in one turn. */
-    public record Agents(List<String> dirs, int stepLimit) {
+    public record Agents(List<String> dirs, int stepLimit, boolean repeatGuard) {
         public Agents {
             dirs = list(dirs);
         }
     }
 
-    public record Plan(String dir) {
+    public record Plan(String dir, int maxExploreCalls) {
     }
 
     /** The subagent keys. {@code stepLimit} is the number of model calls of one subagent task. */

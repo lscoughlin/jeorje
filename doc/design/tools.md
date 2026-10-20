@@ -71,7 +71,21 @@ A registry can make restricted copies of itself: `only` (named tools), `without`
 | `task_done`, `story_done`, `story_blocked` | no | Report progress of a story. Only for `/implement` workers. See [planning.md](planning.md#workers). |
 | `advisor` | yes | Ask the advisor model for a review of the conversation. Jeorje registers it only when an advisor model is set. |
 
-The tools `ls`, `glob`, and `grep` skip `.git` and `.jeorje` directories. They also skip each file that the permission policy does not allow. A search tool cannot ask the user, so it treats `ASK` like `DENY`. Other tools refuse a call only when the policy returns `DENY`. The agent loop handles `ASK`. See [permissions-and-safety.md](permissions-and-safety.md).
+The tools `ls`, `glob`, and `grep` always skip `.git` and `.jeorje` directories. They also skip each file that the permission policy does not allow. A search tool cannot ask the user, so it treats `ASK` like `DENY`. Other tools refuse a call only when the policy returns `DENY`. The agent loop handles `ASK`. See [permissions-and-safety.md](permissions-and-safety.md).
+
+**Build and editor paths.** The three tools also skip build output and editor files at any depth, so that a search does not read thousands of generated files. The config keys `tools.search.skipDirs` and `tools.search.skipFiles` set the names. The defaults are the directories `target`, `build`, `out`, `node_modules`, `.gradle`, `.idea`, `.vscode`, `__pycache__`, and `.venv`, and the files `.DS_Store`, `*.class`, `*.jar`, `*.o`, `*.so`, `*.dylib`, and `*.pyc`. A name that starts with `*` matches the end of the file name. The tools do not read `.gitignore` for this. A call can set the optional field `includeIgnored` to `true`: the tool then searches these names too. A search that starts inside a skipped directory (the `path` of the call) searches it. When a tool skipped paths, the result ends with `[<n> build or editor paths were skipped. Use includeIgnored to search them.]`. `ls` hides the skipped entries of a directory in the same way.
+
+**Audit.** A search tool asks the permission policy once for the root of the call. For each file of the tree it asks again, but the audit log gets a line only when the policy refuses the file. A search over 2,000 files therefore writes one line, and a refused file is still in the log.
+
+### Repeat guard
+
+An agent can read the same thing again and again after it forgot what it read. The repeat guard stops this for the tools `read`, `ls`, `glob`, and `grep`. The config key `agents.repeatGuard` (default `true`) turns it on or off. When the guard is on, a call that repeats an earlier call does not run if nothing changed. The calls are the same when the tool and the input are the same. For `read`, the file must also have the same size and modification time. A tool that changes the workspace (any tool that is not read-only, except `ask_user`, `todo`, `advisor`, `plan_submit`, `skill`, `recall`, and the `agent_*` tools) makes the guard forget all earlier calls. A call that gave an error is not remembered. The result of a repeated call is:
+
+```
+Already done in turn <n>: <tool> <input>. The result is in your context or in the history. Use recall with the query "<path or pattern>" to read it again, or change the range.
+```
+
+The third repeat in one turn adds `Stop reading. Use what you have, or write the plan now.` A call with another `offset`, `limit`, pattern, or path runs. `/clear` resets the guard.
 
 ### read
 

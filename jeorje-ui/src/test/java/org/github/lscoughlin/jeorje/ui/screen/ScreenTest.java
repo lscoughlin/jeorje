@@ -56,6 +56,20 @@ class ScreenTest {
     }
 
     @Test
+    void theContextUsageOfTheForegroundAgentSetsTheStatusLine() throws Exception {
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults());
+            screen.apply(new AgentEvent.ContextUsage(MAIN, 30_000, 60_000));
+            assertTrue(screen.status().text().contains("ctx 50%"), screen.status().text());
+            screen.apply(new AgentEvent.ContextUsage(new AgentId("sub1"), 59_000, 60_000));
+            assertTrue(screen.status().text().contains("ctx 50%"), "another agent does not change it");
+            screen.apply(new AgentEvent.ContextUsage(MAIN, 54_000, 60_000));
+            assertTrue(screen.status().text().contains("ctx 90%"), screen.status().text());
+            assertEquals(90, screen.status().contextPercent());
+        }
+    }
+
+    @Test
     void clearEmptiesTheScreenAndDrawsEveryRowAgain() throws Exception {
         try (var ft = new FakeTerminal(60, 12)) {
             var screen = new Screen(ft.terminal, Screen.Options.defaults());

@@ -365,11 +365,15 @@ public final class ConfigLoader {
     private void validate(JeorjeConfig c) {
         require(c.llm().provider().equals("openai-compatible"), "llm.provider", "must be openai-compatible");
         require(percent(c.context().budgetPercent()), "context.budgetPercent", "must be 0 to 100");
+        require(c.context().recentMaxPercent() >= 1 && c.context().recentMaxPercent() <= 100,
+                "context.recentMaxPercent", "must be 1 to 100");
         require(percent(c.context().compaction().softPercent()), "context.compaction.softPercent", "must be 0 to 100");
         require(percent(c.context().compaction().hardPercent()), "context.compaction.hardPercent", "must be 0 to 100");
         require(c.context().compaction().softPercent() <= c.context().compaction().hardPercent(),
                 "context.compaction.softPercent", "must not be above hardPercent");
         require(c.index().userBoost() > 0, "index.userBoost", "must be above 0");
+        require(c.plan().maxExploreCalls() >= 5 && c.plan().maxExploreCalls() <= 500, "plan.maxExploreCalls",
+                "must be 5 to 500");
         require(c.tools().patch().fuzz() >= 0 && c.tools().patch().fuzz() <= 3, "tools.patch.fuzz", "must be 0 to 3");
         require(Set.of("fail", "markers").contains(c.tools().patch().conflicts()), "tools.patch.conflicts",
                 "must be fail or markers");

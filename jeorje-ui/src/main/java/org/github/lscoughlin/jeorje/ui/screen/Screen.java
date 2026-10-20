@@ -386,6 +386,8 @@ public final class Screen implements AutoCloseable {
             }
             case AgentEvent.Error e when !e.agent().equals(foreground) ->
                     status.notice(e.agent() + ": " + e.message());
+            case AgentEvent.ContextUsage u when event.agent().equals(foreground) ->
+                    status.contextPercent(u.budget() <= 0 ? -1 : (int) Math.min(999, Math.round(u.tokens() * 100.0 / u.budget())));
             case AgentEvent.TurnFinished t when event.agent().equals(foreground) -> status.state("idle");
             case AgentEvent.TokenDelta d when event.agent().equals(foreground) -> status.state("working");
             default -> {}

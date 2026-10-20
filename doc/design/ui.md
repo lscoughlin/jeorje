@@ -22,7 +22,7 @@ The interface is in `jeorje-ui`. It uses JLine 4 (`org.jline:jline`). The parent
 
 - The **chat view** shows the conversation of the foreground agent. It uses all rows above the input line. A permission prompt appears as a box at the bottom of this region. A pane (the agent switcher or the file browser) replaces the chat view while it is open.
 - The **input line** is owned by a JLine `LineReader`. It has history and multi-line input. The history file is `${HOME}/.jeorje/history`. `Alt-Enter` adds a new line. The input area grows with the text, up to three rows less than the terminal height. `Tab` completes the text before the cursor. See [Tab completion](#tab-completion).
-- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the context use as a percent of the budget), `peers n` (the number of live peers), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
+- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the estimated size of the last request as a percent of the budget; the whole status line changes its color from 85%), `peers n` (the number of live peers), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
 
 JLine `Display` draws the chat region. It writes only the lines that change. The status line is written directly to the last row after each draw. The input line belongs to the `LineReader`, which draws its own rows. A permission prompt interrupts the input read. While the prompt waits, the screen reads the answer keys itself. After the answer, the input read starts again and keeps the text that the user had typed.
 
@@ -33,7 +33,8 @@ JLine `Display` draws the chat region. It writes only the lines that change. The
 - Markdown output has basic styling: headings, lists, bold text, code blocks, and inline code. Code blocks keep their whitespace, except that a tab becomes four spaces.
 - A tool call shows one line: the tool name and a short form of the input. A tool result is collapsed by default. It shows its first line and, for a longer result, the number of lines and the hint `Ctrl-X o to expand`. The user can expand the last tool result, and collapse it again, with `Ctrl-X o`. A click on a collapsed result line expands it. See [Mouse in the chat view](#mouse-in-the-chat-view).
 - `edit` results show a colored diff.
-- A `Compacted` event shows a dim line that gives the number of chunks that Jeorje pruned and the tokens it freed.
+- A `Compacted` event shows a dim line that gives the number of chunks that Jeorje pruned and the tokens it freed. A spill of the running turn gives the same line, with the number of results that the agent moved out.
+- A `ContextTrimmed` event shows a line in the error color: `[context: <n> chunks pruned to fit the budget, turn <n> left the request (use recall); the request is still over the budget]`. The parts show only when they apply. It means that the request did not fit the budget.
 - The view keeps the last 10,000 logical lines of each agent. `PgUp` and `PgDn` scroll by a page. Each agent has its own chat view.
 - Syntax highlighting of code and diffs is described in [Syntax highlighting in the chat view](#syntax-highlighting-in-the-chat-view). The interactive launcher turns it on at startup.
 - When the user scrolls above the first line, the view loads older lines from `transcript.jsonl`. See [Mouse in the chat view](#mouse-in-the-chat-view).
@@ -426,6 +427,7 @@ The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of li
 | `/files [list [filter]]` | Open the file browser, or print the file tree. `Ctrl-X f` opens the browser pane. |
 | `/edit <path>` | Open a file in the editor |
 | `/compact` | Run compaction now |
+| `/context` | Show how full the context of the foreground agent was at its last model call: the tokens of the system prompt, the tool definitions, the pinned items, the earlier context, the recent turns, and the current turn, the share of the budget, the results moved out of a running turn, and the turns that left the request |
 | `/compactor [slug\|off]` | Show or set the compactor model for this session |
 | `/advisor [slug\|none]` | Set the advisor model for this session. With no slug, it sets `~deepseek/deepseek-pro-latest`. `none` turns the advisor off |
 | `/plan [goal\|show\|edit\|done\|cancel]` | Enter, show, edit, or leave plan mode. See [planning.md](planning.md). |

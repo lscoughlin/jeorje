@@ -26,6 +26,19 @@ class StatusAndPromptTest {
     }
 
     @Test
+    void theStatusLineWarnsWhenTheContextIsAlmostFull() {
+        var s = new StatusLine().agent("main").contextPercent(84);
+        var normal = s.render(60).styleAt(0);
+        assertEquals(84, s.contextPercent());
+        s.contextPercent(StatusLine.WARN_PERCENT);
+        var warn = s.render(60).styleAt(0);
+        assertTrue(!normal.equals(warn), "the color changes at " + StatusLine.WARN_PERCENT + "%");
+        s.contextPercent(-1);
+        assertTrue(!s.text().contains("ctx"));
+        assertEquals(normal, s.render(60).styleAt(0));
+    }
+
+    @Test
     void noticesKeepTheLastThree() {
         var s = new StatusLine();
         for (var i = 1; i <= 5; i++) s.notice("n" + i);

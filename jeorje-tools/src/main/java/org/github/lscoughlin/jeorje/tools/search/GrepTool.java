@@ -41,14 +41,20 @@ public final class GrepTool extends RecordTool<GrepTool.Input> {
             @Describe("content (default) shows matching lines, files lists the files, count gives counts.")
             String outputMode,
             @Describe("Number of results to skip. Default 0.") Integer offset,
-            @Describe("Most results to return. Default 250.") Integer limit) {}
+            @Describe("Most results to return. Default 250.") Integer limit,
+            @Describe("Also search build and editor directories, such as target and node_modules. Default false.")
+            Boolean includeIgnored) {}
 
     private final SearchSupport support;
 
     public GrepTool(PermissionPolicy policy) {
+        this(policy, SearchOptions.defaults());
+    }
+
+    public GrepTool(PermissionPolicy policy, SearchOptions options) {
         super("grep", "Search file content with a regular expression. Gives line numbers, optional "
                 + "context lines, and file filters. Binary and very large files are skipped.", Input.class, true);
-        this.support = new SearchSupport(policy, "grep");
+        this.support = new SearchSupport(policy, "grep", options);
     }
 
     @Override
@@ -75,7 +81,8 @@ public final class GrepTool extends RecordTool<GrepTool.Input> {
         var limit = SearchSupport.limit(input.limit(), DEFAULT_LIMIT, 100_000);
 
         var refused = new AtomicInteger();
-        var files = support.files(root, context.cancel(), refused);
+        var ignored = new AtomicInteger();
+        var files = support.files(root, context.cancel(), refused, ignored, Boolean.TRUE.equals(input.includeIgnored()));
         var skipped = 0;
         var out = new StringBuilder();
         var seen = 0;       // results seen so far (lines, files, or counts)
@@ -138,6 +145,7 @@ public final class GrepTool extends RecordTool<GrepTool.Input> {
         if (refused.get() > 0) {
             out.append("[").append(refused.get()).append(" files skipped by the permission policy.]\n");
         }
+        if (ignored.get() > 0) out.append(SearchSupport.skippedNote(ignored.get()));
         return ToolResultData.ok(out.toString());
     }
 

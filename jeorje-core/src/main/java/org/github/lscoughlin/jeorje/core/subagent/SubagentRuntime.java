@@ -493,7 +493,8 @@ public final class SubagentRuntime implements AutoCloseable {
             var childSettings = new AgentSettings(sessionId, workdir, settings.contextWindowTokens(),
                 settings.budgetPercent(), settings.maxOutputTokens(), settings.recentTurns(),
                 maxCalls, settings.retry(), settings.systemPrompt(), fixed,
-                settings.sleeper(), null, settings.maxProtectedTokens());
+                settings.sleeper(), null, settings.maxProtectedTokens(), settings.recentMaxPercent(),
+                settings.repeatGuard());
             if (settings.hasInstructionsSource()) {
                 childSettings = childSettings.withInstructionsSource(dir -> {
                     var parentText = settings.instructionsFor(dir);

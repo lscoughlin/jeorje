@@ -79,6 +79,7 @@ context:
   windows: {}                        # window in tokens for single models, by slug. It wins over window.
   budgetPercent: 60
   recentTurns: 6
+  recentMaxPercent: 40               # most of the budget that the recent turns use. 1 to 100. A turn that does not fit moves to the earlier context.
   compaction:
     softPercent: 50
     hardPercent: 80
@@ -130,6 +131,9 @@ tools:
   bash:
     shell: /bin/sh
     timeoutSeconds: 120
+  search:                            # names that grep, glob, and ls skip. includeIgnored in a call searches them.
+    skipDirs: [target, build, out, node_modules, .gradle, .idea, .vscode, __pycache__, .venv]
+    skipFiles: [.DS_Store, "*.class", "*.jar", "*.o", "*.so", "*.dylib", "*.pyc"]   # a name, or *.suffix
   extensions: []                     # command tools
 instructions:
   enabled: true
@@ -148,8 +152,10 @@ trust:
 agents:
   dirs: []                         # more directories with skills/, commands/, agents/
   stepLimit: 200                   # model calls in one agent turn
+  repeatGuard: true                # answer a repeated read, ls, glob, or grep with a note
 plan:
   dir: plan                        # relative to the project directory
+  maxExploreCalls: 40              # tool calls to explore before plan mode asks for the plan. 5 to 500
 subagents:
   askTimeoutSeconds: 120           # wait time for agent_ask
   maxAsks: 10                      # agent_ask calls for each task
