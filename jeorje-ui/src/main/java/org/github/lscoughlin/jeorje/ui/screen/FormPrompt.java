@@ -58,6 +58,7 @@ public final class FormPrompt {
     private String message = "";
     private int cursorRow = -1;
     private int cursorColumn;
+    private List<Integer> lineRows = List.of();
 
     public FormPrompt(AgentId agent, Form form) {
         this.agent = agent;
@@ -91,6 +92,25 @@ public final class FormPrompt {
 
     /** The message in the footer, or an empty text. */
     public String message() { return message; }
+
+    /** True while a text field has the keys (the other answer, a text answer, or the note). */
+    public boolean editing() { return mode == Mode.EDIT || mode == Mode.NOTE; }
+
+    /**
+     * Handles a click on a line of the last render (0 is the top border). A click on a row moves the cursor to it
+     * and acts on it, as the space key does. A click on a review action runs it.
+     */
+    public Optional<FormAnswer> click(int renderLine) {
+        if (mode != Mode.NAV || renderLine < 0 || renderLine >= lineRows.size()) return Optional.empty();
+        var row = lineRows.get(renderLine);
+        if (row < 0) return Optional.empty();
+        message = "";
+        cursor = row;
+        if (review()) return reviewKey("enter");
+        var r = rows().get(row);
+        if (r.type() == RowType.CHAT) startNote(); else activate(r, false);
+        return Optional.empty();
+    }
 
     private boolean review() { return page >= form.questions().size(); }
 
@@ -404,7 +424,9 @@ public final class FormPrompt {
     // ---- rendering ----
 
     /** One line of the box body. {@code cursorAt} is the index in the text where the terminal cursor goes, or -1. */
-    private record Line(AttributedString text, boolean focus, int cursorAt) {}
+    private record Line(AttributedString text, boolean focus, int cursorAt, int row) {
+        Line(AttributedString text, boolean focus, int cursorAt) { this(text, focus, cursorAt, -1); }
+    }
 
     /** The box lines, each at most {@code width} columns wide, and at most {@code maxRows} lines. */
     public List<AttributedString> render(int width, int maxRows) {
@@ -439,7 +461,9 @@ public final class FormPrompt {
         shown.addAll(foot);
 
         var out = new ArrayList<AttributedString>();
+        var rowsOfLines = new ArrayList<Integer>();
         out.add(new AttributedString("+" + "-".repeat(inner + 2) + "+", BORDER));
+        rowsOfLines.add(-1);
         cursorRow = -1;
         for (var line : shown) {
             var cut = cut(line.text(), inner);
@@ -451,8 +475,11 @@ public final class FormPrompt {
                 cursorColumn = 2 + Math.min(inner, line.cursorAt());
             }
             out.add(sb.toAttributedString());
+            rowsOfLines.add(line.row());
         }
         out.add(new AttributedString("+" + "-".repeat(inner + 2) + "+", BORDER));
+        rowsOfLines.add(-1);
+        lineRows = rowsOfLines;
         while (out.size() > Math.max(3, maxRows)) {
             out.remove(out.size() - 2);
             if (cursorRow >= out.size() - 1) cursorRow = -1;
@@ -501,7 +528,7 @@ public final class FormPrompt {
                     var lines = wrap(option.label(), Math.max(1, inner - 8));
                     for (var i = 0; i < lines.size(); i++) {
                         body.add(new Line(styled((i == 0 ? pointer + number + mark : " ".repeat(8)) + lines.get(i),
-                            focus ? BOLD : AttributedStyle.DEFAULT), focus && i == 0, -1));
+                            focus ? BOLD : AttributedStyle.DEFAULT), focus && i == 0, -1, r));
                     }
                     if (option.description() != null && !option.description().isBlank()) {
                         for (var l : wrap(option.description(), Math.max(1, inner - 10))) {
@@ -514,25 +541,25 @@ public final class FormPrompt {
                     var mark = q.kind() == FormQuestion.Kind.SINGLE ? (on ? "(o) " : "( ) ") : (on ? "[x] " : "[ ] ");
                     var editing = mode == Mode.EDIT && target == Target.OTHER;
                     var prefix = pointer + "  " + mark + "Other: ";
-                    body.add(fieldLine(prefix, editing ? buffer.toString() : s.other, editing, focus, inner));
+                    body.add(fieldLine(prefix, editing ? buffer.toString() : s.other, editing, focus, inner, r));
                 }
                 case TEXT -> {
                     var editing = mode == Mode.EDIT && target == Target.TEXT;
-                    body.add(fieldLine(pointer + "> ", editing ? buffer.toString() : s.text, editing, focus, inner));
+                    body.add(fieldLine(pointer + "> ", editing ? buffer.toString() : s.text, editing, focus, inner, r));
                 }
                 case CHAT -> {
-                    body.add(new Line(styled(pointer + "  Chat about this", focus ? BOLD : DIM), focus, -1));
+                    body.add(new Line(styled(pointer + "  Chat about this", focus ? BOLD : DIM), focus, -1, r));
                     if (mode == Mode.NOTE) {
-                        body.add(fieldLine("    Note: ", buffer.toString(), true, true, inner));
+                        body.add(fieldLine("    Note: ", buffer.toString(), true, true, inner, -1));
                     }
                 }
             }
         }
     }
 
-    private Line fieldLine(String prefix, String text, boolean editing, boolean focus, int inner) {
+    private Line fieldLine(String prefix, String text, boolean editing, boolean focus, int inner, int row) {
         if (!editing) {
-            return new Line(styled(prefix + text, focus ? BOLD : AttributedStyle.DEFAULT), focus, -1);
+            return new Line(styled(prefix + text, focus ? BOLD : AttributedStyle.DEFAULT), focus, -1, row);
         }
         var room = Math.max(1, inner - prefix.length() - 1);
         var cursorChars = text.codePointCount(0, Math.min(caret, text.length()));
@@ -541,7 +568,7 @@ public final class FormPrompt {
         var end = Math.min(cps.length, start + room);
         var shown = new String(cps, start, end - start);
         return new Line(styled(prefix + shown, AttributedStyle.DEFAULT), true,
-            prefix.length() + (cursorChars - start));
+            prefix.length() + (cursorChars - start), row);
     }
 
     private void reviewBody(List<Line> body, int inner) {
@@ -556,7 +583,7 @@ public final class FormPrompt {
         for (var i = 0; i < REVIEW_ACTIONS.length; i++) {
             var focus = i == cursor;
             body.add(new Line(styled((focus ? "> " : "  ") + REVIEW_ACTIONS[i], focus ? BOLD : AttributedStyle.DEFAULT),
-                focus, -1));
+                focus, -1, i));
         }
     }
 
