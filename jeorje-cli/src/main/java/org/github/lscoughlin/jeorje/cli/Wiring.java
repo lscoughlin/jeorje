@@ -560,7 +560,8 @@ public final class Wiring {
                 config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(promptInstructions(config, cwd, () -> visibleSkills)::text)
-                .withMaxProtectedTokens(config.skills().maxProtectedTokens());
+                .withMaxProtectedTokens(config.skills().maxProtectedTokens())
+                .withRecentMaxPercent(config.context().recentMaxPercent());
 
         var errors = new java.util.concurrent.CopyOnWriteArrayList<String>();
         var transcript = new TranscriptWriter(session.transcriptPath(), scrubber);

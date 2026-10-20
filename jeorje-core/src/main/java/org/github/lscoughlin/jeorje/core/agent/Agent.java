@@ -100,6 +100,10 @@ public final class Agent implements AutoCloseable {
     private final BlockingQueue<AgentInput> inbox = new LinkedBlockingQueue<>();
     private final Map<String, CompletableFuture<Boolean>> confirmations = new ConcurrentHashMap<>();
     private final List<Turn> completed = new ArrayList<>();
+    /** The index in {@code completed} before which turns count as older, because the agent moved them out. */
+    private int forcedStart;
+    /** The turn that already published a notice about a request that stays over the budget. */
+    private int overBudgetNoticeTurn = -1;
     private final List<String> pinned = new ArrayList<>();
     /** The texts of the user for the running turn. {@link #steeringOpen} says whether a turn takes them. */
     private final Queue<String> steering = new ConcurrentLinkedQueue<>();
@@ -235,6 +239,7 @@ public final class Agent implements AutoCloseable {
         try {
             synchronized (this) {
                 completed.clear();
+                forcedStart = 0;
                 pinned.clear();
                 if (manifest != null) {
                     chunker = TurnChunker.forFormat(settings.sessionId(), manifest.chunkFormat());
@@ -255,7 +260,7 @@ public final class Agent implements AutoCloseable {
                 var table = manifest == null ? List.<SessionManifest.PruneEntry>of() : manifest.pruning();
                 if (manifest != null) manifest.pinned().forEach(item -> pinned.add(item.text()));
                 var entries = new ArrayList<ContextEntry>();
-                var cutoff = own.size() - settings.recentTurns();
+                var cutoff = recentStart();
                 var chunks = new ArrayList<Chunk>();
                 for (var i = 0; i < own.size(); i++) {
                     var timed = own.get(i);
@@ -299,6 +304,7 @@ public final class Agent implements AutoCloseable {
             synchronized (this) {
                 forgotten = completed.size();
                 completed.clear();
+                forcedStart = 0;
                 pinned.clear();
                 older = List.of();
             }
@@ -531,6 +537,7 @@ public final class Agent implements AutoCloseable {
                             olderEntries(), recentTurns(), messages, definitions()));
                     }
                 }
+                built = fitRecent(built, messages);
                 var assistant = callModel(built, token);
                 if (assistant.error() != null) {
                     publish(new AgentEvent.Error(id, assistant.error()));
@@ -660,8 +667,27 @@ public final class Agent implements AutoCloseable {
     }
 
     private synchronized List<Turn> recentTurns() {
-        var from = Math.max(0, completed.size() - settings.recentTurns());
-        return List.copyOf(completed.subList(from, completed.size()));
+        return List.copyOf(completed.subList(recentStart(), completed.size()));
+    }
+
+    /**
+     * The index in {@code completed} of the first recent turn. A recent turn stays verbatim in the request. The
+     * window has at most {@code recentTurns} turns and uses at most {@code recentMaxPercent} of the budget, but the
+     * last finished turn is always recent, unless the agent moved it out to make room (see {@link #fitRecent}).
+     */
+    private synchronized int recentStart() {
+        var n = completed.size();
+        var start = Math.max(0, n - settings.recentTurns());
+        var limit = (long) contextBuilder.budget() * settings.recentMaxPercent() / 100;
+        var tokens = 0L;
+        for (var i = n - 1; i >= start; i--) {
+            for (var m : completed.get(i).messages()) tokens += ContextBuilder.estimate(m);
+            if (tokens > limit && i < n - 1) {
+                start = i + 1;
+                break;
+            }
+        }
+        return Math.min(n, Math.max(start, forcedStart));
     }
 
     /** The pinned items of the user, and then the latest todo list. The list is read from the history of the agent. */
@@ -727,6 +753,44 @@ public final class Agent implements AutoCloseable {
         return (long) budget * percent / 100;
     }
 
+    /**
+     * Makes room when the request does not fit the budget, and a recent turn would leave it. The agent first moves
+     * the oldest recent turn to the older entries and prunes at the hard level, one turn at a time. A turn leaves
+     * the request only when pruning does not make enough room. The request then has a line that tells the model
+     * about it. The agent logs a warning and publishes {@link AgentEvent.ContextTrimmed} for the user.
+     */
+    private ContextBuilder.Built fitRecent(ContextBuilder.Built first, List<Message> messages) {
+        var built = first;
+        var pruned = 0;
+        var rounds = 0;
+        while (built.droppedTurns() > 0 && rounds++ < 100) {
+            var count = 0;
+            synchronized (this) {
+                var start = recentStart();
+                if (start >= completed.size()) break;
+                forcedStart = start + 1;
+                var by = hardCompactor != null ? hardCompactor : compactor;
+                if (by == null) break;
+                var outcome = prune(by, completed.getLast().number());
+                count = outcome == null ? 0 : outcome.chunksPruned();
+            }
+            pruned += count;
+            built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
+                olderEntries(), recentTurns(), messages, definitions()));
+        }
+        var firstOverBudget = built.overBudget() && overBudgetNoticeTurn != turnNumber;
+        if (built.overBudget()) overBudgetNoticeTurn = turnNumber;
+        if (built.droppedTurns() > 0 || pruned > 0 || firstOverBudget) {
+            var result = built;
+            var prunedNow = pruned;
+            log.atWarn().log(() -> "The request of " + id + " did not fit the budget of " + result.budget()
+                + " tokens: " + prunedNow + " chunks pruned, turns " + result.droppedTurnNumbers() + " dropped, "
+                + (result.overBudget() ? "still over the budget" : "now inside the budget"));
+            publish(new AgentEvent.ContextTrimmed(id, result.droppedTurnNumbers(), prunedNow, result.overBudget()));
+        }
+        return built;
+    }
+
     /** The share of the budget that a spill tries to reach. */
     static final int SPILL_TARGET_PERCENT = 40;
 
@@ -752,7 +816,7 @@ public final class Agent implements AutoCloseable {
 
     /** Moves turns that leave the recent window into the pruned entries and compacts them. */
     private synchronized void compact(int currentTurn) {
-        if (completed.size() <= settings.recentTurns() && compactor == null) return;
+        if (recentStart() == 0 && compactor == null) return;
         var outcome = prune(compactor, currentTurn);
         if (outcome != null && outcome.event() != null) publish(outcome.event());
     }
@@ -793,7 +857,8 @@ public final class Agent implements AutoCloseable {
         var entries = new ArrayList<>(older);
         var known = new HashSet<Integer>();
         for (var e : entries) known.add(e.chunk().turn());
-        var cutoff = completed.size() - settings.recentTurns();
+        var cutoff = recentStart();
+        forcedStart = Math.max(forcedStart, cutoff);
         for (var i = 0; i < cutoff; i++) {
             var turn = completed.get(i);
             if (!known.add(turn.number())) continue;
@@ -816,7 +881,11 @@ public final class Agent implements AutoCloseable {
         if (by != null && !entries.isEmpty()) {
             var paths = classifier.immediatePaths(all, ctx, classes);
             var concluded = classifier.concludedSearches(all, ctx, classes);
-            outcome = by.compact(entries, currentTurn, paths, concluded);
+            // The compactor treats the last R turns as recent. When the agent keeps fewer recent turns (k), the
+            // compactor must see the turns that left the window as old, so it counts the turns as if more had passed.
+            var window = completed.size() - cutoff;
+            var shifted = currentTurn + Math.max(0, by.settings().recentTurns() - window);
+            outcome = by.compact(entries, shifted, paths, concluded);
             entries = new ArrayList<>(outcome.entries());
         }
         older = List.copyOf(entries);

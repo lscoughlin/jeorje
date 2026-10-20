@@ -365,6 +365,8 @@ public final class ConfigLoader {
     private void validate(JeorjeConfig c) {
         require(c.llm().provider().equals("openai-compatible"), "llm.provider", "must be openai-compatible");
         require(percent(c.context().budgetPercent()), "context.budgetPercent", "must be 0 to 100");
+        require(c.context().recentMaxPercent() >= 1 && c.context().recentMaxPercent() <= 100,
+                "context.recentMaxPercent", "must be 1 to 100");
         require(percent(c.context().compaction().softPercent()), "context.compaction.softPercent", "must be 0 to 100");
         require(percent(c.context().compaction().hardPercent()), "context.compaction.hardPercent", "must be 0 to 100");
         require(c.context().compaction().softPercent() <= c.context().compaction().hardPercent(),

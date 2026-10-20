@@ -17,6 +17,16 @@ public sealed interface AgentEvent {
 
     record Compacted(AgentId agent, int chunksPruned, int tokensFreed) implements AgentEvent {}
 
+    /**
+     * The request of the agent did not fit the budget, so recent turns were pruned or left the request.
+     *
+     * @param droppedTurns the numbers of the turns that left the request
+     * @param prunedChunks the number of chunks that the agent pruned to make room
+     * @param overBudget true when the request is still over the budget
+     */
+    record ContextTrimmed(AgentId agent, java.util.List<Integer> droppedTurns, int prunedChunks, boolean overBudget)
+            implements AgentEvent {}
+
     record Error(AgentId agent, String message) implements AgentEvent {}
 
     /**

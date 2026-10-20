@@ -450,7 +450,8 @@ public final class InteractiveSession implements AutoCloseable {
                 config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(Wiring.promptInstructions(config, cwd, () -> toolSkills)::text)
-                .withMaxProtectedTokens(config.skills().maxProtectedTokens());
+                .withMaxProtectedTokens(config.skills().maxProtectedTokens())
+                .withRecentMaxPercent(config.context().recentMaxPercent());
     }
 
     private SubagentLimits limits() {

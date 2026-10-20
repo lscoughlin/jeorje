@@ -25,6 +25,7 @@ final class ConfigDefaults {
               windows: {}
               budgetPercent: 60
               recentTurns: 6
+              recentMaxPercent: 40
               compaction:
                 softPercent: 50
                 hardPercent: 80

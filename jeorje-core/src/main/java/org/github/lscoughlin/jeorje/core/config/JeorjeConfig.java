@@ -75,7 +75,7 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
      * @param windows the context window in tokens for single models, by model slug. It wins over window.
      */
     public record Context(int window, Map<String, Integer> windows, int budgetPercent, int recentTurns,
-                          Compaction compaction) {
+                          int recentMaxPercent, Compaction compaction) {
         public Context {
             windows = windows == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(windows));
         }

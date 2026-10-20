@@ -26,10 +26,22 @@ import org.github.lscoughlin.jeorje.core.config.JeorjeConfig;
 public record AgentSettings(String sessionId, Path workingDirectory, int contextWindowTokens, int budgetPercent,
                             int maxOutputTokens, int recentTurns, int stepLimit, RetryPolicy retry,
                             JeorjeConfig.Prompt systemPrompt, String instructions, Sleeper sleeper,
-                            InstructionsSource instructionsSource, int maxProtectedTokens) {
+                            InstructionsSource instructionsSource, int maxProtectedTokens, int recentMaxPercent) {
 
     /** The default limit for protected skill results, in tokens. */
     public static final int DEFAULT_MAX_PROTECTED_TOKENS = 20_000;
+    /** The default share of the budget that the recent turns can use. */
+    public static final int DEFAULT_RECENT_MAX_PERCENT = 40;
+
+    /** The settings with the default share for the recent turns. */
+    public AgentSettings(String sessionId, Path workingDirectory, int contextWindowTokens, int budgetPercent,
+                         int maxOutputTokens, int recentTurns, int stepLimit, RetryPolicy retry,
+                         JeorjeConfig.Prompt systemPrompt, String instructions, Sleeper sleeper,
+                         InstructionsSource instructionsSource, int maxProtectedTokens) {
+        this(sessionId, workingDirectory, contextWindowTokens, budgetPercent, maxOutputTokens, recentTurns,
+            stepLimit, retry, systemPrompt, instructions, sleeper, instructionsSource, maxProtectedTokens,
+            DEFAULT_RECENT_MAX_PERCENT);
+    }
 
     /** Makes the instructions text of the system prompt. The agent calls it before each request. */
     @FunctionalInterface
@@ -57,6 +69,14 @@ public record AgentSettings(String sessionId, Path workingDirectory, int context
         instructions = instructions == null ? "" : instructions;
         sleeper = sleeper == null ? Sleeper.system() : sleeper;
         if (maxProtectedTokens <= 0) maxProtectedTokens = DEFAULT_MAX_PROTECTED_TOKENS;
+        if (recentMaxPercent <= 0 || recentMaxPercent > 100) recentMaxPercent = DEFAULT_RECENT_MAX_PERCENT;
+    }
+
+    /** The same settings with another share of the budget for the recent turns. */
+    public AgentSettings withRecentMaxPercent(int percent) {
+        return new AgentSettings(sessionId, workingDirectory, contextWindowTokens, budgetPercent, maxOutputTokens,
+            recentTurns, stepLimit, retry, systemPrompt, instructions, sleeper, instructionsSource, maxProtectedTokens,
+            percent);
     }
 
     /** The instructions text for the system prompt of an agent that works in a directory. */
@@ -74,12 +94,14 @@ public record AgentSettings(String sessionId, Path workingDirectory, int context
     /** The same settings with a dynamic instructions source. */
     public AgentSettings withInstructionsSource(InstructionsSource source) {
         return new AgentSettings(sessionId, workingDirectory, contextWindowTokens, budgetPercent, maxOutputTokens,
-            recentTurns, stepLimit, retry, systemPrompt, instructions, sleeper, source, maxProtectedTokens);
+            recentTurns, stepLimit, retry, systemPrompt, instructions, sleeper, source, maxProtectedTokens,
+            recentMaxPercent);
     }
 
     public AgentSettings withMaxProtectedTokens(int tokens) {
         return new AgentSettings(sessionId, workingDirectory, contextWindowTokens, budgetPercent, maxOutputTokens,
-            recentTurns, stepLimit, retry, systemPrompt, instructions, sleeper, instructionsSource, tokens);
+            recentTurns, stepLimit, retry, systemPrompt, instructions, sleeper, instructionsSource, tokens,
+            recentMaxPercent);
     }
 
     /** Settings with the default values of the design. */
@@ -90,22 +112,26 @@ public record AgentSettings(String sessionId, Path workingDirectory, int context
 
     public AgentSettings withStepLimit(int limit) {
         return new AgentSettings(sessionId, workingDirectory, contextWindowTokens, budgetPercent, maxOutputTokens,
-            recentTurns, limit, retry, systemPrompt, instructions, sleeper, instructionsSource, maxProtectedTokens);
+            recentTurns, limit, retry, systemPrompt, instructions, sleeper, instructionsSource, maxProtectedTokens,
+            recentMaxPercent);
     }
 
     public AgentSettings withSleeper(Sleeper next) {
         return new AgentSettings(sessionId, workingDirectory, contextWindowTokens, budgetPercent, maxOutputTokens,
-            recentTurns, stepLimit, retry, systemPrompt, instructions, next, instructionsSource, maxProtectedTokens);
+            recentTurns, stepLimit, retry, systemPrompt, instructions, next, instructionsSource, maxProtectedTokens,
+            recentMaxPercent);
     }
 
     public AgentSettings withSystemPrompt(JeorjeConfig.Prompt prompt) {
         return new AgentSettings(sessionId, workingDirectory, contextWindowTokens, budgetPercent, maxOutputTokens,
-            recentTurns, stepLimit, retry, prompt, instructions, sleeper, instructionsSource, maxProtectedTokens);
+            recentTurns, stepLimit, retry, prompt, instructions, sleeper, instructionsSource, maxProtectedTokens,
+            recentMaxPercent);
     }
 
     public AgentSettings withWindow(int window, int maxOutput) {
         return new AgentSettings(sessionId, workingDirectory, window, budgetPercent, maxOutput,
-            recentTurns, stepLimit, retry, systemPrompt, instructions, sleeper, instructionsSource, maxProtectedTokens);
+            recentTurns, stepLimit, retry, systemPrompt, instructions, sleeper, instructionsSource, maxProtectedTokens,
+            recentMaxPercent);
     }
 
     /** Waits for a duration. */

@@ -74,6 +74,18 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void theRecentTokenShareHasADefaultAndARange() throws IOException {
+        assertEquals(40, ConfigLoader.load(opts()).config().context().recentMaxPercent());
+        write(home.resolve(".jeorje"), "config.yaml", "context:\n  recentMaxPercent: 25\n");
+        assertEquals(25, ConfigLoader.load(opts()).config().context().recentMaxPercent());
+        for (var bad : new String[] {"0", "101", "-5"}) {
+            write(home.resolve(".jeorje"), "config.yaml", "context:\n  recentMaxPercent: " + bad + "\n");
+            var e = assertThrows(ConfigException.class, () -> ConfigLoader.load(opts()));
+            assertTrue(e.getMessage().contains("context.recentMaxPercent"), e.getMessage());
+        }
+    }
+
+    @Test
     void theSearchSkipListsHaveDefaultsAndCanChange() throws IOException {
         var search = ConfigLoader.load(opts()).config().tools().search();
         assertTrue(search.skipDirs().containsAll(java.util.List.of("target", "node_modules", ".idea")));
