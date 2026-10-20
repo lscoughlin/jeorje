@@ -42,7 +42,11 @@ public final class GatedPolicy implements PermissionPolicy {
     public Decision check(ToolUse action) {
         if (plan != null) {
             var tool = action.tool();
-            if (tool.equals(PlanMode.PLAN_SUBMIT)) return plan.active() ? Decision.ALLOW : Decision.DENY;
+            if (tool.equals(PlanMode.PLAN_SUBMIT)) {
+                // The base policy sees the call, so that the audit log has one line. The plan mode rule decides.
+                base.check(action);
+                return plan.active() ? Decision.ALLOW : Decision.DENY;
+            }
             if (plan.active() && !PlanMode.allows(tool)) return Decision.DENY;
         }
         var decision = base.check(action);

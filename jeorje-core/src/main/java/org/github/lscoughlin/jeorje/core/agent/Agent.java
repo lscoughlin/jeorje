@@ -559,6 +559,7 @@ public final class Agent implements AutoCloseable {
             var number = ++turnNumber;
             var messages = new ArrayList<Message>();
             messages.add(Message.user(input));
+            flushed = 0;
             var calls = 0;
             var total = 0;
             var emptyReplies = 0;
@@ -593,12 +594,14 @@ public final class Agent implements AutoCloseable {
                     pinnedItems(messages), olderEntries(), recentTurns(), messages, definitions()), built, spilledTotal);
                 publish(new AgentEvent.ContextUsage(id, built.estimate(), built.budget()));
                 lastRequest = built.request();
+                flushMessages(messages, spill, number);
                 var assistant = callModel(built, token);
                 if (assistant.error() != null) {
                     publish(new AgentEvent.Error(id, assistant.error()));
                     break;
                 }
                 if (!assistant.content().isEmpty()) messages.add(new Message(Role.ASSISTANT, assistant.content()));
+                flushMessages(messages, spill, number);
                 var uses = assistant.content().stream().filter(ToolUse.class::isInstance).map(ToolUse.class::cast)
                     .toList();
                 if (token.isCancelled()) {
@@ -614,7 +617,7 @@ public final class Agent implements AutoCloseable {
                             + " times. The turn ends."));
                         break;
                     }
-                    addNote(messages, EMPTY_REPLY_NOTE);
+                    addNote(messages, EMPTY_REPLY_NOTE, flushed);
                     continue;
                 }
                 emptyReplies = 0;
@@ -653,7 +656,7 @@ public final class Agent implements AutoCloseable {
         var texts = extra.stream().filter(t -> t != null && !t.isEmpty()).<Content>map(Text::new).toList();
         if (texts.isEmpty()) return steered;
         var last = messages.isEmpty() ? null : messages.getLast();
-        if (last != null && last.role() == Role.USER) {
+        if (last != null && last.role() == Role.USER && messages.size() > flushed) {
             var merged = new ArrayList<>(last.content());
             merged.addAll(texts);
             messages.set(messages.size() - 1, new Message(Role.USER, merged));
@@ -661,6 +664,24 @@ public final class Agent implements AutoCloseable {
             messages.add(new Message(Role.USER, texts));
         }
         return steered;
+    }
+
+    /** The number of messages of the running turn that the transcript has. Those messages do not change any more. */
+    private int flushed;
+
+    /**
+     * Gives the transcript the messages that cannot change any more, so that a long turn can be read while it
+     * runs. A spilled result goes with its full text. {@code finishTurn} writes the rest and the end of the turn.
+     */
+    private void flushMessages(List<Message> messages, TurnSpill spill, int number) {
+        if (messages.size() <= flushed) return;
+        try {
+            var source = spill.active() ? spill.full(new Turn(id, number, messages)).messages() : messages;
+            var now = clock.instant();
+            while (flushed < messages.size()) transcript.writeMessage(id, number, source.get(flushed++), now);
+        } catch (RuntimeException e) {
+            log.atWarn().log(() -> "Cannot write a message to the transcript: " + message(e));
+        }
     }
 
     /** The most empty replies in a row that the agent answers with a note before it ends the turn. */
@@ -677,9 +698,14 @@ public final class Agent implements AutoCloseable {
      * its tool use directly. Otherwise it becomes a new user message.
      */
     static void addNote(List<Message> messages, String text) {
+        addNote(messages, text, 0);
+    }
+
+    /** As {@link #addNote(List, String)}, but a message with an index below {@code frozen} is not changed. */
+    static void addNote(List<Message> messages, String text, int frozen) {
         var note = new Text(Notes.of(text));
         var last = messages.isEmpty() ? null : messages.getLast();
-        if (last != null && last.role() == Role.USER) {
+        if (last != null && last.role() == Role.USER && messages.size() > frozen) {
             var merged = new ArrayList<>(last.content());
             merged.add(note);
             messages.set(messages.size() - 1, new Message(Role.USER, merged));
@@ -699,7 +725,8 @@ public final class Agent implements AutoCloseable {
         for (var next = steering.poll(); next != null; next = steering.poll()) texts.add(new Text(next));
         if (texts.isEmpty()) return false;
         var last = messages.isEmpty() ? null : messages.getLast();
-        if (last != null && last.role() == Role.USER && last.content().stream().allMatch(ToolResult.class::isInstance)) {
+        if (last != null && last.role() == Role.USER && messages.size() > flushed
+            && last.content().stream().allMatch(ToolResult.class::isInstance)) {
             var merged = new ArrayList<>(last.content());
             merged.addAll(texts);
             messages.set(messages.size() - 1, new Message(Role.USER, merged));

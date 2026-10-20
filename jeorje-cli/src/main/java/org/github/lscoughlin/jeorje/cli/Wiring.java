@@ -610,7 +610,7 @@ public final class Wiring {
             final var swarm = bridge;
             var builder = SubagentRuntime.builder(session.id(), settings, model -> llmClient(config, env,
                             model == null || model.isBlank() ? roles.defaultModel() : model))
-                    .store(store).transcript(transcript::writeTurn).agentEvents(onEvent)
+                    .store(store).transcript(transcript).agentEvents(onEvent)
                     .pruneListener((child, chunks) -> skillTool.ifPresent(t -> t.releasePruned(child.value(), chunks)))
                     .events(swarm::onSubagentEvent).remote(swarm)
                     .limits(SubagentLimits.defaults().withMaxModelCalls(config.subagents().stepLimit()));
@@ -618,7 +618,7 @@ public final class Wiring {
             tools.addAll(PeerSpawnTool.wrap(AgentTools.install(subagents, session.id()), subagents));
         }
         var self = new java.util.concurrent.atomic.AtomicReference<Agent>();
-        var agent = new Agent(id, settings, advisor.tap(llm), tools, policy, store, transcript::writeTurn,
+        var agent = new Agent(id, settings, advisor.tap(llm), tools, policy, store, transcript,
                 onEvent, Clock.systemUTC());
         self.set(agent);
         skillTool.ifPresent(t -> agent.withPruneListener(chunks -> t.releasePruned(id.value(), chunks)));

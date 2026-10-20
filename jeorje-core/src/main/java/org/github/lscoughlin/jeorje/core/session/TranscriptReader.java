@@ -41,8 +41,12 @@ public final class TranscriptReader {
                 var node = TranscriptWriter.MAPPER.readTree(line);
                 var key = node.get("agent").asString() + "\u0000" + node.get("turn").asInt();
                 switch (node.get("type").asString()) {
-                    case "message" -> pending.computeIfAbsent(key, k -> new ArrayList<>())
-                        .add(TranscriptWriter.MAPPER.treeToValue(node.get("message"), Message.class));
+                    case "message" -> {
+                        // seq 0 starts the turn again: rows of an earlier run that stopped in this turn are dropped.
+                        if (node.path("seq").asInt(-1) == 0) pending.remove(key);
+                        pending.computeIfAbsent(key, k -> new ArrayList<>())
+                            .add(TranscriptWriter.MAPPER.treeToValue(node.get("message"), Message.class));
+                    }
                     case "turn_end" -> {
                         var messages = pending.remove(key);
                         out.add(new TimedTurn(new Turn(new AgentId(node.get("agent").asString()),

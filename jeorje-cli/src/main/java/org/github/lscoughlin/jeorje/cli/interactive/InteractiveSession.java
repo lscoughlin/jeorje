@@ -549,7 +549,7 @@ public final class InteractiveSession implements AutoCloseable {
             }
         }
         var runtimeBuilder = SubagentRuntime.builder(session.id(), settings, model -> advisor.tap(clientFor(model)))
-                .store(store).transcript(transcript::writeTurn).agentEvents(this::onEvent)
+                .store(store).transcript(transcript).agentEvents(this::onEvent)
                 .pruneListener((child, chunks) -> releaseSkills(child.value(), chunks))
                 .events(event -> {
                     if (bridge != null) bridge.onSubagentEvent(event);
@@ -579,7 +579,7 @@ public final class InteractiveSession implements AutoCloseable {
             }
         };
         var self = new AtomicReference<Agent>();
-        agent = new Agent(MAIN, settings, llm, List.copyOf(tools.values()), mainPolicy, store, transcript::writeTurn,
+        agent = new Agent(MAIN, settings, llm, List.copyOf(tools.values()), mainPolicy, store, transcript,
                 this::onEvent, Clock.systemUTC());
         self.set(agent);
         planMode.maxExploreCalls(config.plan().maxExploreCalls());
@@ -637,7 +637,7 @@ public final class InteractiveSession implements AutoCloseable {
         var workerPolicy = new GatedPolicy(skillGrants(), null, this::askForWorker);
         var builder = ImplementOrchestrator.builder(session.id(), settings, model -> advisor.tap(clientFor(model)),
                         config.implement())
-                .store(store).transcript(transcript::writeTurn).worktrees(worktrees)
+                .store(store).transcript(transcript).worktrees(worktrees)
                 .stateStore(RunStateStore.file(session.dir().resolve("implement.json")))
                 .events(this::onImplementEvent).agentEvents(this::onEvent).subagentEvents(e -> refreshStatus())
                 .orchestratorInput(input -> notice(MAIN, input.text()))

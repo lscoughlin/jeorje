@@ -307,7 +307,8 @@ class SessionToolsTest {
             // A turn joins the finished turns before the transcript write, so the test waits for the write.
             await("second turn on disk", () -> {
                 try {
-                    return Files.readString(transcript).contains("second topic");
+                    // The message rows are written while the turn runs, so the end row of turn 2 marks the write.
+                    return Files.readAllLines(transcript).stream().filter(l -> l.contains("\"turn_end\"")).count() >= 2;
                 } catch (java.io.IOException e) {
                     return false;
                 }

@@ -44,6 +44,20 @@ class GatedPolicyTest {
     }
 
     @Test
+    void everyPlanSubmitCallReachesTheBasePolicyForTheAudit() {
+        var seen = new ArrayList<String>();
+        var plan = new PlanMode();
+        var policy = new GatedPolicy(u -> {
+            seen.add(u.tool());
+            return Decision.ASK;
+        }, plan, null);
+        assertEquals(Decision.DENY, policy.check(use("plan_submit", null)), "refused outside plan mode");
+        plan.enter("goal");
+        assertEquals(Decision.ALLOW, policy.check(use("plan_submit", null)), "plan mode decides, not the base policy");
+        assertEquals(List.of("plan_submit", "plan_submit"), seen);
+    }
+
+    @Test
     void planModeDeniesMcpTools() {
         var plan = new PlanMode();
         var policy = new GatedPolicy(u -> Decision.ALLOW, plan, null);

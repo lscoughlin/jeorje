@@ -252,7 +252,7 @@ public final class HeadlessWork implements AutoCloseable {
                 file -> env.err().println("Plan written: " + file)));
         tools.put(AskUserTool.NAME, new AskUserTool(broker));
         agent = new Agent(MAIN, settings(), advisor.tap(clientFor(null)), List.copyOf(tools.values()), mainPolicy,
-                store, transcript::writeTurn, this::onAgentEvent, Clock.systemUTC());
+                store, transcript, this::onAgentEvent, Clock.systemUTC());
         mode.maxExploreCalls(config.plan().maxExploreCalls());
         agent.withToolFilter(mode::refuse).withStepBoundary(mode::notes);
         agent.withPruneListener(chunks -> {
@@ -433,7 +433,7 @@ public final class HeadlessWork implements AutoCloseable {
         var workerPolicy = new GatedPolicy(grants, null, this::askForWorker);
         var builder = ImplementOrchestrator.builder(session.id(), settings(), model -> advisor.tap(clientFor(model)),
                         config.implement())
-                .store(store).transcript(transcript::writeTurn).worktrees(worktrees)
+                .store(store).transcript(transcript).worktrees(worktrees)
                 .stateStore(RunStateStore.file(session.dir().resolve("implement.json")))
                 .events(this::onImplementEvent).agentEvents(this::onAgentEvent)
                 .orchestratorInput(input -> log.atDebug().log(() -> "orchestrator input: " + input.text()))
