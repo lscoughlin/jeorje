@@ -227,15 +227,17 @@ public final class Wiring {
         var diff = config.tools().diff();
         var diffDefaults = TextDiff.Options.defaults().withContext(diff.context()).withMaxLines(diff.maxLines());
         var patch = config.tools().patch();
+        var search = new org.github.lscoughlin.jeorje.tools.search.SearchOptions(
+                new java.util.HashSet<>(config.tools().search().skipDirs()), config.tools().search().skipFiles());
         return ToolRegistry.builder()
                 .register(new ReadTool(policy, state, dirSettings, nested))
                 .register(new WriteTool(policy, state, nested))
                 .register(new EditTool(policy, state, nested))
                 .register(new PatchTool(policy, state, patch.fuzz(), patch.conflicts(), PatchTool.defaultOps()))
                 .register(new DiffTool(policy, diffDefaults, diff.algorithm()))
-                .register(new GlobTool(policy))
-                .register(new GrepTool(policy))
-                .register(new LsTool(policy))
+                .register(new GlobTool(policy, search))
+                .register(new GrepTool(policy, search))
+                .register(new LsTool(policy, search))
                 .register(new BashTool(policy, shell, config.tools().bash().timeoutSeconds()))
                 .register(yolo
                         ? new WebFetchTool(new org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy(
@@ -558,7 +560,9 @@ public final class Wiring {
                 config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(promptInstructions(config, cwd, () -> visibleSkills)::text)
-                .withMaxProtectedTokens(config.skills().maxProtectedTokens());
+                .withMaxProtectedTokens(config.skills().maxProtectedTokens())
+                .withRecentMaxPercent(config.context().recentMaxPercent())
+                .withRepeatGuard(config.agents().repeatGuard());
 
         var errors = new java.util.concurrent.CopyOnWriteArrayList<String>();
         var transcript = new TranscriptWriter(session.transcriptPath(), scrubber);

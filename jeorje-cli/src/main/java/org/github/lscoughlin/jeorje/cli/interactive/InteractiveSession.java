@@ -450,7 +450,9 @@ public final class InteractiveSession implements AutoCloseable {
                 config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(Wiring.promptInstructions(config, cwd, () -> toolSkills)::text)
-                .withMaxProtectedTokens(config.skills().maxProtectedTokens());
+                .withMaxProtectedTokens(config.skills().maxProtectedTokens())
+                .withRecentMaxPercent(config.context().recentMaxPercent())
+                .withRepeatGuard(config.agents().repeatGuard());
     }
 
     private SubagentLimits limits() {
@@ -579,6 +581,9 @@ public final class InteractiveSession implements AutoCloseable {
         agent = new Agent(MAIN, settings, llm, List.copyOf(tools.values()), mainPolicy, store, transcript::writeTurn,
                 this::onEvent, Clock.systemUTC());
         self.set(agent);
+        planMode.maxExploreCalls(config.plan().maxExploreCalls());
+        agent.withToolFilter(planMode::refuse)
+                .withStepBoundary(() -> planMode.notes());
         agent.withPruneListener(chunks -> releaseSkills(MAIN.value(), chunks));
         var compaction = config.context().compaction();
         pruner = new Pruner(compactorClient, store, TermStats.of(store, countingStore::appendedCount),
@@ -995,6 +1000,7 @@ public final class InteractiveSession implements AutoCloseable {
             var target = screen.foreground();
             if (target.equals(MAIN)) {
                 mainBusy = true;
+                planMode.resetExploration();
                 // A text during a turn joins that turn. A text when the agent has no turn starts a turn.
                 if (!agent.steer(text)) agent.submit(new AgentInput.UserInput(text));
             } else {
@@ -1381,6 +1387,14 @@ public final class InteractiveSession implements AutoCloseable {
                 + " tokens. The next request is smaller.";
     }
 
+    /** The context report of the foreground agent, for the {@code /context} command. */
+    String contextReport() {
+        var foreground = screen.foreground();
+        var target = foreground.equals(MAIN) ? agent : Agent.live(foreground).orElse(null);
+        if (target == null) return "The agent of this view is not running. There is no context to show.";
+        return target.contextReport().render();
+    }
+
     /** A compactor with a budget so small that every old chunk is over the hard limit. */
     private ContextCompactor hardCompactor(AgentId who) {
         var base = CompactionSettings.from(config.context(), window);
@@ -1432,6 +1446,11 @@ public final class InteractiveSession implements AutoCloseable {
         @Override
         public String compactNow() {
             return compactForeground();
+        }
+
+        @Override
+        public String contextReport() {
+            return InteractiveSession.this.contextReport();
         }
 
         @Override

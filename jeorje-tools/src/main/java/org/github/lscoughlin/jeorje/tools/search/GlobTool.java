@@ -23,14 +23,20 @@ public final class GlobTool extends RecordTool<GlobTool.Input> {
                     + "** matches any number of directories. Example: src/**/*.java") String pattern,
             @Describe("Directory to search. Default is the working directory.") String path,
             @Describe("Number of results to skip. Default 0.") Integer offset,
-            @Describe("Most results to return. Default 1000.") Integer limit) {}
+            @Describe("Most results to return. Default 1000.") Integer limit,
+            @Describe("Also search build and editor directories, such as target and node_modules. Default false.")
+            Boolean includeIgnored) {}
 
     private final SearchSupport support;
 
     public GlobTool(PermissionPolicy policy) {
+        this(policy, SearchOptions.defaults());
+    }
+
+    public GlobTool(PermissionPolicy policy, SearchOptions options) {
         super("glob", "Find files with an Ant-style pattern. Results are sorted by modification time, "
                 + "newest first.", Input.class, true);
-        this.support = new SearchSupport(policy, "glob");
+        this.support = new SearchSupport(policy, "glob", options);
     }
 
     @Override
@@ -44,8 +50,9 @@ public final class GlobTool extends RecordTool<GlobTool.Input> {
         }
         var pattern = new AntPattern(input.pattern());
         var refused = new AtomicInteger();
+        var ignored = new AtomicInteger();
         var matches = new ArrayList<Match>();
-        for (var file : support.files(root, context.cancel(), refused)) {
+        for (var file : support.files(root, context.cancel(), refused, ignored, Boolean.TRUE.equals(input.includeIgnored()))) {
             var relative = SearchSupport.relative(root, file);
             if (pattern.matches(relative)) matches.add(new Match(SearchSupport.display(context, root, file), modified(file)));
         }
@@ -63,6 +70,7 @@ public final class GlobTool extends RecordTool<GlobTool.Input> {
         if (refused.get() > 0) {
             out.append("[").append(refused.get()).append(" files skipped by the permission policy.]\n");
         }
+        if (ignored.get() > 0) out.append(SearchSupport.skippedNote(ignored.get()));
         return ToolResultData.ok(out.toString());
     }
 

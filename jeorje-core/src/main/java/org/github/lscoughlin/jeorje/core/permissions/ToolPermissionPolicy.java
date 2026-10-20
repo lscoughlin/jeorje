@@ -139,9 +139,16 @@ public final class ToolPermissionPolicy implements PermissionPolicy {
         var decision = result.decision();
         var source = result.source();
         log.atDebug().log(() -> scrubber.scrub("permission " + action.tool() + " " + decision + " (" + source + ")"));
-        if (audit != null) audit.record(agent, action, decision, source, "decided");
+        // A file of a tree walk is audited only when it is refused. The call itself has one entry.
+        var walkedFile = action.id().startsWith(SEARCH_FILE_PREFIX);
+        if (audit != null && !(walkedFile && decision == Decision.ALLOW)) {
+            audit.record(agent, action, decision, source, "decided");
+        }
         return decision;
     }
+
+    /** The start of the tool use id that a search tool uses for each file of a tree walk. */
+    public static final String SEARCH_FILE_PREFIX = "search-file-";
 
     /** Records the answer of the user to an ASK. */
     public void recordUserDecision(ToolUse action, Decision decision) {

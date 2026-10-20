@@ -294,6 +294,20 @@ public final class ChatView {
                 add(new TextEntry("[compacted: " + c.chunksPruned() + " chunks, " + c.tokensFreed()
                         + " tokens freed]", false, DIM));
             }
+            case AgentEvent.ContextUsage u -> { }
+            case AgentEvent.ContextTrimmed t -> {
+                streaming = null;
+                var text = new StringBuilder("[context: ");
+                if (t.prunedChunks() > 0) text.append(t.prunedChunks()).append(" chunks pruned to fit the budget");
+                if (!t.droppedTurns().isEmpty()) {
+                    text.append(t.prunedChunks() > 0 ? ", " : "").append(t.droppedTurns().size() == 1 ? "turn " : "turns ")
+                        .append(t.droppedTurns().stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")))
+                        .append(" left the request (use recall)");
+                }
+                if (t.overBudget()) text.append(t.prunedChunks() > 0 || !t.droppedTurns().isEmpty() ? "; " : "")
+                    .append("the request is still over the budget");
+                add(new TextEntry(text.append(']').toString(), false, ERROR));
+            }
             case AgentEvent.Error e -> {
                 streaming = null;
                 add(new TextEntry("! " + e.message(), false, ERROR));

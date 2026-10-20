@@ -50,6 +50,11 @@ The status line shows `PLAN` while the mode is active.
 In plan mode the agent cannot change the workspace.
 
 - **Tools.** The agent has the read-only tools (`read`, `ls`, `glob`, `grep`, `recall`, `webfetch`), `skill`, `ask_user`, `advisor`, `todo`, and `plan_submit`. `bash` is available. The normal rules of the permission policy decide each call: a call can need approval, and in a headless run it needs `--yes` or `--yolo`. The prompt tells the agent to use `bash` to explore and not to change the workspace. The agent asks the user with `ask_user`, and the user sees a form: single choice, multiple choice, or text, with the option to chat about a question. See [Forms](ui.md#forms). The answers of `ask_user` stay in the working context: compaction never removes them. The agent finds them again with `recall` and the filter `kind` set to `user`. The `--yolo` option does not change the tool set. `write`, `edit`, and `spawn_agent` are not registered. See [permissions-and-safety.md](permissions-and-safety.md).
+- **Exploration limit.** The agent counts its tool calls since the last `plan_submit`, `ask_user`, or message of the user. The calls of `todo` and `advisor` do not count. The limit is `plan.maxExploreCalls` (default 40). The plan-mode prompt names the limit and tells the agent to use `grep` and `read` with a range, not to read a file twice, to ask all open questions early in one form, and to write open facts into the stories. Plan mode adds a system note to the turn at three points:
+  - At 75% of the limit: `You made <n> tool calls. Write the plan soon. If a fact is open, ask the user with ask_user.`
+  - At the limit: `You reached the limit of <limit> tool calls for exploring. Call plan_submit now with what you know. Put each open fact in the context of the story as a question for the worker, or ask the user with ask_user. After 10 more calls, only plan_submit, ask_user, and recall work.`
+  - After 10 more calls, plan mode refuses every tool except `plan_submit`, `ask_user`, and `recall`. A refused call gets the error `Plan mode refused <tool>: you made <n> tool calls without a plan. Call plan_submit now with what you know, or ask the user with ask_user.` A call of `plan_submit` or `ask_user`, or a new message of the user, starts the count again and gives the full tool set back.
+  The notes are system notes, not words of the user. See [agent-loop.md](agent-loop.md#token-budget). The repeat guard also works in plan mode. See [tools.md](tools.md#repeat-guard).
 - **Plan file.** `plan_submit` is the only tool that writes. It writes only to the plan directory (`plan.dir`, default `plan/`, relative to `${CWD}`). The plan directory is not inside `.jeorje`. It follows the `AGENTS.md` convention for plans, and the user can commit it.
 - **System prompt.** Jeorje adds a plan-mode section to the system prompt. It tells the agent to explore first, to ask the user when a requirement is open, and to write stories that a worker can finish with no other context.
 - **Review.** After `plan_submit`, the UI shows the plan. The user can edit it with `/plan edit`, ask the agent for changes, or leave plan mode with `/plan done`. A call of `plan_submit` for the same plan replaces the file, and Jeorje keeps the previous version as `<name>.prev.md`.
@@ -261,6 +266,7 @@ The command `jeorje run` runs the plan commands with no UI. No user is present, 
 ```yaml
 plan:
   dir: plan                        # relative to the project directory
+  maxExploreCalls: 40              # tool calls to explore before plan mode asks for the plan. 5 to 500
 implement:
   parallel: 3                      # workers at the same time
   model: ""                        # empty means the default model

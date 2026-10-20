@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 import org.github.lscoughlin.jeorje.core.model.Chunk;
 import org.github.lscoughlin.jeorje.core.model.Content;
+import org.github.lscoughlin.jeorje.core.model.Notes;
 import org.github.lscoughlin.jeorje.core.model.Role;
 import org.github.lscoughlin.jeorje.core.model.Text;
 import org.github.lscoughlin.jeorje.core.model.ToolResult;
@@ -93,6 +94,8 @@ public final class TurnChunker {
         for (var m : turn.messages()) {
             for (var c : m.content()) {
                 switch (c) {
+                    case Text t when m.role() == Role.USER && Notes.is(t.text()) -> main.add(new Item("tool_result",
+                        null, "NOTE " + t.text().substring(Notes.PREFIX.length())));
                     case Text t when m.role() == Role.USER -> users.add("USER: " + t.text());
                     case Text t -> main.add(new Item("assistant", null, "ASSISTANT: " + t.text()));
                     case ToolUse tu when RECALL.equals(tu.tool()) || ASK_USER.equals(tu.tool()) -> { }
@@ -280,6 +283,10 @@ public final class TurnChunker {
         for (var m : turn.messages()) {
             for (var c : m.content()) {
                 switch (c) {
+                    case Text t when m.role() == Role.USER && Notes.is(t.text()) -> {
+                        kinds.add("tool_result");
+                        line(main, "NOTE " + t.text().substring(Notes.PREFIX.length()));
+                    }
                     case Text t -> {
                         var user = m.role() == Role.USER;
                         kinds.add(user ? "user" : "assistant");

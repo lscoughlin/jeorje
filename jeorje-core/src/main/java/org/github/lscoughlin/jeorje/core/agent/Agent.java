@@ -35,6 +35,7 @@ import org.github.lscoughlin.jeorje.core.model.Content;
 import org.github.lscoughlin.jeorje.core.model.LlmEvent;
 import org.github.lscoughlin.jeorje.core.model.LlmRequest;
 import org.github.lscoughlin.jeorje.core.model.Message;
+import org.github.lscoughlin.jeorje.core.model.Notes;
 import org.github.lscoughlin.jeorje.core.model.Role;
 import org.github.lscoughlin.jeorje.core.model.Text;
 import org.github.lscoughlin.jeorje.core.model.ToolResult;
@@ -77,6 +78,16 @@ public final class Agent implements AutoCloseable {
         List<String> messages();
     }
 
+    /**
+     * A hook that sees every tool call of the model before it runs. It can refuse a call. The hook runs once for
+     * each call, so it can count calls.
+     */
+    @FunctionalInterface
+    public interface ToolFilter {
+        /** Returns the text of a refusal, which is the error result of the call, or empty to let the call go on. */
+        java.util.Optional<String> refuse(ToolUse use);
+    }
+
     /** The live agents by id. The references are weak. Callers use {@link #live} to reach a subagent. */
     private static final Map<AgentId, WeakReference<Agent>> LIVE = new ConcurrentHashMap<>();
 
@@ -99,6 +110,22 @@ public final class Agent implements AutoCloseable {
     private final BlockingQueue<AgentInput> inbox = new LinkedBlockingQueue<>();
     private final Map<String, CompletableFuture<Boolean>> confirmations = new ConcurrentHashMap<>();
     private final List<Turn> completed = new ArrayList<>();
+    /** The index in {@code completed} before which turns count as older, because the agent moved them out. */
+    private int forcedStart;
+    /** Tools that are not read-only but never change the files of the workspace, so they keep the repeat guard. */
+    private static final java.util.Set<String> KEEPS_WORKSPACE = java.util.Set.of("ask_user", "todo", "advisor",
+        "plan_submit", "skill", "recall", "agent_status", "agent_message", "agent_ask", "agent_answer");
+    /** The turn that already published a notice about a request that stays over the budget. */
+    private int overBudgetNoticeTurn = -1;
+    private int spilledTotal;
+    private volatile ContextReport lastReport;
+
+    /** How full the context was at the last model call, or a report with no numbers before the first call. */
+    public ContextReport contextReport() {
+        var report = lastReport;
+        return report != null ? report
+            : new ContextReport(id.value(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, contextBuilder.budget(), 0, List.of());
+    }
     private final List<String> pinned = new ArrayList<>();
     /** The texts of the user for the running turn. {@link #steeringOpen} says whether a turn takes them. */
     private final Queue<String> steering = new ConcurrentLinkedQueue<>();
@@ -113,6 +140,8 @@ public final class Agent implements AutoCloseable {
     private volatile CancellationToken current = CancellationToken.none();
     private volatile Thread thread;
     private volatile StepBoundary stepBoundary = List::of;
+    private volatile ToolFilter toolFilter = use -> java.util.Optional.empty();
+    private final RepeatGuard repeatGuard;
     private volatile Consumer<List<Chunk>> pruneListener = chunks -> { };
 
     public Agent(AgentId id, AgentSettings settings, LlmClient llm, List<Tool> toolList, PermissionPolicy policy,
@@ -129,6 +158,7 @@ public final class Agent implements AutoCloseable {
         this.contextBuilder = new ContextBuilder(settings.contextWindowTokens(), settings.budgetPercent(),
             settings.maxOutputTokens());
         this.chunker = new TurnChunker(settings.sessionId());
+        this.repeatGuard = new RepeatGuard(settings.workingDirectory());
         LIVE.values().removeIf(ref -> ref.get() == null);
         LIVE.put(id, new WeakReference<>(this));
     }
@@ -163,6 +193,12 @@ public final class Agent implements AutoCloseable {
      */
     public synchronized Agent withHardCompactor(ContextCompactor next) {
         this.hardCompactor = next;
+        return this;
+    }
+
+    /** Sets the hook that can refuse a tool call. Null removes the hook. */
+    public Agent withToolFilter(ToolFilter filter) {
+        this.toolFilter = filter == null ? use -> java.util.Optional.empty() : filter;
         return this;
     }
 
@@ -234,6 +270,7 @@ public final class Agent implements AutoCloseable {
         try {
             synchronized (this) {
                 completed.clear();
+                forcedStart = 0;
                 pinned.clear();
                 if (manifest != null) {
                     chunker = TurnChunker.forFormat(settings.sessionId(), manifest.chunkFormat());
@@ -254,7 +291,7 @@ public final class Agent implements AutoCloseable {
                 var table = manifest == null ? List.<SessionManifest.PruneEntry>of() : manifest.pruning();
                 if (manifest != null) manifest.pinned().forEach(item -> pinned.add(item.text()));
                 var entries = new ArrayList<ContextEntry>();
-                var cutoff = own.size() - settings.recentTurns();
+                var cutoff = recentStart();
                 var chunks = new ArrayList<Chunk>();
                 for (var i = 0; i < own.size(); i++) {
                     var timed = own.get(i);
@@ -298,7 +335,9 @@ public final class Agent implements AutoCloseable {
             synchronized (this) {
                 forgotten = completed.size();
                 completed.clear();
+                forcedStart = 0;
                 pinned.clear();
+                repeatGuard.reset();
                 older = List.of();
             }
             steering.clear();
@@ -504,6 +543,8 @@ public final class Agent implements AutoCloseable {
             messages.add(Message.user(input));
             var calls = 0;
             var total = 0;
+            var emptyReplies = 0;
+            var spill = new TurnSpill(store, settings.sessionId(), id, number, clock);
             while (true) {
                 if (token.isCancelled()) break;
                 // A text of the user starts a new count, so the step limit gives the turn a new budget.
@@ -517,6 +558,22 @@ public final class Agent implements AutoCloseable {
                 total++;
                 var built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
                     olderEntries(), recentTurns(), messages, definitions()));
+                if (built.estimate() > spillTrigger(built.budget())) {
+                    var target = (long) (built.budget() * SPILL_TARGET_PERCENT / 100.0);
+                    var chars = (long) ((built.estimate() - target) * 4 / Math.max(0.25, contextBuilder.scale()));
+                    var outcome = spill.spill(messages, chunker, chars);
+                    if (outcome.spilled() > 0) {
+                        spilledTotal += outcome.spilled();
+                        log.atDebug().log(() -> "spilled " + outcome.spilled() + " tool results of turn " + number);
+                        publish(new AgentEvent.Compacted(id, outcome.spilled(), outcome.freedChars() / 4));
+                        built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
+                            olderEntries(), recentTurns(), messages, definitions()));
+                    }
+                }
+                built = fitRecent(built, messages);
+                lastReport = ContextReport.of(id.value(), new ContextBuilder.Input(systemPrompt(),
+                    pinnedItems(messages), olderEntries(), recentTurns(), messages, definitions()), built, spilledTotal);
+                publish(new AgentEvent.ContextUsage(id, built.estimate(), built.budget()));
                 var assistant = callModel(built, token);
                 if (assistant.error() != null) {
                     publish(new AgentEvent.Error(id, assistant.error()));
@@ -529,12 +586,26 @@ public final class Agent implements AutoCloseable {
                     closeOpenCalls(messages, uses, List.of());
                     break;
                 }
+                if (uses.isEmpty() && isBlank(assistant.content())) {
+                    emptyReplies++;
+                    var count = emptyReplies;
+                    log.atWarn().log(() -> "The model gave an empty reply (" + count + " in a row) in turn " + number);
+                    if (emptyReplies > MAX_EMPTY_RETRIES) {
+                        publish(new AgentEvent.Error(id, "The model gave an empty reply " + emptyReplies
+                            + " times. The turn ends."));
+                        break;
+                    }
+                    addNote(messages, EMPTY_REPLY_NOTE);
+                    continue;
+                }
+                emptyReplies = 0;
                 if (uses.isEmpty()) break;
                 var results = dispatch(uses, token);
                 messages.add(new Message(Role.USER, List.copyOf(results)));
                 if (token.isCancelled()) break;
             }
-            finishTurn(new Turn(id, number, messages));
+            var finished = new Turn(id, number, messages);
+            finishTurn(finished, spill.full(finished));
             return new TurnOutcome(total, token.isCancelled(), closeSteering());
         } catch (RuntimeException | Error e) {
             closeSteering();
@@ -572,6 +643,31 @@ public final class Agent implements AutoCloseable {
         return steered;
     }
 
+    /** The most empty replies in a row that the agent answers with a note before it ends the turn. */
+    static final int MAX_EMPTY_RETRIES = 2;
+    static final String EMPTY_REPLY_NOTE =
+        "Your last reply was empty. Continue with the task. If you are done, say so.";
+
+    private static boolean isBlank(List<Content> content) {
+        return content.stream().noneMatch(c -> !(c instanceof Text t) || !t.text().isBlank());
+    }
+
+    /**
+     * Adds a system note to the turn. The note joins the last user message, so that a tool result always follows
+     * its tool use directly. Otherwise it becomes a new user message.
+     */
+    static void addNote(List<Message> messages, String text) {
+        var note = new Text(Notes.of(text));
+        var last = messages.isEmpty() ? null : messages.getLast();
+        if (last != null && last.role() == Role.USER) {
+            var merged = new ArrayList<>(last.content());
+            merged.add(note);
+            messages.set(messages.size() - 1, new Message(Role.USER, merged));
+        } else {
+            messages.add(new Message(Role.USER, List.of(note)));
+        }
+    }
+
     /**
      * Moves the texts that the user typed while the turn runs into the context. They go last, so the model reads
      * them after the tool results of the step that just ended.
@@ -607,13 +703,34 @@ public final class Agent implements AutoCloseable {
     }
 
     private synchronized List<Turn> recentTurns() {
-        var from = Math.max(0, completed.size() - settings.recentTurns());
-        return List.copyOf(completed.subList(from, completed.size()));
+        return List.copyOf(completed.subList(recentStart(), completed.size()));
+    }
+
+    /**
+     * The index in {@code completed} of the first recent turn. A recent turn stays verbatim in the request. The
+     * window has at most {@code recentTurns} turns and uses at most {@code recentMaxPercent} of the budget, but the
+     * last finished turn is always recent, unless the agent moved it out to make room (see {@link #fitRecent}).
+     */
+    private synchronized int recentStart() {
+        var n = completed.size();
+        var start = Math.max(0, n - settings.recentTurns());
+        var limit = (long) contextBuilder.budget() * settings.recentMaxPercent() / 100;
+        var tokens = 0L;
+        for (var i = n - 1; i >= start; i--) {
+            for (var m : completed.get(i).messages()) tokens += ContextBuilder.estimate(m);
+            if (tokens > limit && i < n - 1) {
+                start = i + 1;
+                break;
+            }
+        }
+        return Math.min(n, Math.max(start, forcedStart));
     }
 
     /** The pinned items of the user, and then the latest todo list. The list is read from the history of the agent. */
     private synchronized List<String> pinnedItems(List<Message> current) {
         var items = new ArrayList<>(pinned);
+        var decisions = Decisions.build(completed);
+        if (decisions != null) items.add(decisions);
         var todo = latestTodo(current);
         if (todo != null) items.add(todo);
         return List.copyOf(items);
@@ -665,14 +782,66 @@ public final class Agent implements AutoCloseable {
             settings.instructionsFor(settings.workingDirectory()), plan));
     }
 
-    private void finishTurn(Turn turn) {
+    /** The share of the budget at which a spill of the turn that runs starts, from the soft trigger. */
+    private long spillTrigger(int budget) {
+        var compaction = compactor;
+        var percent = compaction == null ? 50 : compaction.settings().softPercent();
+        return (long) budget * percent / 100;
+    }
+
+    /**
+     * Makes room when the request does not fit the budget, and a recent turn would leave it. The agent first moves
+     * the oldest recent turn to the older entries and prunes at the hard level, one turn at a time. A turn leaves
+     * the request only when pruning does not make enough room. The request then has a line that tells the model
+     * about it. The agent logs a warning and publishes {@link AgentEvent.ContextTrimmed} for the user.
+     */
+    private ContextBuilder.Built fitRecent(ContextBuilder.Built first, List<Message> messages) {
+        var built = first;
+        var pruned = 0;
+        var rounds = 0;
+        while (built.droppedTurns() > 0 && rounds++ < 100) {
+            var count = 0;
+            synchronized (this) {
+                var start = recentStart();
+                if (start >= completed.size()) break;
+                forcedStart = start + 1;
+                var by = hardCompactor != null ? hardCompactor : compactor;
+                if (by == null) break;
+                var outcome = prune(by, completed.getLast().number());
+                count = outcome == null ? 0 : outcome.chunksPruned();
+            }
+            pruned += count;
+            built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
+                olderEntries(), recentTurns(), messages, definitions()));
+        }
+        var firstOverBudget = built.overBudget() && overBudgetNoticeTurn != turnNumber;
+        if (built.overBudget()) overBudgetNoticeTurn = turnNumber;
+        if (built.droppedTurns() > 0 || pruned > 0 || firstOverBudget) {
+            var result = built;
+            var prunedNow = pruned;
+            log.atWarn().log(() -> "The request of " + id + " did not fit the budget of " + result.budget()
+                + " tokens: " + prunedNow + " chunks pruned, turns " + result.droppedTurnNumbers() + " dropped, "
+                + (result.overBudget() ? "still over the budget" : "now inside the budget"));
+            publish(new AgentEvent.ContextTrimmed(id, result.droppedTurnNumbers(), prunedNow, result.overBudget()));
+        }
+        return built;
+    }
+
+    /** The share of the budget that a spill tries to reach. */
+    static final int SPILL_TARGET_PERCENT = 40;
+
+    /**
+     * @param turn the turn as the model saw it: a spilled result is a stub
+     * @param full the turn with the full text of every result, for the transcript
+     */
+    private void finishTurn(Turn turn, Turn full) {
         var now = clock.instant();
         synchronized (this) {
             completed.add(turn);
         }
         try {
             store.append(chunker.chunk(turn, now));
-            transcript.writeTurn(turn, now);
+            transcript.writeTurn(full, now);
         } catch (RuntimeException e) {
             log.atError().setCause(e).log(() -> "Cannot store turn " + turn.id());
             publish(new AgentEvent.Error(id, "Cannot store turn " + turn.id() + ": " + message(e)));
@@ -683,7 +852,7 @@ public final class Agent implements AutoCloseable {
 
     /** Moves turns that leave the recent window into the pruned entries and compacts them. */
     private synchronized void compact(int currentTurn) {
-        if (completed.size() <= settings.recentTurns() && compactor == null) return;
+        if (recentStart() == 0 && compactor == null) return;
         var outcome = prune(compactor, currentTurn);
         if (outcome != null && outcome.event() != null) publish(outcome.event());
     }
@@ -724,7 +893,8 @@ public final class Agent implements AutoCloseable {
         var entries = new ArrayList<>(older);
         var known = new HashSet<Integer>();
         for (var e : entries) known.add(e.chunk().turn());
-        var cutoff = completed.size() - settings.recentTurns();
+        var cutoff = recentStart();
+        forcedStart = Math.max(forcedStart, cutoff);
         for (var i = 0; i < cutoff; i++) {
             var turn = completed.get(i);
             if (!known.add(turn.number())) continue;
@@ -747,7 +917,11 @@ public final class Agent implements AutoCloseable {
         if (by != null && !entries.isEmpty()) {
             var paths = classifier.immediatePaths(all, ctx, classes);
             var concluded = classifier.concludedSearches(all, ctx, classes);
-            outcome = by.compact(entries, currentTurn, paths, concluded);
+            // The compactor treats the last R turns as recent. When the agent keeps fewer recent turns (k), the
+            // compactor must see the turns that left the window as old, so it counts the turns as if more had passed.
+            var window = completed.size() - cutoff;
+            var shifted = currentTurn + Math.max(0, by.settings().recentTurns() - window);
+            outcome = by.compact(entries, shifted, paths, concluded);
             entries = new ArrayList<>(outcome.entries());
         }
         older = List.copyOf(entries);
@@ -892,7 +1066,7 @@ public final class Agent implements AutoCloseable {
         var results = new ArrayList<ToolResult>();
         if (allReadOnly) {
             var gates = new ArrayList<ToolResultData>();
-            for (var use : uses) gates.add(token.isCancelled() ? interrupted() : gate(use, token));
+            for (var use : uses) gates.add(token.isCancelled() ? interrupted() : preflight(use, token));
             try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
                 var futures = new ArrayList<CompletableFuture<ToolResultData>>();
                 for (var i = 0; i < uses.size(); i++) {
@@ -908,7 +1082,7 @@ public final class Agent implements AutoCloseable {
             }
         } else {
             for (var use : uses) {
-                var data = token.isCancelled() ? interrupted() : gate(use, token);
+                var data = token.isCancelled() ? interrupted() : preflight(use, token);
                 if (data == null) data = execute(use, token);
                 results.add(finish(use, data));
             }
@@ -916,7 +1090,26 @@ public final class Agent implements AutoCloseable {
         return results;
     }
 
+    /**
+     * Runs the checks before a call: the tool filter, the repeat guard, and then the permission. Returns the result
+     * when the call must not run, or null when it can run.
+     */
+    private ToolResultData preflight(ToolUse use, CancellationToken token) {
+        var refusal = toolFilter.refuse(use);
+        if (refusal.isPresent()) return ToolResultData.error(refusal.get());
+        if (settings.repeatGuard()) {
+            var repeat = repeatGuard.check(use, turnNumber);
+            if (repeat != null) return repeat;
+        }
+        return gate(use, token);
+    }
+
     private ToolResult finish(ToolUse use, ToolResultData data) {
+        if (settings.repeatGuard()) {
+            var tool = tools.get(use.tool());
+            if (tool != null && !tool.readOnly() && !KEEPS_WORKSPACE.contains(use.tool())) repeatGuard.invalidate();
+            repeatGuard.record(use, data, turnNumber);
+        }
         if (!data.updates().isEmpty()) state.apply(data.updates());
         publish(new AgentEvent.ToolFinished(id, use.id(), data));
         return new ToolResult(use.id(), data.output(), data.error());

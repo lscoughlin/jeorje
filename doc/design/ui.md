@@ -22,7 +22,7 @@ The interface is in `jeorje-ui`. It uses JLine 4 (`org.jline:jline`). The parent
 
 - The **chat view** shows the conversation of the foreground agent. It uses all rows above the input line. A permission prompt appears as a box at the bottom of this region. A pane (the agent switcher or the file browser) replaces the chat view while it is open.
 - The **input line** is owned by a JLine `LineReader`. It has history and multi-line input. The history file is `${HOME}/.jeorje/history`. `Alt-Enter` adds a new line. The input area grows with the text, up to three rows less than the terminal height. `Tab` completes the text before the cursor. See [Tab completion](#tab-completion).
-- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the context use as a percent of the budget), `peers n` (the number of live peers), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
+- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the estimated size of the last request as a percent of the budget; the whole status line changes its color from 85%), `peers n` (the number of live peers), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
 
 JLine `Display` draws the chat region. It writes only the lines that change. The status line is written directly to the last row after each draw. The input line belongs to the `LineReader`, which draws its own rows. A permission prompt interrupts the input read. While the prompt waits, the screen reads the answer keys itself. After the answer, the input read starts again and keeps the text that the user had typed.
 
@@ -33,7 +33,8 @@ JLine `Display` draws the chat region. It writes only the lines that change. The
 - Markdown output has basic styling: headings, lists, bold text, code blocks, and inline code. Code blocks keep their whitespace, except that a tab becomes four spaces.
 - A tool call shows one line: the tool name and a short form of the input. A tool result is collapsed by default. It shows its first line and, for a longer result, the number of lines and the hint `Ctrl-X o to expand`. The user can expand the last tool result, and collapse it again, with `Ctrl-X o`. A click on a collapsed result line expands it. See [Mouse in the chat view](#mouse-in-the-chat-view).
 - `edit` results show a colored diff.
-- A `Compacted` event shows a dim line that gives the number of chunks that Jeorje pruned and the tokens it freed.
+- A `Compacted` event shows a dim line that gives the number of chunks that Jeorje pruned and the tokens it freed. A spill of the running turn gives the same line, with the number of results that the agent moved out.
+- A `ContextTrimmed` event shows a line in the error color: `[context: <n> chunks pruned to fit the budget, turn <n> left the request (use recall); the request is still over the budget]`. The parts show only when they apply. It means that the request did not fit the budget.
 - The view keeps the last 10,000 logical lines of each agent. `PgUp` and `PgDn` scroll by a page. Each agent has its own chat view.
 - Syntax highlighting of code and diffs is described in [Syntax highlighting in the chat view](#syntax-highlighting-in-the-chat-view). The interactive launcher turns it on at startup.
 - When the user scrolls above the first line, the view loads older lines from `transcript.jsonl`. See [Mouse in the chat view](#mouse-in-the-chat-view).
@@ -234,14 +235,23 @@ The file browser is a small file app in the chat region. It shows the tree of th
 - `Esc` and the files key close the pane.
 - The last row of the pane names the keys.
 - `a` adds the selected path to the next prompt. The next message then starts with a line `Files: <paths>`.
-- `/` starts a filter by name. `Enter` ends the filter text, and `Esc` clears it.
-- `.` shows or hides the ignored paths.
+- `/` starts a filter. The filter is plain text or a glob. `Enter` ends the filter text, and `Esc` clears it.
+- `.` shows or hides the data of git and of Jeorje.
 
-`/files` opens the browser. `/files list` prints the tree in the chat view. `/files list <filter>` prints the tree of the paths that contain the filter text. The first line of the print names the working directory and the filter. The last line names `/edit`.
+`/files` opens the browser. `/files list` prints the tree in the chat view. `/files list <filter>` prints the tree of the paths that match the filter. The filter is plain text or a glob, as in the pane. The first line of the print names the working directory and the filter. The last line names `/edit`.
 
-**Path mentions.** A word that starts with `@` and names a file or a directory in the working directory adds that path to the next message. The message keeps the `@path` word. The message starts with a line `Files: <paths>`. A word ends at a space, a tab, a newline, or a comma. A word that does not name a path is plain text.
+**Filter.** Text with none of the characters `*`, `?`, `[`, and `{` matches part of a name. Text with one of these characters is a glob. The match ignores case.
 
-The browser hides `.git/` and the paths in the `.gitignore` of the working directory unless the user presses `.`. It reads the names, the globs, a leading slash, and a trailing slash of the file. It does not read negation lines. This is a display filter. It is not a sandbox. The keys of the pane come from the `browser*` actions. See [configuration.md](configuration.md#key-bindings).
+- A glob without `/` matches the name of a file or a directory. Example: `*.java`.
+- A glob with `/` matches the path from the working directory, with `/` as separator. Example: `src/util/*`.
+- `**` crosses directories. A glob that starts with `**/` also matches a path with no directory part.
+- A glob that is not complete, such as `[a` or `*.{java`, matches as plain text until the user finishes it.
+- A directory stays in the list when it matches or when it holds a match. A directory that matches shows only the matching rows below it.
+- The filter walk does not enter a symbolic link to a directory. It visits at most 20,000 entries for each update of the list.
+
+**Path mentions.** A word that starts with `@` and names a file or a directory in the working directory adds that path to the next message. This holds also for a path that `.gitignore` lists. Jeorje reads no ignore file. The message keeps the `@path` word. The message starts with a line `Files: <paths>`. A word ends at a space, a tab, a newline, or a comma. A word that does not name a path is plain text.
+
+The browser shows every path, also a path that `.gitignore` lists. It does not read `.gitignore`. It hides `.git/`, `.jeorje/sessions/`, and `.jeorje/worktrees/` of the working directory unless the user presses `.`. These are the data of git and of Jeorje. A nested `.git` directory is an ordinary directory. Other files in `.jeorje/`, such as `config.yaml`, show as normal files. This is a display filter. It is not a sandbox. The keys of the pane come from the `browser*` actions. See [configuration.md](configuration.md#key-bindings).
 
 ## Editor
 
@@ -459,6 +469,7 @@ The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of li
 | `/files [list [filter]]` | Open the file browser, or print the file tree. `Ctrl-X f` opens the browser pane. |
 | `/edit <path>` | Open a file in the editor |
 | `/compact` | Run compaction now |
+| `/context` | Show how full the context of the foreground agent was at its last model call: the tokens of the system prompt, the tool definitions, the pinned items, the earlier context, the recent turns, and the current turn, the share of the budget, the results moved out of a running turn, and the turns that left the request |
 | `/compactor [slug\|off]` | Show or set the compactor model for this session |
 | `/advisor [slug\|none]` | Set the advisor model for this session. With no slug, it sets `~deepseek/deepseek-pro-latest`. `none` turns the advisor off |
 | `/plan [goal\|show\|edit\|done\|cancel]` | Enter, show, edit, or leave plan mode. See [planning.md](planning.md). |

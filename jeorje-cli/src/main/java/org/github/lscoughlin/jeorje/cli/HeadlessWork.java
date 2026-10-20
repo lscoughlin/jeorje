@@ -254,6 +254,8 @@ public final class HeadlessWork implements AutoCloseable {
         tools.put(AdvisorTool.NAME, advisor.slot());
         agent = new Agent(MAIN, settings(), advisor.tap(clientFor(null)), List.copyOf(tools.values()), mainPolicy,
                 store, transcript::writeTurn, this::onAgentEvent, Clock.systemUTC());
+        mode.maxExploreCalls(config.plan().maxExploreCalls());
+        agent.withToolFilter(mode::refuse).withStepBoundary(mode::notes);
         agent.withPruneListener(chunks -> {
             var skills = skillTool;
             if (skills != null) skills.releasePruned(MAIN.value(), chunks);
@@ -485,7 +487,9 @@ public final class HeadlessWork implements AutoCloseable {
                 config.context().budgetPercent(), config.llm().maxOutputTokens(), config.context().recentTurns(),
                 config.agents().stepLimit(), null, config.prompts().system(), "", null)
                 .withInstructionsSource(Wiring.promptInstructions(config, cwd, () -> toolSkills)::text)
-                .withMaxProtectedTokens(config.skills().maxProtectedTokens());
+                .withMaxProtectedTokens(config.skills().maxProtectedTokens())
+                .withRecentMaxPercent(config.context().recentMaxPercent())
+                .withRepeatGuard(config.agents().repeatGuard());
     }
 
     private SubagentLimits limits() {

@@ -43,7 +43,8 @@ class InteractiveWiringTest {
             await("mouse tracking", () -> rig.terminal.getCurrentMouseTracking() != Terminal.MouseTracking.Off);
             rig.type(CTRL_X_F);
             await("browser pane", () -> rig.session.screen().paneActive());
-            rig.type(DOWN + "\r");
+            // The rows are .jeorje/ (the directory of the session), .gitignore, and README.md.
+            rig.type(DOWN + DOWN + "\r");
             await("editor", () -> rig.session.activeEditor() != null);
             assertEquals(rig.repo.resolve("README.md").toRealPath(), rig.session.activeEditor().path().toRealPath());
             assertFalse(rig.session.screen().paneActive());
