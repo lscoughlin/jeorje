@@ -119,7 +119,7 @@ When the user cancels a turn, the `CancellationToken` of the agent triggers:
 - The default working-context budget is 60% of the context window of the model. The budget is the smaller value of that share and the window less `maxOutputTokens`.
 - `maxOutputTokens` is configuration (`llm.maxOutputTokens`).
 - The builder puts the pinned items and the pruned chunks in front of the first user message. When the request is over the budget, the builder drops whole recent turns from the request, the oldest first. It never drops the current turn. The `Built` result reports the number of dropped turns and whether the request is still over the budget.
-- Compaction runs after each turn. It prunes tokens. It does not write summaries. The triggers are in [context-and-compaction.md](context-and-compaction.md#compaction-policy). The `/compact` command runs it at once at the hard level.
+- Compaction runs after each turn. It prunes tokens. It does not write summaries. The triggers measure the earlier context only. They are in [context-and-compaction.md](context-and-compaction.md#compaction-policy). A turn gives one chunk for each user text, one chunk for each `ask_user` answer, and one or more chunks for the rest. See [Chunk formats](context-and-compaction.md#chunk-formats). The `/compact` command runs it at once at the hard level.
 
 ## System prompt
 

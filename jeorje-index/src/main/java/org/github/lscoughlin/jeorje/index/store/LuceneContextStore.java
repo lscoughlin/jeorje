@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -99,20 +100,32 @@ public final class LuceneContextStore implements ContextStore {
     private static final int LEG_SIZE = 50;
     private static final int RRF_K = 60;
     private static final int SNIPPET_CHARS = 200;
+    private static final int USER_SNIPPET_CHARS = 1000;
+    /** The default score factor for chunks of the kind {@code user}. */
+    public static final double DEFAULT_USER_BOOST = 1.5;
     private static final Pattern QUOTED = Pattern.compile("\"([^\"]*)\"");
 
     /** Options for opening a store. */
-    public record Options(Duration retryInterval, boolean rebuild) {
+    public record Options(Duration retryInterval, boolean rebuild, double userBoost) {
+        public Options {
+            if (!(userBoost > 0)) throw new IllegalArgumentException("userBoost must be above 0");
+        }
+
         public static Options defaults() {
-            return new Options(Duration.ofSeconds(60), false);
+            return new Options(Duration.ofSeconds(60), false, DEFAULT_USER_BOOST);
         }
 
         public Options withRebuild(boolean value) {
-            return new Options(retryInterval, value);
+            return new Options(retryInterval, value, userBoost);
         }
 
         public Options withRetryInterval(Duration value) {
-            return new Options(value, rebuild);
+            return new Options(value, rebuild, userBoost);
+        }
+
+        /** The factor for the score of a chunk of the kind {@code user} (1 means no boost). */
+        public Options withUserBoost(double value) {
+            return new Options(retryInterval, rebuild, value);
         }
     }
 
@@ -120,6 +133,7 @@ public final class LuceneContextStore implements ContextStore {
     private final IndexWriter writer;
     private final SearcherManager searchers;
     private final Embedder embedder;
+    private final Options options;
     private final ExecutorService writerThread;
     private final ScheduledExecutorService retryThread;
     private final CodeAnalyzer queryAnalyzer = CodeAnalyzer.forQuery();
@@ -143,6 +157,7 @@ public final class LuceneContextStore implements ContextStore {
 
     private LuceneContextStore(Path indexDir, Embedder embedder, Options options) {
         this.embedder = embedder;
+        this.options = options;
         Directory dir = null;
         IndexWriter w = null;
         try {
@@ -487,14 +502,32 @@ public final class LuceneContextStore implements ContextStore {
     }
 
     private List<Hit> textSearch(IndexSearcher searcher, Query textQuery, Query filter, int limit) throws IOException {
-        var docs = textLeg(searcher, textQuery, filter, limit);
+        var docs = textLeg(searcher, textQuery, filter, Math.max(limit, LEG_SIZE));
         var hits = new ArrayList<Hit>(docs.length);
         var stored = searcher.storedFields();
         for (var sd : docs) {
             var chunk = toChunk(stored.document(sd.doc));
-            hits.add(new Hit(chunk, sd.score, highlight(textQuery, chunk.text())));
+            hits.add(new Hit(chunk, (float) (sd.score * boost(chunk)), snippet(chunk, highlight(textQuery, chunk.text()))));
         }
-        return hits;
+        return top(hits, limit);
+    }
+
+    /** The score factor of a chunk: the user boost for the words of the user, 1 for all other chunks. */
+    private double boost(Chunk chunk) {
+        return "user".equals(chunk.kind()) ? options.userBoost() : 1.0;
+    }
+
+    /** A chunk of the kind {@code user} is short and important. Its snippet is the text, up to a limit. */
+    private static String snippet(Chunk chunk, String snippet) {
+        if (!"user".equals(chunk.kind())) return snippet;
+        var text = chunk.text();
+        return text.length() <= USER_SNIPPET_CHARS ? text : text.substring(0, USER_SNIPPET_CHARS);
+    }
+
+    private static List<Hit> top(List<Hit> hits, int limit) {
+        var sorted = new ArrayList<>(hits);
+        sorted.sort(Comparator.comparingDouble((Hit h) -> h.score()).reversed());
+        return sorted.size() <= limit ? sorted : new ArrayList<>(sorted.subList(0, limit));
     }
 
     private ScoreDoc[] textLeg(IndexSearcher searcher, Query textQuery, Query filter, int n) throws IOException {
@@ -514,11 +547,10 @@ public final class LuceneContextStore implements ContextStore {
         var hits = new ArrayList<Hit>();
         var stored = searcher.storedFields();
         for (var sd : docs) {
-            if (hits.size() >= limit) break;
             var chunk = toChunk(stored.document(sd.doc));
-            hits.add(new Hit(chunk, sd.score, prefix(chunk.text())));
+            hits.add(new Hit(chunk, (float) (sd.score * boost(chunk)), snippet(chunk, prefix(chunk.text()))));
         }
-        return hits;
+        return top(hits, limit);
     }
 
     private List<Hit> hybrid(IndexSearcher searcher, String text, Query filter, int limit) throws IOException {
@@ -542,16 +574,22 @@ public final class LuceneContextStore implements ContextStore {
         }
         var textIds = new java.util.HashSet<Integer>();
         for (var sd : textDocs) textIds.add(sd.doc);
+        var stored = searcher.storedFields();
+        var chunks = new HashMap<Integer, Chunk>();
+        for (var doc : fused.keySet()) {
+            var chunk = toChunk(stored.document(doc));
+            chunks.put(doc, chunk);
+            fused.computeIfPresent(doc, (k, v) -> v * boost(chunk));
+        }
         var ordered = new ArrayList<>(fused.entrySet());
         ordered.sort(Map.Entry.<Integer, Double>comparingByValue().reversed()
             .thenComparing(Map.Entry.comparingByKey()));
         var hits = new ArrayList<Hit>();
-        var stored = searcher.storedFields();
         for (var entry : ordered) {
             if (hits.size() >= limit) break;
-            var chunk = toChunk(stored.document(entry.getKey()));
-            var snippet = textIds.contains(entry.getKey()) ? highlight(textQuery, chunk.text()) : prefix(chunk.text());
-            hits.add(new Hit(chunk, entry.getValue().floatValue(), snippet));
+            var chunk = chunks.get(entry.getKey());
+            var found = textIds.contains(entry.getKey()) ? highlight(textQuery, chunk.text()) : prefix(chunk.text());
+            hits.add(new Hit(chunk, entry.getValue().floatValue(), snippet(chunk, found)));
         }
         return hits;
     }

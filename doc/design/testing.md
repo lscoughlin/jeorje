@@ -37,7 +37,8 @@ Four tests run only when `JEORJE_LIVE=1` is set: `LiveSmokeTest` and `LivePlanIm
 
 - Message model and Jackson round trips.
 - `TurnChunker` boundaries, overlap, and large tool results.
-- Compaction triggers, eviction order, and pinned items.
+- Compaction triggers, eviction order, and pinned items. The triggers measure the earlier context only, also when the system prompt and the recent turns are large.
+- Human text: format 2 chunks (user chunk, `ask_user` chunk with question, choices, and answer, and the split of a large main text at line boundaries); the chunk format in the manifest (a manifest with no value has format 1, and a resumed format 1 session keeps its chunk ids); user and `ask_user` chunks are `PROTECTED`; in format 1, the `USER:` text and the `ask_user` answer stay in the pruned text at every level, a chunk with human ranges stops at level 2 and never becomes a note, and an answer of the compactor that leaves out a human range is repaired; the fallback pruner keeps negation words; `recall` with the filter `kind` set to `user` returns only user chunks, a user chunk ranks in the first results among large chunks, `index.userBoost` loads and must be above 0, and the snippet of a short user chunk is its full text.
 - Protection classes: `PROTECTED` chunks never change, a resolved error becomes `AGGRESSIVE`, immediate file paths survive at every level, and `CAREFUL` chunks stop at level 2.
 - Concluded searches: a search result that a later edit, write, or answer used is pruned first and goes to level 3, and the todo list is pinned in every request.
 - Secret scrubbing: a key in a tool result does not reach the model, the transcript, the index chunks, or the audit log.

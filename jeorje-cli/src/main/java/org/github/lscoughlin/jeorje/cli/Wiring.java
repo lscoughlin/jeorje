@@ -489,7 +489,7 @@ public final class Wiring {
         var llm = llmClient(config, env, roles.defaultModel());
         var embedder = embedder(config, env);
         var scrubbing = new ScrubbingContextStore(
-                LuceneContextStore.open(session.indexDir(), embedder, LuceneContextStore.Options.defaults()),
+                LuceneContextStore.open(session.indexDir(), embedder, LuceneContextStore.Options.defaults().withUserBoost(config.index().userBoost())),
                 scrubber);
         ContextStore store = scrubbing;
         var basePolicy = policy(config, options, env, cwd, session.id(), scrubber);

@@ -30,7 +30,8 @@ public final class SystemPromptBuilder {
         Jeorje can prune old parts of this conversation to save space. A pruned part starts with a header like
         [<chunk id> ... | pruned L<level>]. It ends with a hint like [recall: keyword, keyword, id=<chunk id>].
         The full text is still in the history index. To get it back, call the recall tool with the keywords or with the chunk id.
-        Do not guess the content of a pruned part. Recall it first.""";
+        Do not guess the content of a pruned part. Recall it first.
+        To find what the user said, asked, or chose, call the recall tool with the filter kind "user".""";
 
     private SystemPromptBuilder() {}
 

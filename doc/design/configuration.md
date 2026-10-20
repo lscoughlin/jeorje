@@ -90,6 +90,7 @@ context:
 index:
   embeddings: true                   # false gives text-only search
   modelCache: ${HOME}/.cache/jeorje/models
+  userBoost: 1.5                     # score factor for user chunks in search; above 0; 1 = no boost
 permissions:
   rules:
     - tool: bash

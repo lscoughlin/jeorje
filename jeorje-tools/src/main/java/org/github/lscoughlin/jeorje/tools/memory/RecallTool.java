@@ -42,7 +42,7 @@ public final class RecallTool extends RecordTool<RecallTool.Input> {
             @Describe("Only chunks of this agent id.") String agentId,
             @Describe("First turn, inclusive.") Integer fromTurn,
             @Describe("Last turn, inclusive.") Integer toTurn,
-            @Describe("Only chunks of this kind, for example tool_result.") String kind,
+            @Describe("Only chunks of this kind, for example tool_result. Use user for the words of the user and their answers to your questions.") String kind,
             @Describe("Only chunks of this tool.") String toolName) {}
 
     /** The input of {@code recall}. */
@@ -64,7 +64,8 @@ public final class RecallTool extends RecordTool<RecallTool.Input> {
     public RecallTool(String sessionId, Function<String, String> agentNames) {
         super(NAME, "Search the history of this session, or read one stored chunk. The search covers "
                 + "the chunks of all agents. Use it when a pruned chunk hides detail that you need, "
-                + "instead of a repeat tool run. Give query to search. Give chunkId to read a chunk.",
+                + "instead of a repeat tool run. To find what the user said or chose, search with the filter kind user. "
+                + "Give query to search. Give chunkId to read a chunk.",
                 Input.class, true);
         this.sessionId = sessionId;
         this.agentNames = agentNames == null ? id -> id : agentNames;

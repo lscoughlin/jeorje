@@ -58,7 +58,7 @@ A registry can make restricted copies of itself: `only` (named tools), `without`
 | `webfetch` | yes | Fetch a URL, convert HTML to markdown text, and refuse a response over the size cap. |
 | `todo` | no | Keep the task list of the agent. Each call replaces the list. The context classifier protects the chunk of this tool. |
 | `recall` | yes | Search the history of the session, or read a chunk. It covers the chunks of all agents of the session and never the chunks of another session. See [context-and-compaction.md](context-and-compaction.md#recall). |
-| `ask_user` | no | Ask the user a question. It can give choices. |
+| `ask_user` | no | Ask the user a question. It can give choices. The question and the answer become a `user` chunk that pruning never changes. `recall` with the filter `kind` set to `user` finds it. |
 | `spawn_agent` | no | Start a subagent. It can use a `type` from a subagent definition. See [subagents.md](subagents.md) and [instructions-and-skills.md](instructions-and-skills.md#subagent-definitions). |
 | `skill` | yes | Load the body of a skill. See [instructions-and-skills.md](instructions-and-skills.md#skills). |
 | `agent_message` | no | Send a message to a subagent or peer. See [swarm.md](swarm.md). |

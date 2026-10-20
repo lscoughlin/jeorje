@@ -37,6 +37,7 @@ final class ConfigDefaults {
             index:
               embeddings: true
               modelCache: ${HOME}/.cache/jeorje/models
+              userBoost: 1.5
             permissions:
               rules: []
               extraDirectories: []
