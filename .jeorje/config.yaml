@@ -1,5 +1,18 @@
+mcp:
+  servers:
+    clarity:
+      command: clarity
+      args: [mcp]
+      cwd: ${CWD}
+    codegraph:
+      command: codegraph
+      args: [serve, --mcp]
+      cwd: ${CWD}
+      timeoutSeconds: 120
 permissions:
   rules:
+    - tool: read
+      decision: allow
     - tool: webfetch
       decision: allow
     - tool: patch

@@ -13,3 +13,10 @@ __pycache__/
 *.pyc
 .DS_Store
 bin/*.jar
+
+# Generated index artifacts: clarity and codegraph
+.clarity/index/
+.clarity/*.sock
+.clarity/*.lock
+.clarity/daemon.log
+.codegraph/
