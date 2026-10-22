@@ -100,6 +100,8 @@ import org.github.lscoughlin.jeorje.tools.memory.UserQuestion;
 import org.github.lscoughlin.jeorje.tools.memory.UserQuestionBroker;
 import org.github.lscoughlin.jeorje.tools.plan.PlanSubmitTool;
 import org.github.lscoughlin.jeorje.tools.shell.BashTool;
+import org.github.lscoughlin.jeorje.tools.shell.ShellRunner;
+import org.github.lscoughlin.jeorje.tools.shell.ShellSettings;
 import org.github.lscoughlin.jeorje.tools.registry.ToolRegistry;
 import org.github.lscoughlin.jeorje.tools.skills.SkillTool;
 import org.github.lscoughlin.jeorje.tools.story.StoryTools;
@@ -139,6 +141,7 @@ public final class InteractiveSession implements AutoCloseable {
 
     /** The id of the first conversation. It is the same value as {@link MainSession#MAIN}. */
     static final AgentId MAIN = MainSession.MAIN;
+    private static final Duration BANG_TIMEOUT = Duration.ofSeconds(60);
 
     /**
      * Values that a test can set.
@@ -990,6 +993,10 @@ public final class InteractiveSession implements AutoCloseable {
     private void onSubmit(String line) {
         try {
             promptSent = false;
+            if (line.strip().startsWith("!")) {
+                runBang(line.strip().substring(1).strip());
+                return;
+            }
             var result = slash.execute(line);
             if (result.handled()) {
                 if (!result.output().isBlank()) notice(screen.foreground(), result.output());
@@ -1017,6 +1024,49 @@ public final class InteractiveSession implements AutoCloseable {
             notice(screen.foreground(), "Error: " + e.getMessage());
             screen.status().state("idle");
         }
+    }
+
+    /**
+     * Runs a bang line. The command runs in the working directory with no permission check. The chat view shows
+     * one block. The text of the block goes to the foreground agent as a note. The line starts no turn.
+     */
+    private void runBang(String command) {
+        var target = screen.foreground();
+        if (command.isEmpty()) {
+            notice(target, "Usage: !<command>");
+            if (!main.busy().get()) screen.status().state("idle");
+            screen.draw();
+            return;
+        }
+        var result = ShellRunner.run(cwd, command, ShellSettings.defaults(), BANG_TIMEOUT);
+        var body = result.output().isEmpty() ? "(no output)" : result.output();
+        var footer = result.timedOut() ? "[timed out after " + BANG_TIMEOUT.toSeconds() + " s]"
+                : "[exit code " + result.exitCode() + "]";
+        screen.localBlock(target, "! " + command, body, footer);
+        var note = "Shell command (run by the user, not by you): " + command + "\nWorking directory: " + cwd
+                + "\nOutput:\n" + body + "\n" + footer;
+        note = hideHome(note);
+        if (target.equals(MAIN)) {
+            main.agent().note(note);
+        } else {
+            roster.steer(target, note);
+        }
+        if (!main.busy().get()) screen.status().state("idle");
+        screen.draw();
+    }
+
+    /** Replaces each home directory path in a text with {@code ~}. */
+    private String hideHome(String text) {
+        var homes = new java.util.LinkedHashSet<String>();
+        if (home != null) homes.add(home.toString());
+        homes.add(System.getProperty("user.home"));
+        homes.add(System.getenv("HOME"));
+        var out = text;
+        for (var h : homes.stream().filter(h -> h != null && h.length() > 1).sorted(
+                java.util.Comparator.comparingInt(String::length).reversed()).toList()) {
+            out = out.replace(h, "~");
+        }
+        return out;
     }
 
     void sendPrompt(String prompt, String model) {
