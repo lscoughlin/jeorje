@@ -26,6 +26,12 @@ import java.util.function.Consumer;
 import org.github.lscoughlin.jeorje.core.port.Transport;
 import org.github.lscoughlin.jeorje.swarm.Messages.AgentPayload;
 import org.github.lscoughlin.jeorje.swarm.Messages.AnswerPayload;
+import org.github.lscoughlin.jeorje.swarm.Messages.AnswerReplyBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.AnswerReqBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.AttachBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.LineBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.RosterBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.SteerBody;
 import org.github.lscoughlin.jeorje.swarm.Messages.AskPayload;
 import org.github.lscoughlin.jeorje.swarm.Messages.ErrorPayload;
 import org.github.lscoughlin.jeorje.swarm.Messages.Delegate;
@@ -167,6 +173,7 @@ public final class SwarmNode implements AutoCloseable {
     private final Set<String> bootstrap = ConcurrentHashMap.newKeySet();
     private final Map<String, PendingQuestion> questions = new ConcurrentHashMap<>();
     private final SshMessenger messenger;
+    private final AttachService attach;
     private final Map<String, PendingHistory> histories = new ConcurrentHashMap<>();
     private final Map<String, Delegation> delegations = new ConcurrentHashMap<>();
     private final Map<String, Hosted> hosted = new ConcurrentHashMap<>();
@@ -204,6 +211,8 @@ public final class SwarmNode implements AutoCloseable {
         this.transport = transport;
         this.ssh = ssh;
         this.messenger = new SshMessenger(this::sendSsh, Duration.ofMillis(config.requestTimeoutMs()));
+        this.attach = new AttachService(this::sendSsh, () -> handlers,
+                Duration.ofMillis(config.requestTimeoutMs()));
         this.clock = clock;
         this.handlers = handlers;
         this.discovery = discovery;
@@ -288,6 +297,7 @@ public final class SwarmNode implements AutoCloseable {
         questions.values().forEach(q -> q.future().completeExceptionally(lost));
         questions.clear();
         messenger.close(lost);
+        attach.close();
         histories.values().forEach(q -> q.future().completeExceptionally(lost));
         histories.clear();
         hosted.values().forEach(h -> cancelQuietly(h.task));
@@ -376,6 +386,22 @@ public final class SwarmNode implements AutoCloseable {
     /** True when this node has an SSH transport. */
     public boolean sshEnabled() {
         return ssh != null;
+    }
+
+    /** Asks a peer for the agents that a client can attach to. Needs SSH. */
+    public CompletableFuture<List<SwarmHandlers.PeerAgent>> roster(String peerId) {
+        return attach.roster(peerId);
+    }
+
+    /**
+     * Attaches to an agent of a peer: the caller gets the history, then the live lines, and can steer the agent
+     * and answer its questions. Needs SSH.
+     *
+     * @param onLine receives the live lines, on one serial thread
+     * @param onClosed is called once when the host or the peer ends the attachment
+     */
+    public RemoteAttachment attach(String peerId, String agentId, Consumer<String> onLine, Runnable onClosed) {
+        return attach.attach(peerId, agentId, onLine, onClosed);
     }
 
     /** Asks a peer to search the history of one of its agents. The remote user rules decide. */
@@ -567,6 +593,14 @@ public final class SwarmNode implements AutoCloseable {
                         messenger.failed(message.from(), payload.requestId(), payload.reason());
                     }
                 }
+                case Messages.AGENT_ATTACH, Messages.AGENT_ROSTER, Messages.AGENT_LINE, Messages.AGENT_STEER,
+                        Messages.AGENT_ANSWER_REQ, Messages.AGENT_ANSWER_REPLY -> {
+                    if (viaSsh) {
+                        dispatchAttach(message);
+                    } else {
+                        log.atWarn().log(() -> message.type() + " from " + message.from() + " ignored: it did not come over SSH");
+                    }
+                }
                 case Messages.DELEGATE -> {
                     var payload = body(message, Delegate.class);
                     callbacks.execute(() -> onDelegate(message, payload));
@@ -583,6 +617,37 @@ public final class SwarmNode implements AutoCloseable {
             }
         } catch (RuntimeException e) {
             log.atWarn().log(() -> "cannot handle " + message.type() + ": " + e);
+        }
+    }
+
+    private void dispatchAttach(Message message) {
+        var from = message.from();
+        switch (message.type()) {
+            case Messages.AGENT_ATTACH -> {
+                var payload = body(message, AttachBody.class);
+                callbacks.execute(() -> attach.onAttach(from, payload));
+            }
+            case Messages.AGENT_ROSTER -> {
+                var payload = body(message, RosterBody.class);
+                callbacks.execute(() -> attach.onRoster(from, payload));
+            }
+            case Messages.AGENT_LINE -> {
+                var payload = body(message, LineBody.class);
+                callbacks.execute(() -> attach.onLine(from, payload));
+            }
+            case Messages.AGENT_STEER -> {
+                var payload = body(message, SteerBody.class);
+                callbacks.execute(() -> attach.onSteer(from, payload));
+            }
+            case Messages.AGENT_ANSWER_REQ -> {
+                var payload = body(message, AnswerReqBody.class);
+                callbacks.execute(() -> attach.onAnswerRequest(from, payload));
+            }
+            case Messages.AGENT_ANSWER_REPLY -> {
+                var payload = body(message, AnswerReplyBody.class);
+                callbacks.execute(() -> attach.onAnswerReply(from, payload));
+            }
+            default -> { }
         }
     }
 
@@ -817,6 +882,7 @@ public final class SwarmNode implements AutoCloseable {
         questions.values().stream().filter(q -> q.peerId().equals(id))
                 .forEach(q -> q.future().completeExceptionally(lost));
         messenger.peerLost(id, lost);
+        callbacks.execute(() -> attach.peerLost(id));
         histories.values().stream().filter(q -> q.peerId().equals(id))
                 .forEach(q -> q.future().completeExceptionally(lost));
         hosted.entrySet().removeIf(e -> {

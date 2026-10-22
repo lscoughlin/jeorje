@@ -711,8 +711,42 @@ public final class InteractiveSession implements AutoCloseable {
                 });
     }
 
+    /** What a remote client sees of this session: the agents, their chat history, steering, and answers. */
+    private final class RemoteAccess implements SwarmBridge.AgentAccess {
+        @Override
+        public List<org.github.lscoughlin.jeorje.swarm.SwarmHandlers.PeerAgent> roster() {
+            return AgentRoster.localOnly(AgentRoster.PEER_PREFIX, InteractiveSession.this.roster.agents()).stream()
+                    .map(e -> new org.github.lscoughlin.jeorje.swarm.SwarmHandlers.PeerAgent(e.id().value(), e.name(),
+                            e.parent() == null ? "" : e.parent().value(), e.state()))
+                    .toList();
+        }
+
+        @Override
+        public List<String> history(AgentId agent) { return historyOf(agent); }
+
+        @Override
+        public void steer(AgentId agent, String text) { InteractiveSession.this.roster.steer(agent, text); }
+
+        @Override
+        public void answer(AgentId agent, String requestId, String text) {
+            var approved = switch (text.strip().toLowerCase(java.util.Locale.ROOT)) {
+                case "yes", "y", "allow", "ok", "approve", "approved" -> true;
+                default -> false;
+            };
+            if (agent.equals(MAIN)) {
+                main.agent().confirm(requestId, approved);
+                return;
+            }
+            var use = new ToolUse(requestId, "", MAPPER.createObjectNode());
+            if (!gate.complete(agent, use, approved ? Decision.ALLOW_ONCE : Decision.DENY)) {
+                throw new IllegalStateException("the agent " + agent + " does not wait for request " + requestId);
+            }
+        }
+    }
+
     private void startSwarm() {
         if (bridge == null) return;
+        bridge.agentAccess(new RemoteAccess());
         try {
             swarm = bridge.start().node();
             notice(MAIN, "Swarm started on " + swarm.address() + ".");

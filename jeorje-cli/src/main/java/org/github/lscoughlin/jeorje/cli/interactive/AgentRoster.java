@@ -96,6 +96,11 @@ final class AgentRoster implements AgentDirectory {
                 .findFirst();
     }
 
+    /** The entries of the local agents: the list without the rows of remote peers. */
+    static List<AgentEntry> localOnly(String peerPrefix, List<AgentEntry> all) {
+        return all.stream().filter(e -> !e.id().value().startsWith(peerPrefix)).toList();
+    }
+
     static List<PeerRecord> alive(List<PeerRecord> all) {
         return all.stream().filter(p -> p.state() == PeerState.ALIVE).toList();
     }

@@ -86,6 +86,7 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     private volatile SwarmNode node;
     private volatile PeerDiscovery discovery;
     private volatile PeerAnswerer answerer;
+    private volatile AgentAccess access;
     private volatile SwarmSshServer sshServer;
     private volatile SshChannelTransport sshTransport;
     private volatile SubagentRuntime runtime;
@@ -509,6 +510,18 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
 
     /** Call it for each event of a subagent loop. It sends progress to the delegating peer. */
     public void onAgentEvent(AgentEvent event) {
+        var sinks = lineSinks.get(event.agent());
+        if (sinks != null && !sinks.isEmpty()) {
+            for (var line : agentLines.render(event)) {
+                for (var sink : sinks) {
+                    try {
+                        sink.accept(line);
+                    } catch (RuntimeException e) {
+                        log.atDebug().log(() -> "a line sink failed: " + e);
+                    }
+                }
+            }
+        }
         var entry = hosted.get(event.agent());
         if (entry == null || entry.done().get()) return;
         switch (event) {
@@ -538,6 +551,112 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     @Override
     public void onAgentMessage(String fromPeer, String toAgent, String text) {
         mainInput.accept(new AgentInput.PeerMessage(new AgentId("peer:" + nameOf(fromPeer)), text));
+    }
+
+    // ---- foreground attach: the host side ----
+
+    /**
+     * The access of remote clients to the local agents. The interactive session sets its own access, which uses
+     * the chat history and the permission prompts. Without one, the bridge uses the subagent runtime.
+     */
+    public interface AgentAccess {
+        /** The agents that a client can attach to. */
+        List<PeerAgent> roster();
+
+        /** The history lines of an agent, oldest first. */
+        List<String> history(AgentId agent);
+
+        /** Steering text from a client, as if the user typed it for the agent. */
+        void steer(AgentId agent, String text);
+
+        /** The answer of a client to a question of the agent, for example {@code yes} to a permission request. */
+        void answer(AgentId agent, String requestId, String text);
+    }
+
+    /** Sets the access of remote clients to the local agents. */
+    public SwarmBridge agentAccess(AgentAccess value) {
+        this.access = value;
+        return this;
+    }
+
+    private AgentAccess access() {
+        var current = access;
+        return current != null ? current : runtimeAccess;
+    }
+
+    /** The access that needs only the subagent runtime. It has no history and answers nothing. */
+    private final AgentAccess runtimeAccess = new AgentAccess() {
+        @Override
+        public List<PeerAgent> roster() {
+            var rt = runtime;
+            if (rt == null) return List.of();
+            return rt.status().stream().filter(info -> !HOST_ROOT.equals(info.id()))
+                    .map(info -> new PeerAgent(info.id().value(), info.name(),
+                            info.parent() == null ? "" : info.parent().value(), info.state().name())).toList();
+        }
+
+        @Override
+        public List<String> history(AgentId agent) { return List.of(); }
+
+        @Override
+        public void steer(AgentId agent, String text) {
+            var rt = runtime;
+            if (rt == null || !rt.steer(agent, text)) {
+                throw new IllegalStateException("the agent " + agent + " cannot take steering now");
+            }
+        }
+
+        @Override
+        public void answer(AgentId agent, String requestId, String text) {
+            throw new IllegalStateException("this instance cannot take answers from a client");
+        }
+    };
+
+    private final ConcurrentHashMap<AgentId, java.util.concurrent.CopyOnWriteArrayList<Consumer<String>>> lineSinks =
+            new ConcurrentHashMap<>();
+    private final AgentLines agentLines = new AgentLines();
+
+    @Override
+    public List<PeerAgent> roster() { return access().roster(); }
+
+    @Override
+    public ForegroundHost attach(String fromPeer, String agentId) {
+        if (agentId == null || agentId.isBlank()) return null;
+        var known = roster().stream().anyMatch(a -> a.agentId().equals(agentId));
+        if (!known) return null;
+        var id = new AgentId(agentId);
+        var name = nameOf(fromPeer);
+        log.atInfo().log(() -> "peer " + name + " attached to " + agentId);
+        notice.accept("Peer " + name + " attached to the agent " + agentId + ".");
+        return new ForegroundHost() {
+            private volatile Consumer<String> mine;
+
+            @Override public List<String> history() { return access().history(id); }
+
+            @Override public String agentId() { return agentId; }
+
+            @Override public void steer(String text) { access().steer(id, text); }
+
+            @Override public void answer(String requestId, String text) { access().answer(id, requestId, text); }
+
+            @Override
+            public void onLine(Consumer<String> sink) {
+                var old = mine;
+                if (old != null) {
+                    var list = lineSinks.get(id);
+                    if (list != null) list.remove(old);
+                }
+                mine = sink;
+                if (sink != null) lineSinks.computeIfAbsent(id, k -> new java.util.concurrent.CopyOnWriteArrayList<>())
+                        .add(sink);
+            }
+
+            @Override
+            public void detach() {
+                onLine(null);
+                notice.accept("Peer " + name + " detached from the agent " + agentId + ".");
+            }
+        };
     }
 
     /** Answers a question from an agent on a peer. */
