@@ -147,6 +147,7 @@ public final class SwarmNode implements AutoCloseable {
 
     private final SwarmConfig config;
     private final Transport transport;
+    private final Transport ssh;
     private final Clock clock;
     private final SwarmHandlers handlers;
     private final PeerDiscovery discovery;
@@ -185,9 +186,19 @@ public final class SwarmNode implements AutoCloseable {
      */
     public SwarmNode(SwarmConfig config, PeerRecord self, Transport transport, Clock clock,
             SwarmHandlers handlers, PeerDiscovery discovery, String sshAddress) {
+        this(config, self, transport, null, clock, handlers, discovery, sshAddress);
+    }
+
+    /**
+     * @param ssh the transport of the SSH channel, or null when SSH is off; envelopes from it go through the
+     *        same {@code receive} path as envelopes from the TCP transport
+     */
+    public SwarmNode(SwarmConfig config, PeerRecord self, Transport transport, Transport ssh, Clock clock,
+            SwarmHandlers handlers, PeerDiscovery discovery, String sshAddress) {
         self = sshAddress == null || sshAddress.isBlank() ? self : self.withSshAddress(sshAddress);
         this.config = config;
         this.transport = transport;
+        this.ssh = ssh;
         this.clock = clock;
         this.handlers = handlers;
         this.discovery = discovery;
@@ -205,7 +216,10 @@ public final class SwarmNode implements AutoCloseable {
             return this;
         }
         bootstrap.addAll(config.wka());
-        transport.onMessage(this::receive);
+        transport.onMessage(envelope -> receive(envelope, false));
+        if (ssh != null) {
+            ssh.onMessage(envelope -> receive(envelope, true));
+        }
         if (discovery != null) {
             try {
                 discovery.announce(membership.self());
@@ -275,8 +289,14 @@ public final class SwarmNode implements AutoCloseable {
         try {
             transport.close();
         } finally {
-            if (discovery != null) {
-                discovery.withdraw(selfId);
+            try {
+                if (ssh != null) {
+                    ssh.close();
+                }
+            } finally {
+                if (discovery != null) {
+                    discovery.withdraw(selfId);
+                }
             }
         }
     }
@@ -445,7 +465,7 @@ public final class SwarmNode implements AutoCloseable {
 
     // ---- receiving ------------------------------------------------------------------------------------
 
-    private void receive(Transport.Envelope envelope) {
+    private void receive(Transport.Envelope envelope, boolean viaSsh) {
         Message message;
         try {
             message = Json.MAPPER.readValue(envelope.body(), Message.class);
@@ -465,14 +485,14 @@ public final class SwarmNode implements AutoCloseable {
             return;
         }
         final var accepted = message;
-        runOwner(() -> dispatch(accepted));
+        runOwner(() -> dispatch(accepted, viaSsh));
     }
 
     private <T> T body(Message message, Class<T> type) {
         return Json.MAPPER.convertValue(message.body(), type);
     }
 
-    private void dispatch(Message message) {
+    private void dispatch(Message message, boolean viaSsh) {
         try {
             switch (message.type()) {
                 case Messages.GOSSIP -> onGossip(message, body(message, Gossip.class));

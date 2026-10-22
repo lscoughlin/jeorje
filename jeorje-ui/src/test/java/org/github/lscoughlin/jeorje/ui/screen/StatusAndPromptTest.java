@@ -26,6 +26,17 @@ class StatusAndPromptTest {
     }
 
     @Test
+    void theStatusLineShowsPeersOffWhenTheSwarmIsOff() {
+        var s = new StatusLine().agent("main").peers(0);
+        assertTrue(s.text().contains("peers 0"), s.text());
+        s.swarmOff(true);
+        assertTrue(s.text().contains("peers off"), s.text());
+        assertTrue(!s.text().contains("peers 0"), s.text());
+        s.swarmOff(false);
+        assertTrue(s.text().contains("peers 0"), s.text());
+    }
+
+    @Test
     void theStatusLineWarnsWhenTheContextIsAlmostFull() {
         var s = new StatusLine().agent("main").contextPercent(84);
         var normal = s.render(60).styleAt(0);

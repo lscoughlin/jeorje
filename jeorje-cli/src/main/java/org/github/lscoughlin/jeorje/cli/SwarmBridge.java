@@ -31,7 +31,9 @@ import org.github.lscoughlin.jeorje.core.subagent.SpawnException;
 import org.github.lscoughlin.jeorje.core.subagent.SpawnRequest;
 import org.github.lscoughlin.jeorje.core.subagent.SubagentEvent;
 import org.github.lscoughlin.jeorje.core.subagent.SubagentRuntime;
+import org.github.lscoughlin.jeorje.swarm.CompositeDiscovery;
 import org.github.lscoughlin.jeorje.swarm.DelegateEvent;
+import org.github.lscoughlin.jeorje.swarm.LocalRendezvous;
 import org.github.lscoughlin.jeorje.swarm.Messages;
 import org.github.lscoughlin.jeorje.swarm.PeerDiscovery;
 import org.github.lscoughlin.jeorje.swarm.ZeroconfDiscovery;
@@ -40,7 +42,10 @@ import org.github.lscoughlin.jeorje.swarm.PeerRecord;
 import org.github.lscoughlin.jeorje.swarm.PeerState;
 import org.github.lscoughlin.jeorje.swarm.SwarmConfig;
 import org.github.lscoughlin.jeorje.swarm.SwarmHandlers;
+import org.github.lscoughlin.jeorje.swarm.SshChannelTransport;
 import org.github.lscoughlin.jeorje.swarm.SwarmNode;
+import org.github.lscoughlin.jeorje.swarm.SwarmSshServer;
+import org.github.lscoughlin.jeorje.swarm.SwarmTokenStore;
 import org.github.lscoughlin.jeorje.swarm.TcpTransport;
 import org.github.lscoughlin.jeorje.swarm.TlsSupport;
 import org.slf4j.Logger;
@@ -80,6 +85,8 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     private volatile List<String> capabilities = List.of();
     private volatile SwarmNode node;
     private volatile PeerDiscovery discovery;
+    private volatile SwarmSshServer sshServer;
+    private volatile SshChannelTransport sshTransport;
     private volatile SubagentRuntime runtime;
     private volatile PermissionPolicy hostPolicy = action -> PermissionPolicy.Decision.ASK;
     private volatile Consumer<AgentInput> mainInput = input -> { };
@@ -124,14 +131,22 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
                                         java.util.Map<String, String> environment, Consumer<String> notice,
                                         Runnable onChange) {
         var cfg = config.swarm();
-        var base = SwarmConfig.defaults().withBind(cfg.bind()).withWka(cfg.wka()).withToken(cfg.token())
-                .withGossipIntervalMs(cfg.gossipIntervalMs());
         var stateDir = home.resolve(".jeorje");
-        var discovery = cfg.discovery() ? zeroconf() : null;
-        var savedId = PeerIdStore.loadOrCreate(stateDir);
+        // The token is resolved here and only here. A blank config token means the token file of the state directory.
+        var token = SwarmTokenStore.resolve(stateDir, cfg.token());
+        var base = SwarmConfig.defaults().withBind(cfg.bind()).withWka(cfg.wka()).withToken(token)
+                .withGossipIntervalMs(cfg.gossipIntervalMs());
+        var parts = new ArrayList<PeerDiscovery>();
+        if (cfg.rendezvous()) parts.add(new LocalRendezvous(stateDir, Clock.systemUTC()));
+        if (cfg.discovery()) {
+            var zeroconf = zeroconf();
+            if (zeroconf != null) parts.add(zeroconf);
+        }
+        var discovery = parts.isEmpty() ? null : new CompositeDiscovery(parts);
         // Another instance of the same user can be live and use the saved id. This instance takes its own id then.
-        var peerId = discovery != null && discovery.peers("").stream().anyMatch(e -> e.peerId().equals(savedId))
-                ? java.util.UUID.randomUUID().toString() : savedId;
+        var live = discovery == null ? java.util.Set.<String>of()
+                : discovery.peers("").stream().map(PeerDiscovery.Entry::peerId).collect(java.util.stream.Collectors.toSet());
+        var peerId = PeerIdStore.fresh(stateDir, live);
         var tls = tlsContext(cfg.tls(), cwd, environment);
         TcpTransport tcp;
         try {
@@ -145,8 +160,16 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         }
         var name = cwd.getFileName() == null ? "jeorje" : cwd.getFileName().toString();
         var record = PeerRecord.of(peerId, tcp.address(), name);
-        return new SwarmBridge(base, tcp, record, Clock.systemUTC(), historyRule(config), notice, onChange)
+        var bridge = new SwarmBridge(base, tcp, record, Clock.systemUTC(), historyRule(config), notice, onChange)
                 .withDiscovery(discovery);
+        if (cfg.ssh().enabled()) {
+            try {
+                bridge.withSsh(new SwarmSshServer(cfg.ssh().bind(), cfg.ssh().advertiseHost(), token));
+            } catch (RuntimeException e) {
+                log.atWarn().log(() -> "The SSH channel did not start: " + e.getMessage());
+            }
+        }
+        return bridge;
     }
 
     /** Starts zeroconf discovery and waits a short time for the first answers. Returns null on failure. */
@@ -181,6 +204,48 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
             throw new CliException(e.getMessage());
         }
     }
+
+    /**
+     * Turns on the SSH channel. The bridge starts the server and builds the SSH transport. Call it before
+     * {@link #start}. A server that cannot start leaves the bridge without SSH.
+     */
+    public SwarmBridge withSsh(SwarmSshServer server) {
+        try {
+            server.start();
+        } catch (RuntimeException e) {
+            server.close();
+            log.atWarn().log(() -> "The SSH server did not start: " + e.getMessage());
+            return this;
+        }
+        var transport = new SshChannelTransport(swarmConfig, self.peerId(), server.keys(), swarmConfig.token(),
+                this::sshAddressOf);
+        server.handler(transport.serverHandler());
+        this.sshServer = server;
+        this.sshTransport = transport;
+        return this;
+    }
+
+    /** The SSH address of a peer, from the membership table; blank when it is unknown. */
+    private String sshAddressOf(String peerId) {
+        var n = node;
+        var record = n == null ? null : n.members().get(peerId);
+        return record == null ? "" : record.sshAddress();
+    }
+
+    /** The other peers in the given state; empty when the node did not start. */
+    public List<PeerRecord> peers(PeerState state) {
+        var n = node;
+        return n == null ? List.of() : n.peers(state);
+    }
+
+    /** The swarm token that this bridge uses. It is never empty. */
+    String token() { return swarmConfig.token(); }
+
+    /** The peer id of this instance. */
+    public String peerId() { return self.peerId(); }
+
+    /** The {@code host:port} address of the SSH server, or blank when SSH is off. */
+    public String sshAddress() { return sshServer == null ? "" : sshServer.address(); }
 
     /** Turns on discovery. Call it before {@link #start}. */
     public SwarmBridge withDiscovery(PeerDiscovery value) {
@@ -218,7 +283,8 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
 
     /** Starts the node and joins the swarm. */
     public SwarmBridge start() {
-        var started = new SwarmNode(swarmConfig, self.withCapabilities(capabilities), transport, clock, this, discovery);
+        var started = new SwarmNode(swarmConfig, self.withCapabilities(capabilities), transport, sshTransport, clock,
+                this, discovery, sshAddress());
         node = started.start();
         return this;
     }
@@ -442,6 +508,11 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
             }
         } else {
             transport.close();
+            if (sshTransport != null) sshTransport.close();
         }
+        var server = sshServer;
+        if (server != null) server.close();
+        var disco = discovery;
+        if (n == null && disco != null) disco.withdraw(self.peerId());
     }
 }

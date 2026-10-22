@@ -826,6 +826,7 @@ public final class InteractiveSession implements AutoCloseable {
         var status = screen.status();
         status.model(roles.defaultModel()).yolo(options.yolo()).plan(main.planMode().active());
         status.branch(branchOf(screen.foreground()));
+        status.swarmOff(swarm == null);
         status.peers(swarm == null ? 0 : swarm.peers(PeerState.ALIVE).size());
         var rows = orchestrator == null ? List.<ImplementOrchestrator.Row>of() : orchestrator.rows();
         if (orchestrator != null && (orchestrator.active() || !rows.isEmpty())) {

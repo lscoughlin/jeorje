@@ -15,6 +15,7 @@ public final class StatusLine {
     private String model = "";
     private int contextPercent = -1;
     private int peers;
+    private boolean swarmOff;
     private String branch = "";
     private boolean yolo;
     private boolean plan;
@@ -33,6 +34,9 @@ public final class StatusLine {
     public synchronized StatusLine contextPercent(int percent) { this.contextPercent = percent; return this; }
 
     public synchronized StatusLine peers(int peers) { this.peers = peers; return this; }
+
+    /** Shows {@code peers off} in place of the peer count when the swarm is off. */
+    public synchronized StatusLine swarmOff(boolean off) { this.swarmOff = off; return this; }
 
     public synchronized StatusLine branch(String branch) { this.branch = branch == null ? "" : branch; return this; }
 
@@ -75,7 +79,7 @@ public final class StatusLine {
         if (implementDone >= 0) parts.add("IMPLEMENT " + implementDone + "/" + implementTotal);
         if (!model.isEmpty()) parts.add(model);
         if (contextPercent >= 0) parts.add("ctx " + contextPercent + "%");
-        parts.add("peers " + peers);
+        parts.add(swarmOff ? "peers off" : "peers " + peers);
         if (!notices.isEmpty()) parts.add(String.join(" ; ", notices));
         return String.join(" | ", parts);
     }
