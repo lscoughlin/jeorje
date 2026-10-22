@@ -105,6 +105,9 @@ public final class Wiring {
             flags.put("swarm.wka", List.copyOf(options.peers()));
             flags.put("swarm.enabled", true);
         }
+        if (options.swarm()) flags.put("swarm.enabled", true);
+        if (options.noSwarm()) flags.put("swarm.enabled", false);
+        if (options.swarmBind() != null) flags.put("swarm.bind", options.swarmBind());
         if (options.swarmToken() != null) flags.put("swarm.token", options.swarmToken());
         if (options.noMouse()) flags.put("ui.mouse.enabled", false);
         var configOptions = new ConfigOptions(env.home(), workDir(options, env), env.env(), flags,

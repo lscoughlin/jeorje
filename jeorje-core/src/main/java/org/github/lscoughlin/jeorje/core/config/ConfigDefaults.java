@@ -47,12 +47,17 @@ final class ConfigDefaults {
                 allow: []
                 deny: []
             swarm:
-              enabled: false
-              bind: 127.0.0.1:7600
+              enabled: true
+              bind: 127.0.0.1:0
               wka: []
               token: ""
               gossipIntervalMs: 1000
               discovery: false
+              rendezvous: true
+              ssh:
+                enabled: true
+                bind: 127.0.0.1:0
+                advertiseHost: ""
               tls:
                 keyStore: ""
                 passwordEnv: ""

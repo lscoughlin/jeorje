@@ -22,12 +22,45 @@ class SwarmWiringTest {
     }
 
     @Test
-    void theSwarmIsOffByDefault() {
+    void theSwarmStaysOffWhenTheConfigTurnsItOff() {
+        var llm = new ScriptedLlmClient(Response.text("ok"));
+        try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
+            var file = cwd.write("off.yaml", "swarm:\n  enabled: false\n");
+            var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), llm);
+            assertEquals(0, cli.run("--config", file.toString(), "run", "hi"), cli.err());
+            assertFalse(llm.requests().getFirst().tools().stream().anyMatch(t -> t.name().equals("spawn_agent")));
+        }
+    }
+
+    @Test
+    void theDefaultConfigStartsTheSwarm() {
         var llm = new ScriptedLlmClient(Response.text("ok"));
         try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
             var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), llm);
             assertEquals(0, cli.run("run", "hi"), cli.err());
+            assertTrue(hasPeerSpawn(llm), llm.requests().getFirst().tools().toString());
+        }
+    }
+
+    @Test
+    void theNoSwarmFlagTurnsTheSwarmOff() {
+        var llm = new ScriptedLlmClient(Response.text("ok"));
+        try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
+            var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), llm);
+            assertEquals(0, cli.run("--no-swarm", "run", "hi"), cli.err());
             assertFalse(llm.requests().getFirst().tools().stream().anyMatch(t -> t.name().equals("spawn_agent")));
+        }
+    }
+
+    @Test
+    void swarmFlagsSetTheConfigKeys() {
+        try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
+            var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), null);
+            var off = Wiring.loadConfig(GlobalOptionsHolder.parse("--no-swarm"), cli.env);
+            assertFalse(off.config().swarm().enabled());
+            var on = Wiring.loadConfig(GlobalOptionsHolder.parse("--swarm", "--swarm-bind", "127.0.0.1:7777"), cli.env);
+            assertTrue(on.config().swarm().enabled());
+            assertEquals("127.0.0.1:7777", on.config().swarm().bind());
         }
     }
 
@@ -98,8 +131,12 @@ class SwarmWiringTest {
         }
 
         GlobalOptions options() {
+            return parse("--config", file.toString());
+        }
+
+        static GlobalOptions parse(String... args) {
             var holder = new Holder();
-            new picocli.CommandLine(holder).parseArgs("--config", file.toString());
+            new picocli.CommandLine(holder).parseArgs(args);
             return holder.global;
         }
     }
