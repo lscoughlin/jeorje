@@ -1,0 +1,7 @@
+index:
+  docs:
+    index_path: .clarity/index/docs
+    markdown:
+      - doc/**/*.md
+      - README.md
+      - AGENTS.md

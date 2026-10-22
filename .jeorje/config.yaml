@@ -11,6 +11,10 @@ mcp:
       timeoutSeconds: 120
 permissions:
   rules:
+    - tool: ls
+      decision: allow
+    - tool: mcp__codegraph__codegraph_explore
+      decision: allow
     - tool: read
       decision: allow
     - tool: webfetch
