@@ -100,6 +100,43 @@ public final class ChatView {
         }
     }
 
+    /** A block that is not part of the conversation: a dimmed header, a plain body, and a dimmed footer. */
+    private final class LocalBlockEntry extends Entry {
+        private final String header;
+        private final String body;
+        private final String footer;
+
+        LocalBlockEntry(String header, String body, String footer) {
+            this.header = header;
+            this.body = body;
+            this.footer = footer;
+        }
+
+        @Override
+        List<AttributedString> build() {
+            var out = new ArrayList<AttributedString>();
+            addLines(out, header, DIM);
+            if (!body.isEmpty()) addLines(out, body, AttributedStyle.DEFAULT);
+            addLines(out, footer, DIM);
+            return out;
+        }
+
+        private static void addLines(List<AttributedString> out, String text, AttributedStyle style) {
+            for (var line : text.split("\n", -1)) out.add(new AttributedString(clean(line), style));
+        }
+
+        /** Drops the control characters of command output, so that it cannot move the cursor or change colors. */
+        private static String clean(String line) {
+            var sb = new StringBuilder(line.length());
+            for (var i = 0; i < line.length(); i++) {
+                var c = line.charAt(i);
+                if (c == '\t') sb.append("    ");
+                else if (c >= ' ' && c != 0x7f) sb.append(c);
+            }
+            return sb.toString();
+        }
+    }
+
     private final class ToolEntry extends Entry {
         final String id;
         final String tool;
@@ -220,6 +257,18 @@ public final class ChatView {
         streaming = null;
         var before = measure();
         add(new TextEntry(text, false, DIM));
+        grew(before);
+    }
+
+    /**
+     * Adds a block that is not part of the conversation and never goes to the model. The header and the footer
+     * are dimmed. The body is plain text.
+     */
+    public synchronized void appendLocalBlock(String header, String body, String footer) {
+        streaming = null;
+        var before = measure();
+        add(new LocalBlockEntry(header == null ? "" : header, body == null ? "" : body,
+                footer == null ? "" : footer));
         grew(before);
     }
 
