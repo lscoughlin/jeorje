@@ -486,6 +486,15 @@ The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of li
 | `/keys` | Show the effective key bindings |
 | `/help` | Show the commands, the custom commands, the skills, and the warnings about names that clash |
 | `/quit` | Exit |
+| `!<command>` | Run the command in the working directory. The chat view shows the command, the output, and the exit code. The agent sees the same text in its next turn. |
+
+### Bang line
+
+A line in the input line that starts with `!` runs the rest of the line as a shell command in the working directory. The chat view shows one block with three parts: the command with a `!` prefix, the output, and the exit code. An empty output shows `(no output)`. A command that runs longer than 60 seconds stops, and the footer shows the timeout.
+
+The same text goes into the context of the foreground agent. The agent sees it in its next turn. The line starts no turn and makes no model call.
+
+The command does not go through the permission policy, because the user typed it. The shell settings limit the output. A long output keeps its start and its end. A line that holds only `!` shows `Usage: !<command>`.
 
 ## Command line
 
