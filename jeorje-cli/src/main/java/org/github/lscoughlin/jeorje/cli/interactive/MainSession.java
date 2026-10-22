@@ -1,7 +1,10 @@
 package org.github.lscoughlin.jeorje.cli.interactive;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import org.github.lscoughlin.jeorje.core.agent.Agent;
+import org.github.lscoughlin.jeorje.core.agent.AgentInput;
+import org.github.lscoughlin.jeorje.core.compaction.Pruner;
 import org.github.lscoughlin.jeorje.core.model.AgentId;
 import org.github.lscoughlin.jeorje.core.plan.PlanMode;
 import org.github.lscoughlin.jeorje.core.port.ContextStore;
@@ -31,6 +34,9 @@ public final class MainSession {
     private SubagentRuntime runtime;
     private GatedPolicy policy;
     private final PlanMode planMode = new PlanMode();
+    private Pruner pruner;
+    private Consumer<AgentInput> input;
+    private volatile boolean ended;
 
     /**
      * @param id the id of the main agent of this conversation
@@ -78,4 +84,20 @@ public final class MainSession {
     void policy(GatedPolicy policy) { this.policy = policy; }
 
     public PlanMode planMode() { return planMode; }
+
+    /** The compaction support of this conversation. */
+    Pruner pruner() { return pruner; }
+
+    void pruner(Pruner pruner) { this.pruner = pruner; }
+
+    /** Delivers an input to the main agent of this conversation. Other sessions use it to reply. */
+    public Consumer<AgentInput> input() { return input; }
+
+    void input(Consumer<AgentInput> input) { this.input = input; }
+
+    /** True after the agent of this conversation closed. */
+    public boolean ended() { return ended; }
+
+    /** Marks this conversation as ended. The session stays in the list of sessions. */
+    void end() { this.ended = true; }
 }

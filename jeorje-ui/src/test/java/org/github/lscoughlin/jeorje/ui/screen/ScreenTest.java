@@ -140,6 +140,26 @@ class ScreenTest {
     }
 
     @Test
+    void promptFilterKeepsAHiddenPromptQueued() throws Exception {
+        try (var ft = new FakeTerminal(70, 16)) {
+            var got = new AtomicReference<Decision>();
+            var opts = new Screen.Options("auto", null, null, (a, u, d) -> got.set(d), null);
+            var screen = new Screen(ft.terminal, opts);
+            var input = JsonMapper.builder().build().createObjectNode().put("path", "x");
+            var other = new AgentId("fork-1");
+            screen.promptFilter(agent -> !agent.equals(other));
+            screen.apply(new AgentEvent.ConfirmationRequested(other, new ToolUse("t1", "write", input)));
+            assertNull(screen.pendingPrompt());
+            assertNull(screen.handlePromptKey("y"));
+            screen.promptFilter(agent -> true);
+            assertNotNull(screen.pendingPrompt());
+            assertEquals(other, screen.pendingPrompt().agent());
+            assertNotNull(screen.handlePromptKey("y"));
+            assertNull(screen.pendingPrompt());
+        }
+    }
+
+    @Test
     void terminalAttributesReturnAfterExit() throws Exception {
         try (var ft = new FakeTerminal(60, 12)) {
             var before = ft.terminal.getAttributes();

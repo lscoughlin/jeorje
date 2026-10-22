@@ -36,7 +36,8 @@ final class SessionCommands {
         slash.register("worktrees", "/worktrees [prune]", "List the worktrees, or remove leftover ones", this::worktrees);
         slash.register("merge", "/merge <agent> [strategy]", "Merge the worktree of an agent", this::merge);
         slash.register("discard", "/discard <agent>", "Discard the worktree and the branch of an agent", this::discard);
-        slash.register("agents", "/agents [name|number]", "List the agents, or switch to one", this::agents);
+        slash.register("agents", "/agents [name|number|new [name]]",
+                "List the agents, switch to one, or move this session to the background and start a new one", this::agents);
         slash.register("files", "/files [list [filter]]", "Open the file browser, or print the tree", this::files);
         slash.register("edit", "/edit <path>", "Open a file in the editor", this::edit);
         slash.register("peers", "/peers", "List the peers of the swarm", a -> peers());
@@ -237,6 +238,8 @@ final class SessionCommands {
             sb.append("Use /agents <name or number> to switch. Use /back to return. The key Ctrl-X a opens the switcher pane.");
             return CommandResult.ok(sb.toString());
         }
+        var words = args.strip().split("\\s+", 2);
+        if (words[0].equals("new")) return fork(words.length > 1 ? words[1].strip() : "");
         var found = roster.find(args.strip());
         if (found.isEmpty()) return CommandResult.fail("No agent: " + args.strip());
         if (found.get().id().value().startsWith(AgentRoster.PEER_PREFIX)) {
@@ -244,6 +247,21 @@ final class SessionCommands {
         }
         switcher.switchTo(found.get().id());
         return CommandResult.ok("Foreground agent: " + found.get().name() + ". Use /back to return.");
+    }
+
+    /** The command {@code /agents new [name]}. It moves this session to the background and starts a new one. */
+    private CommandResult fork(String name) {
+        try {
+            var id = session.fork(name);
+            var created = session.roster().find(id.value());
+            return CommandResult.ok("Started the session " + created.map(e -> e.name()).orElse(id.value())
+                    + " (" + id + "). The earlier session runs in the background. Use /agents to list the sessions "
+                    + "and /back to return.");
+        } catch (IllegalArgumentException e) {
+            return CommandResult.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            return CommandResult.fail("Cannot start a new session: " + e.getMessage());
+        }
     }
 
     private CommandResult files(String args) {

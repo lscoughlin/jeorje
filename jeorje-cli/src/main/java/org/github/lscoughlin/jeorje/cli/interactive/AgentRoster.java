@@ -2,6 +2,7 @@ package org.github.lscoughlin.jeorje.cli.interactive;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.github.lscoughlin.jeorje.core.directory.AgentDirectory;
@@ -13,43 +14,51 @@ import org.github.lscoughlin.jeorje.swarm.PeerRecord;
 import org.github.lscoughlin.jeorje.swarm.PeerState;
 
 /**
- * The agent directory of the interface. It lists the agent of the user, the subagents of the two runtimes (the
- * runtime of {@code spawn_agent} and the runtime of {@code /implement}), and the peers of the swarm.
+ * The agent directory of the interface. It lists the agent of each live session, the subagents of the runtime of
+ * each session, the workers of the runtime of {@code /implement}, and the peers of the swarm.
  */
 final class AgentRoster implements AgentDirectory {
     /** The prefix of the id of a remote peer in the list. */
     static final String PEER_PREFIX = "peer:";
 
-    private final AgentId main;
-    private final Supplier<List<SubagentRuntime>> runtimes;
-    private final Supplier<List<PeerRecord>> peers;
-    private final Supplier<String> mainBranch;
-    private final Supplier<String> mainState;
-    private final Function<AgentId, List<String>> screenHistory;
-    private final java.util.function.BiConsumer<AgentId, String> mainSteer;
+    /** The state of a session whose agent closed. */
+    static final String ENDED = "ENDED";
 
-    AgentRoster(AgentId main, Supplier<List<SubagentRuntime>> runtimes, Supplier<List<PeerRecord>> peers,
-                Supplier<String> mainBranch, Supplier<String> mainState,
-                Function<AgentId, List<String>> screenHistory, java.util.function.BiConsumer<AgentId, String> mainSteer) {
-        this.main = main;
-        this.runtimes = runtimes;
+    private final SessionHub hub;
+    private final Supplier<List<SubagentRuntime>> extraRuntimes;
+    private final Supplier<List<PeerRecord>> peers;
+    private final Function<MainSession, String> branchOf;
+    private final Function<AgentId, List<String>> screenHistory;
+    private final BiConsumer<AgentId, String> sessionSteer;
+
+    /**
+     * @param extraRuntimes runtimes that no session owns, for example the runtime of {@code /implement}. Their
+     *                      workers show the first session as their parent.
+     * @param branchOf gives the branch of the working tree of a session
+     * @param sessionSteer sends text to the main agent of a session
+     */
+    AgentRoster(SessionHub hub, Supplier<List<SubagentRuntime>> extraRuntimes, Supplier<List<PeerRecord>> peers,
+                Function<MainSession, String> branchOf, Function<AgentId, List<String>> screenHistory,
+                BiConsumer<AgentId, String> sessionSteer) {
+        this.hub = hub;
+        this.extraRuntimes = extraRuntimes;
         this.peers = peers;
-        this.mainBranch = mainBranch;
-        this.mainState = mainState;
+        this.branchOf = branchOf;
         this.screenHistory = screenHistory;
-        this.mainSteer = mainSteer;
+        this.sessionSteer = sessionSteer;
     }
 
     @Override
     public List<AgentEntry> agents() {
         var out = new ArrayList<AgentEntry>();
-        out.add(new AgentEntry(main, "main", null, mainState.get(), null, mainBranch.get(), ""));
-        for (var runtime : runtimes.get()) {
-            for (var info : runtime.status()) {
-                if (info.parent() == null) continue;
-                out.add(entry(info));
-            }
+        var sessions = hub.sessions();
+        for (var session : sessions) {
+            out.add(new AgentEntry(session.id(), session.name(), hub.parent(session.id()), stateOf(session), null,
+                    branchOf.apply(session), ""));
+            if (session.runtime() != null) addSubagents(out, session.runtime(), session.id());
         }
+        var first = sessions.isEmpty() ? MainSession.MAIN : sessions.getFirst().id();
+        for (var runtime : extraRuntimes.get()) addSubagents(out, runtime, first);
         for (var peer : peers.get()) {
             out.add(new AgentEntry(new AgentId(PEER_PREFIX + peer.peerId()), peer.name(), null,
                     peer.state().name(), peer.name(), null, peer.address()));
@@ -57,15 +66,21 @@ final class AgentRoster implements AgentDirectory {
         return out;
     }
 
-    private AgentEntry entry(AgentInfo info) {
-        // The parent of a worker is the orchestrator root. The user sees the agent of the user as the parent.
-        var parent = info.parent();
-        var rootOfRuntime = runtimes.get().stream().flatMap(r -> r.status().stream())
-                .filter(i -> i.parent() == null).map(AgentInfo::id).toList();
-        if (rootOfRuntime.contains(parent)) parent = main;
-        var name = info.storyId() == null ? info.name() : info.name();
-        return new AgentEntry(info.id(), name, parent, info.state().name(), null, info.branch(),
-                info.lastOutput() == null ? "" : info.lastOutput());
+    private static String stateOf(MainSession session) {
+        if (session.ended()) return ENDED;
+        return session.busy().get() ? "RUNNING" : "IDLE";
+    }
+
+    private static void addSubagents(List<AgentEntry> out, SubagentRuntime runtime, AgentId owner) {
+        var status = runtime.status();
+        var roots = status.stream().filter(i -> i.parent() == null).map(AgentInfo::id).toList();
+        for (var info : status) {
+            if (info.parent() == null) continue;
+            // The parent of a worker is the root of its runtime. The user sees the session as the parent.
+            var parent = roots.contains(info.parent()) ? owner : info.parent();
+            out.add(new AgentEntry(info.id(), info.name(), parent, info.state().name(), null, info.branch(),
+                    info.lastOutput() == null ? "" : info.lastOutput()));
+        }
     }
 
     @Override
@@ -75,12 +90,15 @@ final class AgentRoster implements AgentDirectory {
 
     @Override
     public void steer(AgentId agent, String text) {
-        if (agent.equals(main)) {
-            mainSteer.accept(agent, text);
+        if (hub.get(agent) != null) {
+            sessionSteer.accept(agent, text);
             return;
         }
         if (agent.value().startsWith(PEER_PREFIX)) return;
-        for (var runtime : runtimes.get()) {
+        for (var session : hub.sessions()) {
+            if (session.runtime() != null && session.runtime().steer(agent, text)) return;
+        }
+        for (var runtime : extraRuntimes.get()) {
             if (runtime.steer(agent, text)) return;
         }
     }

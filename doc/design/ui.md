@@ -224,6 +224,22 @@ In a text field the keys are `Left`, `Right`, `Home`, `End`, `Backspace`, `Delet
 - `/back` returns to the parent of the foreground agent.
 - `/agents` with no argument prints the same list in the chat view. `/agents <name or number>` switches to that agent.
 
+### Sessions in the switcher
+
+One process can hold more than one session. A session is one conversation. It has its own main agent, its own subagents, its own context index, and its own directory under `.jeorje/sessions`.
+
+- Each live session has one top-level entry in the switcher. The entry shows the name of the session.
+- The state of a session entry comes from that session. It is `RUNNING` while the main agent of the session runs a turn. It is `IDLE` when the agent waits. It is `ENDED` when the agent has closed. An ended session stays in the list.
+- The agent ids of the sessions are `main`, `fork-1`, `fork-2`, and so on. The first session has the id `main`. An id never changes. The name is the text that the user chooses.
+- The parent of a forked session is the id of the session that started it. A subagent has the id of its own session as its parent.
+- `/agents new [name]` keeps the current session alive in the background. It starts a new session in the foreground. The new session has an empty conversation and a new session id. With no name, the name of the new session is its session id. A name that another session uses is refused.
+- The background session keeps its agent, its runtime, its context index, and its transcript. It does not stop its turn.
+- The user switches to the background session with `/agents <name or number>` or with `Ctrl-X a`. The user then steers it like any other agent. `/back` returns to the session that started the current one.
+- Typed text, the status line, and the permission prompts follow the foreground session. A permission prompt of a background session stays in the queue. The user sees the prompt after a switch to that session. The answer then goes to the blocked check of that session.
+- The main agent of one session can send `agent_message` and `agent_ask` to the main agent of another live session. It names the id or the name of the session. A message to a session that has ended fails with the reason `ended`. A message to an unknown name fails with the reason `unknown agent`. See [subagents.md](subagents.md).
+- The swarm bridge and the `/implement` run belong to the first session.
+- After the process exits, `/resume` lists every session, because each session has its own directory.
+
 ## File browser
 
 The file browser is a small file app in the chat region. It shows the tree of the working directory and one keys row at the bottom. `Ctrl-X f` opens it as a pane. `/files` opens it too.
@@ -464,6 +480,7 @@ The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of li
 | Command | Action |
 |---------|--------|
 | `/agents [name\|number]` | Print the list of agents, or switch to one. `Ctrl-X a` opens the switcher pane. |
+| `/agents new [name]` | Move this session to the background and start a new session in the foreground. The optional name names the new session. |
 | `/back` | Return to the parent agent |
 | `/cancel [name]` | Cancel the foreground agent or a named subagent |
 | `/files [list [filter]]` | Open the file browser, or print the file tree. `Ctrl-X f` opens the browser pane. |

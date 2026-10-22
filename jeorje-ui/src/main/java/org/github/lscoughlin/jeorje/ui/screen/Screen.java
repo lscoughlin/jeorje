@@ -109,6 +109,7 @@ public final class Screen implements AutoCloseable {
     private final Map<AgentId, ChatView> chats = new ConcurrentHashMap<>();
     private final BlockingQueue<AgentEvent> events = new LinkedBlockingQueue<>();
     private final Deque<PermissionPrompt> prompts = new ArrayDeque<>();
+    private volatile java.util.function.Predicate<AgentId> promptFilter = a -> true;
     private final Deque<PendingForm> forms = new ArrayDeque<>();
     private volatile int formTop = -1;
     private volatile int formCursorRow = -1;
@@ -363,6 +364,9 @@ public final class Screen implements AutoCloseable {
         chat(agent);
         foreground = agent;
         status.agent(agent.value());
+        // A prompt of this agent can wait in the queue. The input loop must see it now. Without a prompt, a wake
+        // would look like a Ctrl-C to the input loop.
+        if (pendingPrompt() != null) wakeInput();
         draw();
     }
 
@@ -438,8 +442,26 @@ public final class Screen implements AutoCloseable {
     /** The prompt that waits for an answer, or null. */
     public PermissionPrompt pendingPrompt() {
         synchronized (prompts) {
-            return prompts.peekFirst();
+            return firstVisiblePrompt();
         }
+    }
+
+    /**
+     * Sets the rule that decides which prompts the user can answer now. A prompt that the rule refuses stays in the
+     * queue. The user can answer it when the rule accepts it, for example after a switch to the session of the
+     * prompt. The default rule accepts every prompt.
+     */
+    public void promptFilter(java.util.function.Predicate<AgentId> filter) {
+        this.promptFilter = filter == null ? a -> true : filter;
+        if (pendingPrompt() != null) wakeInput();
+    }
+
+    /** The first prompt that the filter accepts. The caller holds the lock of the queue. */
+    private PermissionPrompt firstVisiblePrompt() {
+        for (var prompt : prompts) {
+            if (promptFilter.test(prompt.agent())) return prompt;
+        }
+        return null;
     }
 
     /** Sends a key to the first permission prompt. Returns the decision when the key ends the prompt. */
@@ -447,10 +469,10 @@ public final class Screen implements AutoCloseable {
         PermissionPrompt prompt;
         Decision decision = null;
         synchronized (prompts) {
-            prompt = prompts.peekFirst();
+            prompt = firstVisiblePrompt();
             if (prompt == null) return null;
             decision = prompt.handleKey(key).orElse(null);
-            if (decision != null) prompts.removeFirst();
+            if (decision != null) prompts.remove(prompt);
         }
         if (decision != null) {
             var d = decision;
