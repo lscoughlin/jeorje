@@ -35,7 +35,7 @@ Default rules:
 | `write`, `edit`, `patch` | `ASK` |
 | `bash` | `ASK`, with an allow list of safe read-only commands |
 | `webfetch` | `ASK` for a new domain |
-| `spawn_agent`, `agent_message`, `agent_ask`, `agent_answer`, `story_read`, `skill` | `ALLOW` |
+| `spawn_agent`, `agent_message`, `agent_ask`, `agent_answer`, `send_message`, `ask_peer`, `story_read`, `skill` | `ALLOW` |
 | `worktree_merge`, `worktree_discard` | `ASK` |
 | `todo`, `ask_user`, `advisor`, `plan_submit` | `ALLOW` |
 | Any other tool, including extension tools and MCP tools | `ASK` |

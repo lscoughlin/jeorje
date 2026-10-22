@@ -64,6 +64,8 @@ A registry can make restricted copies of itself: `only` (named tools), `without`
 | `skill` | yes | Load the body of a skill. See [instructions-and-skills.md](instructions-and-skills.md#skills). |
 | `agent_message` | no | Send a message to a subagent or peer. See [swarm.md](swarm.md). |
 | `agent_ask`, `agent_answer` | no | Ask another agent a question and wait, or answer a question that came in. See [subagents.md](subagents.md#talking-to-other-agents). |
+| `send_message` | no | Send text to an agent on a peer of the swarm over SSH. The tool exists only when the swarm is on. An unknown peer gives an error that lists the known peer ids. See [swarm.md](swarm.md#ssh-channel). |
+| `ask_peer` | no | Ask an agent on a peer of the swarm a question over SSH and wait for the answer. The call fails with a reason when no answer can come. See [swarm.md](swarm.md#ssh-channel). |
 | `story_read` | yes | List the stories of the plan, or read one story. Only for `/implement` workers. See [planning.md](planning.md#story-visibility). |
 | `agent_status` | yes | List subagents and peers with their state. |
 | `sync_done`, `sync_abort` | no | End the conflict resolution of a subagent after the sync from the source branch. Only in the `RESOLVING` state. See [subagents.md](subagents.md#completion-sequence). |
