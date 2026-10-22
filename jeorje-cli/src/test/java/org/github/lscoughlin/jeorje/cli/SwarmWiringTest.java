@@ -43,6 +43,24 @@ class SwarmWiringTest {
     }
 
     @Test
+    void thePeerMessageToolsAreOfferedWhenTheSwarmIsOnAndNotWhenItIsOff() {
+        var on = new ScriptedLlmClient(Response.text("ok"));
+        try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
+            var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), on);
+            assertEquals(0, cli.run("run", "hi"), cli.err());
+            var names = on.requests().getFirst().tools().stream().map(t -> t.name()).toList();
+            assertTrue(names.contains("send_message") && names.contains("ask_peer"), names.toString());
+        }
+        var off = new ScriptedLlmClient(Response.text("ok"));
+        try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
+            var cli = new CliTestSupport(home.root(), cwd.root(), Map.of(), off);
+            assertEquals(0, cli.run("--no-swarm", "run", "hi"), cli.err());
+            var names = off.requests().getFirst().tools().stream().map(t -> t.name()).toList();
+            assertFalse(names.contains("send_message") || names.contains("ask_peer"), names.toString());
+        }
+    }
+
+    @Test
     void theNoSwarmFlagTurnsTheSwarmOff() {
         var llm = new ScriptedLlmClient(Response.text("ok"));
         try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {

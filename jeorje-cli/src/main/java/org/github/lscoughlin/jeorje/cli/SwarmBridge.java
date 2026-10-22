@@ -336,6 +336,36 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         return n.ask(peerIdOf(peerId), agent, question, null);
     }
 
+    /** The messenger for the tools {@code send_message} and {@code ask_peer}. */
+    public org.github.lscoughlin.jeorje.core.port.PeerMessenger messenger() {
+        return new org.github.lscoughlin.jeorje.core.port.PeerMessenger() {
+            @Override
+            public void message(String peerId, String agent, String text) {
+                try {
+                    sendMessage(peerId, agent, text).get(30, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (java.util.concurrent.ExecutionException e) {
+                    var cause = e.getCause() == null ? e : e.getCause();
+                    throw new IllegalStateException(String.valueOf(cause.getMessage()), cause);
+                } catch (java.util.concurrent.TimeoutException e) {
+                    throw new IllegalStateException("the peer did not take the message in time", e);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("interrupted", e);
+                }
+            }
+
+            @Override
+            public java.util.concurrent.CompletableFuture<String> ask(String peerId, String agent, String question) {
+                return askPeer(peerId, agent, question);
+            }
+
+            @Override
+            public List<String> peerIds() {
+                return peers(PeerState.ALIVE).stream().map(PeerRecord::peerId).toList();
+            }
+        };
+    }
+
     // ---- the client side: RemoteSpawner ----
 
     @Override

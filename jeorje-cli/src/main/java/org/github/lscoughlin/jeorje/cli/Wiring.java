@@ -618,7 +618,7 @@ public final class Wiring {
                     .events(swarm::onSubagentEvent).remote(swarm)
                     .limits(SubagentLimits.defaults().withMaxModelCalls(config.subagents().stepLimit()));
             subagents = builder.build();
-            tools.addAll(PeerSpawnTool.wrap(AgentTools.install(subagents, session.id()), subagents));
+            tools.addAll(PeerSpawnTool.wrap(AgentTools.install(subagents, session.id(), swarm.messenger()), subagents));
         }
         var self = new java.util.concurrent.atomic.AtomicReference<Agent>();
         var agent = new Agent(id, settings, advisor.tap(llm), tools, policy, store, transcript,

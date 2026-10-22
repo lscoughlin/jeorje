@@ -566,7 +566,8 @@ public final class InteractiveSession implements AutoCloseable {
         tools.put(PlanSubmitTool.NAME, new PlanSubmitTool(config.plan().dir(), main.planMode(), this::onPlanSubmitted));
         broker = new UserQuestionBroker(this::onQuestion);
         tools.put(AskUserTool.NAME, new AskUserTool(broker));
-        var agentTools = AgentTools.install(main.runtime(), main.session().id());
+        var agentTools = AgentTools.install(main.runtime(), main.session().id(),
+                bridge == null ? null : bridge.messenger());
         var peerTools = bridge == null ? agentTools : PeerSpawnTool.wrap(agentTools, main.runtime());
         WorktreeSpawnTool.wrap(peerTools, main.runtime(), worktrees, () -> agentTypes)
                 .forEach(t -> tools.putIfAbsent(t.definition().name(), t));
