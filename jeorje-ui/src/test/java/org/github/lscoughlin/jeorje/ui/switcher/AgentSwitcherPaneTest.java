@@ -61,10 +61,10 @@ class AgentSwitcherPaneTest {
             var screen = new Screen(ft.terminal, Screen.Options.defaults());
             screen.draw(); // the first draw probes the terminal modes and reads the reply
             // Row 0 of the screen is the title. The list starts at row 1. SGR coordinates start at 1.
-            // A wheel step first, then a double click on the list row of "alpha" (screen row 2, SGR row 3).
-            var press = "\u001b[<0;5;3M";
-            var release = "\u001b[<0;5;3m";
-            ft.type("\u001b[<65;5;3M" + press + release + press + release);
+            // A wheel step first, then a double click on the list row of "alpha" (tree row 2, screen row 3, SGR row 4).
+            var press = "\u001b[<0;5;4M";
+            var release = "\u001b[<0;5;4m";
+            ft.type("\u001b[<65;5;4M" + press + release + press + release);
             var result = screen.runPane(new AgentSwitcherPane(switcher));
             assertEquals(Optional.of(A), result);
         }

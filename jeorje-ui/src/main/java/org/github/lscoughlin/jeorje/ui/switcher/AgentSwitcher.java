@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.function.Consumer;
 import org.github.lscoughlin.jeorje.core.directory.AgentDirectory;
 import org.github.lscoughlin.jeorje.core.directory.AgentEntry;
+import org.github.lscoughlin.jeorje.core.directory.RosterKind;
+import org.github.lscoughlin.jeorje.core.directory.RosterNode;
 import org.github.lscoughlin.jeorje.core.model.AgentId;
 import org.github.lscoughlin.jeorje.ui.mouse.Rect;
 import org.github.lscoughlin.jeorje.ui.mouse.Region;
@@ -15,9 +17,12 @@ import org.github.lscoughlin.jeorje.ui.mouse.ScrollModel;
 import org.jline.terminal.MouseEvent;
 
 /**
- * The list of agents and peers, and the foreground agent. The list is a mouse region. The wheel scrolls the
- * list and does not change the selected row. A click selects a row. Enter makes the selected agent the
- * foreground agent. The foreground view shows the full history of the agent and then new output.
+ * The tree of harnesses, agents, and subagents, and the foreground agent. A harness is one instance of Jeorje.
+ * Each level of the tree has an indent of two spaces. A node with children shows {@code -} when it is open and
+ * {@code +} when it is collapsed. Left collapses the selected node and Right expands it. The tree is a mouse
+ * region. The wheel scrolls the tree and does not change the selected row. A click selects a row. Enter on an
+ * agent or a subagent makes it the foreground agent. Enter on a harness does nothing. The foreground view shows
+ * the full history of the agent and then new output.
  */
 public final class AgentSwitcher implements Region {
     private final AgentDirectory directory;
@@ -25,6 +30,8 @@ public final class AgentSwitcher implements Region {
     private final Deque<AgentId> trail = new ArrayDeque<>();
     private Rect bounds;
     private int selected;
+    private String selectedId = "";
+    private final java.util.Set<String> collapsed = new java.util.HashSet<>();
     private boolean open;
     private AgentId foreground;
     private final List<String> view = new ArrayList<>();
@@ -51,11 +58,63 @@ public final class AgentSwitcher implements Region {
 
     public boolean isOpen() { return open; }
 
+    /** One visible row of the tree. */
+    private record Row(RosterNode node, int depth) {}
+
+    /** The nodes of the directory. A directory without a tree gives a flat tree of its agents. */
+    private List<RosterNode> nodes() {
+        var tree = directory.tree();
+        if (!tree.isEmpty()) return tree;
+        var entries = directory.agents();
+        var ids = new java.util.HashSet<AgentId>();
+        entries.forEach(e -> ids.add(e.id()));
+        var out = new ArrayList<RosterNode>();
+        for (var entry : entries) {
+            if (entry.parent() == null || !ids.contains(entry.parent())) {
+                out.add(flat(RosterKind.AGENT, entry, entries, new java.util.HashSet<>()));
+            }
+        }
+        return out;
+    }
+
+    private RosterNode flat(RosterKind kind, AgentEntry entry, List<AgentEntry> all, java.util.Set<AgentId> seen) {
+        var children = new ArrayList<RosterNode>();
+        if (seen.add(entry.id())) {
+            for (var other : all) {
+                if (entry.id().equals(other.parent())) children.add(flat(RosterKind.SUBAGENT, other, all, seen));
+            }
+        }
+        return new RosterNode(kind, entry.id().value(), entry.name(), entry.state(), children);
+    }
+
+    /** The visible rows: a collapsed node hides its descendants. */
+    private List<Row> rows() {
+        var out = new ArrayList<Row>();
+        for (var node : nodes()) addRows(node, 0, out);
+        return out;
+    }
+
+    private void addRows(RosterNode node, int depth, List<Row> out) {
+        out.add(new Row(node, depth));
+        if (collapsed.contains(node.id())) return;
+        for (var child : node.children()) addRows(child, depth + 1, out);
+    }
+
+    /** The index of the selected row. The selected id wins over the stored index when the tree changed. */
+    private int index(List<Row> rows) {
+        if (rows.isEmpty()) return 0;
+        for (var i = 0; i < rows.size(); i++) {
+            if (rows.get(i).node().id().equals(selectedId)) return i;
+        }
+        return Math.clamp(selected, 0, rows.size() - 1);
+    }
+
     public void open() {
         open = true;
-        var rows = directory.agents();
+        var rows = rows();
         selected = 0;
-        for (var i = 0; i < rows.size(); i++) if (rows.get(i).id().equals(foreground)) selected = i;
+        for (var i = 0; i < rows.size(); i++) if (rows.get(i).node().id().equals(foreground.value())) selected = i;
+        selectedId = rows.isEmpty() ? "" : rows.get(selected).node().id();
         syncScroll();
         ensureVisible();
     }
@@ -64,40 +123,69 @@ public final class AgentSwitcher implements Region {
 
     public AgentId foreground() { return foreground; }
 
-    public int selectedIndex() { return selected; }
+    public int selectedIndex() { return index(rows()); }
 
     public int scrollOffset() { return scroll.offset(); }
 
     public ScrollModel scroll() { return scroll; }
 
-    public AgentEntry selectedEntry() {
-        var rows = directory.agents();
-        return rows.isEmpty() ? null : rows.get(Math.clamp(selected, 0, rows.size() - 1));
+    /** The selected node, or null when the tree is empty. */
+    public RosterNode selectedNode() {
+        var rows = rows();
+        return rows.isEmpty() ? null : rows.get(index(rows)).node();
     }
 
     // ---- keys ----
 
-    public void up() { select(selected - 1); }
+    public void up() { select(selectedIndex() - 1); }
 
-    public void down() { select(selected + 1); }
+    public void down() { select(selectedIndex() + 1); }
 
     private void select(int index) {
-        var rows = directory.agents();
+        var rows = rows();
         if (rows.isEmpty()) return;
         selected = Math.clamp(index, 0, rows.size() - 1);
+        selectedId = rows.get(selected).node().id();
         syncScroll();
         ensureVisible();
     }
 
-    /** Handles a key name: UP, DOWN, ENTER, ESC. Returns true when the key was used. */
+    /** Collapses the selected node. Its descendants are hidden. */
+    public void collapse() {
+        var node = selectedNode();
+        if (node != null && node.hasChildren()) {
+            collapsed.add(node.id());
+            select(selectedIndex());
+        }
+    }
+
+    /** Expands the selected node. */
+    public void expand() {
+        var node = selectedNode();
+        if (node != null) {
+            collapsed.remove(node.id());
+            syncScroll();
+        }
+    }
+
+    /** True when the node with this id is collapsed. */
+    public boolean isCollapsed(String nodeId) { return collapsed.contains(nodeId); }
+
+    /**
+     * Handles a key name: UP, DOWN, LEFT, RIGHT, ENTER, ESC. Returns true when the key was used. Enter on a
+     * harness does nothing.
+     */
     public boolean handleKey(String key) {
         if (!open) return false;
         switch (key) {
             case "UP" -> up();
             case "DOWN" -> down();
+            case "LEFT" -> collapse();
+            case "RIGHT" -> expand();
             case "ENTER" -> {
-                var entry = selectedEntry();
-                if (entry != null) switchTo(entry.id());
+                var node = selectedNode();
+                if (node == null || node.kind() == RosterKind.HARNESS) return true;
+                switchTo(new AgentId(node.id()));
                 close();
             }
             case "ESC" -> close();
@@ -154,20 +242,24 @@ public final class AgentSwitcher implements Region {
 
     // ---- drawing ----
 
-    /** The text rows for the visible part of the list. The selected row starts with {@code >}. */
+    /**
+     * The text rows for the visible part of the tree. The selected row starts with {@code >}. Each level adds
+     * two spaces. A node with children shows {@code -} (open) or {@code +} (collapsed).
+     */
     public List<String> render() {
-        var rows = directory.agents();
+        var rows = rows();
+        var chosen = index(rows);
         var out = new ArrayList<String>();
         var from = scroll.offset();
         var to = Math.min(rows.size(), from + Math.max(1, bounds.height()));
         for (var i = from; i < to; i++) {
-            var e = rows.get(i);
-            var line = new StringBuilder(i == selected ? "> " : "  ");
-            line.append(e.name()).append(" | ").append(e.parent() == null ? "-" : e.parent().value());
-            line.append(" | ").append(e.state());
-            line.append(" | ").append(e.peer() == null ? "local" : e.peer());
-            if (e.branch() != null) line.append(" | ").append(e.branch());
-            line.append(" | ").append(e.lastOutput());
+            var row = rows.get(i);
+            var node = row.node();
+            var line = new StringBuilder(i == chosen ? "> " : "  ");
+            line.append("  ".repeat(row.depth()));
+            line.append(node.hasChildren() ? (collapsed.contains(node.id()) ? "+ " : "- ") : "  ");
+            line.append(node.label());
+            if (!node.detail().isBlank()) line.append(" | ").append(node.detail());
             out.add(line.toString());
         }
         return out;
@@ -182,19 +274,20 @@ public final class AgentSwitcher implements Region {
             scroll.wheel(event.button(), event.shift());
         } else if (event.type() == MouseEvent.Type.Pressed && event.button() == MouseEvent.Button.Button1) {
             var index = scroll.offset() + event.y();
-            var rows = directory.agents();
+            var rows = rows();
             if (event.y() < 0 || index >= rows.size()) return;
-            selected = index;
+            select(index);
             if (event.clicks() >= 2) handleKey("ENTER");
         }
     }
 
-    private void syncScroll() { scroll.setContent(directory.agents().size(), bounds.height()); }
+    private void syncScroll() { scroll.setContent(rows().size(), bounds.height()); }
 
     private void ensureVisible() {
-        if (selected < scroll.offset()) scroll.shift(selected - scroll.offset());
-        else if (selected >= scroll.offset() + bounds.height()) {
-            scroll.shift(selected - (scroll.offset() + bounds.height() - 1));
+        var at = selectedIndex();
+        if (at < scroll.offset()) scroll.shift(at - scroll.offset());
+        else if (at >= scroll.offset() + bounds.height()) {
+            scroll.shift(at - (scroll.offset() + bounds.height() - 1));
         }
     }
 }
