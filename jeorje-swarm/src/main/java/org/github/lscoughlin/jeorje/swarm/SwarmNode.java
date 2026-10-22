@@ -176,6 +176,16 @@ public final class SwarmNode implements AutoCloseable {
 
     public SwarmNode(SwarmConfig config, PeerRecord self, Transport transport, Clock clock,
             SwarmHandlers handlers, PeerDiscovery discovery) {
+        this(config, self, transport, clock, handlers, discovery, "");
+    }
+
+    /**
+     * @param sshAddress the {@code host:port} address of the SSH server of this peer, or null or blank for none;
+     *        the node publishes it in its record, in digests, and in the discovery announcement
+     */
+    public SwarmNode(SwarmConfig config, PeerRecord self, Transport transport, Clock clock,
+            SwarmHandlers handlers, PeerDiscovery discovery, String sshAddress) {
+        self = sshAddress == null || sshAddress.isBlank() ? self : self.withSshAddress(sshAddress);
         this.config = config;
         this.transport = transport;
         this.clock = clock;
@@ -541,7 +551,7 @@ public final class SwarmNode implements AutoCloseable {
     private List<DigestEntry> digest() {
         var list = new ArrayList<DigestEntry>();
         for (var record : membership.snapshot().values()) {
-            list.add(new DigestEntry(record.peerId(), record.incarnation(), record.state()));
+            list.add(new DigestEntry(record.peerId(), record.incarnation(), record.state(), record.sshAddress()));
         }
         return list;
     }

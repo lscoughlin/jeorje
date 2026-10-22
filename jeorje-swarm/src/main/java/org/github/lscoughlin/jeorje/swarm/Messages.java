@@ -29,8 +29,12 @@ public final class Messages {
      */
     public record Message(int v, String type, String from, String fromAddr, String id, long time, JsonNode body) {}
 
-    /** A digest entry: the incarnation and state of one peer. */
-    public record DigestEntry(String peerId, long incarnation, PeerState state) {}
+    /** A digest entry: the incarnation, state, and SSH address of one peer. */
+    public record DigestEntry(String peerId, long incarnation, PeerState state, String sshAddress) {
+        public DigestEntry {
+            sshAddress = sshAddress == null ? "" : sshAddress;
+        }
+    }
 
     /**
      * The gossip body. A request has a digest. The answer has the records that differ and a want list.
