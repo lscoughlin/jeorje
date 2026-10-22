@@ -165,7 +165,9 @@ public final class InteractiveSession implements AutoCloseable {
     // ---- state ----
     private final CountDownLatch quit = new CountDownLatch(1);
     private final AtomicBoolean closed = new AtomicBoolean();
+    /** The first session of the process. The orchestrator and the swarm bridge belong to it. */
     private final MainSession main = MainSession.first();
+    private final SessionHub hub = new SessionHub();
     private final Map<String, LlmClient> clients = new ConcurrentHashMap<>();
     private final List<String> attachments = new CopyOnWriteArrayList<>();
     private final AtomicInteger promptIds = new AtomicInteger();
@@ -185,8 +187,7 @@ public final class InteractiveSession implements AutoCloseable {
     private volatile org.github.lscoughlin.jeorje.ui.keys.KeyBindings keys;
     private volatile int window;
     private AdvisorSupport advisor;
-    private Pruner pruner;
-    private ContextCompactor normalCompactor;
+    private SessionDirectory directory;
 
     private LoadedConfig loaded;
     private JeorjeConfig config;
@@ -207,7 +208,7 @@ public final class InteractiveSession implements AutoCloseable {
     private volatile AgentState toolState;
     private volatile SkillGrantPolicy skillGrants;
     private volatile List<org.github.lscoughlin.jeorje.core.instructions.Skill> toolSkills = List.of();
-    private volatile SkillTool skillTool;
+    private final List<SkillTool> skillTools = new CopyOnWriteArrayList<>();
     private org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp;
     private boolean mcpStarted;
     private volatile QEditor activeEditor;
@@ -249,20 +250,26 @@ public final class InteractiveSession implements AutoCloseable {
 
     public Screen screen() { return screen; }
 
-    /** The conversation that the interface works in. The first session has the id {@code main}. */
-    public MainSession main() { return main; }
+    /** The conversation that the interface works in now: the foreground session. */
+    public MainSession main() { return fg(); }
 
-    public Agent agent() { return main.agent(); }
+    /** The foreground session. */
+    private MainSession fg() {
+        var session = hub.foregroundSession();
+        return session != null ? session : main;
+    }
+
+    public Agent agent() { return fg().agent(); }
 
     public ImplementOrchestrator orchestrator() { return orchestrator; }
 
     public WorktreeManager worktrees() { return worktrees; }
 
-    public PlanMode planMode() { return main.planMode(); }
+    public PlanMode planMode() { return fg().planMode(); }
 
     public SwarmNode swarm() { return swarm; }
 
-    public Session session() { return main.session(); }
+    public Session session() { return fg().session(); }
 
     Path cwd() { return cwd; }
 
@@ -342,9 +349,9 @@ public final class InteractiveSession implements AutoCloseable {
                         .orElseThrow(() -> new CliException(resume.isBlank()
                                 ? "No session found in this project." : "Session not found: " + resume));
         main.session(conversation);
+        hub.add(main, null);
         embedder = Wiring.embedder(config, env);
-        countingStore = new ScrubbingContextStore(
-                LuceneContextStore.open(conversation.indexDir(), embedder, LuceneContextStore.Options.defaults().withUserBoost(config.index().userBoost())), scrubber);
+        countingStore = openStore(conversation);
         main.store(countingStore);
         main.transcript(new TranscriptWriter(conversation.transcriptPath(), scrubber));
         policy = Wiring.policy(config, options, env, cwd, conversation.id(), scrubber);
@@ -373,13 +380,14 @@ public final class InteractiveSession implements AutoCloseable {
         buildOrchestrator();
         if (resume != null) restoreAgent();
 
-        roster = new AgentRoster(MAIN, () -> {
-            var list = new ArrayList<SubagentRuntime>();
-            if (main.runtime() != null) list.add(main.runtime());
-            if (orchestrator != null) list.add(orchestrator.runtime());
-            return list;
-        }, () -> swarm == null ? List.of() : AgentRoster.alive(swarm.peers(PeerState.ALIVE)),
-                () -> branchOf(MAIN), () -> main.busy().get() ? "RUNNING" : "IDLE", this::historyOf, this::steerMain);
+        roster = new AgentRoster(hub, () -> orchestrator == null ? List.<SubagentRuntime>of()
+                : List.of(orchestrator.runtime()),
+                () -> swarm == null ? List.of() : AgentRoster.alive(swarm.peers(PeerState.ALIVE)),
+                session -> branchOf(session.id()), this::historyOf, this::steerMain);
+        screen.promptFilter(agent -> {
+            var owner = ownerOf(agent);
+            return owner == null || owner == fg();
+        });
         var size = realTerminal.getSize();
         switcher = new AgentSwitcher(roster, MAIN,
                 new org.github.lscoughlin.jeorje.ui.mouse.Rect(0, 0, Math.max(1, size.getColumns()),
@@ -443,8 +451,8 @@ public final class InteractiveSession implements AutoCloseable {
                 ? own.check(action) : parent.check(action);
     }
 
-    private AgentSettings agentSettings() {
-        return new AgentSettings(main.session().id(), cwd, window, config.context().budgetPercent(),
+    private AgentSettings agentSettings(String sessionId) {
+        return new AgentSettings(sessionId, cwd, window, config.context().budgetPercent(),
                 config.llm().maxOutputTokens(), config.context().recentTurns(), config.agents().stepLimit(),
                 null, config.prompts().system(), "", null)
                 .withInstructionsSource(Wiring.promptInstructions(config, cwd, () -> toolSkills)::text)
@@ -475,11 +483,11 @@ public final class InteractiveSession implements AutoCloseable {
     }
 
     /** The tools of the coding agent as agent tools. */
-    private List<Tool> baseTools(PermissionPolicy toolPolicy) {
+    private List<Tool> baseTools(PermissionPolicy toolPolicy, String sessionId, boolean first) {
         var state = new AgentState();
-        if (toolState == null) toolState = state;
+        if (first) toolState = state;
         var grants = skillGrants();
-        var registry = Wiring.registry(config, grants, policy.network(), state, main.session().id(), options.yolo(),
+        var registry = Wiring.registry(config, grants, policy.network(), state, sessionId, options.yolo(),
                 mcpManager());
         var out = new ArrayList<Tool>();
         for (var name : registry.names()) {
@@ -503,7 +511,7 @@ public final class InteractiveSession implements AutoCloseable {
         }
         toolSkills = Wiring.visibleSkills(skills, grants);
         SkillTool.create(toolSkills, grants::skillLoaded).ifPresent(t -> {
-            skillTool = t;
+            skillTools.add(t);
             out.add(t);
         });
         out.add(advisor.slot());
@@ -533,11 +541,6 @@ public final class InteractiveSession implements AutoCloseable {
     private void buildAgents() {
         // Every agent has the advisor tool: the main agent, the subagents, and the workers. They all use this support.
         advisor = new AdvisorSupport(() -> roles.advisorSet(), () -> clientFor(roles.advisor()));
-        var settings = agentSettings();
-        var workerPolicy = new GatedPolicy(skillGrants(), null, this::askForWorker);
-        main.policy(new GatedPolicy(skillGrants(), main.planMode(), null));
-        var compactorClient = roles.pruningModel().map(this::clientFor).orElse(null);
-
         if (SwarmBridge.wanted(config)) {
             try {
                 bridge = SwarmBridge.forConfig(config, home, cwd, env.env(), text -> notice(MAIN, text), this::refreshStatus);
@@ -546,9 +549,70 @@ public final class InteractiveSession implements AutoCloseable {
                 startupNotices.add("The swarm did not start: " + e.getMessage());
             }
         }
-        var runtimeBuilder = SubagentRuntime.builder(main.session().id(),
+        directory = new SessionDirectory(hub);
+        broker = new UserQuestionBroker(this::onQuestion);
+        buildSession(main, countingStore);
+    }
+
+    /**
+     * Moves the foreground session to the background and starts a new session in the foreground. The old session
+     * keeps its agent, its runtime, its store, and its transcript. Its turn is not cancelled. The new session has
+     * an empty conversation and its own directory under {@code .jeorje/sessions}.
+     *
+     * @param name the name of the new session, or null or blank for the id of its session directory
+     * @return the id of the new session agent
+     * @throws IllegalArgumentException when another session has this name
+     */
+    AgentId fork(String name) {
+        var label = name == null ? "" : name.strip();
+        for (var other : hub.sessions()) {
+            if (!label.isEmpty() && (other.name().equalsIgnoreCase(label) || other.id().value().equalsIgnoreCase(label))) {
+                throw new IllegalArgumentException("A session named " + label + " exists.");
+            }
+        }
+        var conversation = sessions.create(config);
+        if (label.isEmpty()) label = conversation.id();
+        var id = hub.nextForkId();
+        var ms = new MainSession(id, label);
+        ms.session(conversation);
+        var counting = openStore(conversation);
+        ms.store(counting);
+        ms.transcript(new TranscriptWriter(conversation.transcriptPath(), scrubber));
+        try {
+            buildSession(ms, counting);
+        } catch (RuntimeException e) {
+            closeQuietly(ms.transcript());
+            closeQuietly(ms.store());
+            throw e;
+        }
+        var parent = fg().id();
+        hub.add(ms, parent);
+        notice(id, "Session " + conversation.id() + " started. The session " + parent + " runs in the background.");
+        switcher.switchTo(id);
+        return id;
+    }
+
+    /** Opens the context store of a conversation. */
+    private ScrubbingContextStore openStore(Session conversation) {
+        return new ScrubbingContextStore(
+                LuceneContextStore.open(conversation.indexDir(), embedder, LuceneContextStore.Options.defaults().withUserBoost(config.index().userBoost())), scrubber);
+    }
+
+    /**
+     * Builds the runtime, the tools, and the main agent of one conversation, and starts the agent. The conversation
+     * already has its session, its store, and its transcript.
+     */
+    private void buildSession(MainSession ms, ScrubbingContextStore counting) {
+        var id = ms.id();
+        var sessionId = ms.session().id();
+        var settings = agentSettings(sessionId);
+        var workerPolicy = new GatedPolicy(skillGrants(), null, this::askForWorker);
+        ms.policy(new GatedPolicy(skillGrants(), ms.planMode(), null));
+        var compactorClient = roles.pruningModel().map(this::clientFor).orElse(null);
+
+        var runtimeBuilder = SubagentRuntime.builder(sessionId,
                         settings, model -> advisor.tap(clientFor(model)))
-                .store(main.store()).transcript(main.transcript()).agentEvents(this::onEvent)
+                .store(ms.store()).transcript(ms.transcript()).agentEvents(this::onEvent)
                 .pruneListener((child, chunks) -> releaseSkills(child.value(), chunks))
                 .events(event -> {
                     if (bridge != null) bridge.onSubagentEvent(event);
@@ -557,18 +621,19 @@ public final class InteractiveSession implements AutoCloseable {
                 }).types(agentTypes).limits(limits()).compactor(compactorClient)
                 .clock(Clock.systemUTC()).steps(completion != null ? completion : CompletionSteps.none())
                 .workspacePolicies(this::policyForWorkspace);
-        if (bridge != null) runtimeBuilder.remote(bridge);
-        main.runtime(runtimeBuilder.build());
+        var first = ms == main;
+        if (first && bridge != null) runtimeBuilder.remote(bridge);
+        ms.runtime(runtimeBuilder.build());
 
         var tools = new LinkedHashMap<String, Tool>();
-        baseTools(main.policy()).forEach(t -> tools.put(t.definition().name(), t));
+        baseTools(ms.policy(), sessionId, first).forEach(t -> tools.put(t.definition().name(), t));
         var rootTools = List.copyOf(tools.values());
-        tools.put(PlanSubmitTool.NAME, new PlanSubmitTool(config.plan().dir(), main.planMode(), this::onPlanSubmitted));
-        broker = new UserQuestionBroker(this::onQuestion);
+        tools.put(PlanSubmitTool.NAME, new PlanSubmitTool(config.plan().dir(), ms.planMode(),
+                file -> onPlanSubmitted(id, file)));
         tools.put(AskUserTool.NAME, new AskUserTool(broker));
-        var agentTools = AgentTools.install(main.runtime(), main.session().id());
-        var peerTools = bridge == null ? agentTools : PeerSpawnTool.wrap(agentTools, main.runtime());
-        WorktreeSpawnTool.wrap(peerTools, main.runtime(), worktrees, () -> agentTypes)
+        var agentTools = AgentTools.install(ms.runtime(), sessionId, directory);
+        var peerTools = bridge == null ? agentTools : PeerSpawnTool.wrap(agentTools, ms.runtime());
+        WorktreeSpawnTool.wrap(peerTools, ms.runtime(), worktrees, () -> agentTypes)
                 .forEach(t -> tools.putIfAbsent(t.definition().name(), t));
 
         var llm = new LlmClient() {
@@ -578,26 +643,26 @@ public final class InteractiveSession implements AutoCloseable {
             }
         };
         var self = new AtomicReference<Agent>();
-        var agent = new Agent(MAIN, settings, llm, List.copyOf(tools.values()), main.policy(), main.store(),
-                main.transcript(), this::onEvent, Clock.systemUTC());
-        main.agent(agent);
+        var agent = new Agent(id, settings, llm, List.copyOf(tools.values()), ms.policy(), ms.store(),
+                ms.transcript(), this::onEvent, Clock.systemUTC());
+        ms.agent(agent);
+        ms.input(input -> self.get().submit(input));
         self.set(agent);
-        main.planMode().maxExploreCalls(config.plan().maxExploreCalls());
-        agent.withToolFilter(main.planMode()::refuse)
-                .withStepBoundary(() -> main.planMode().notes());
-        agent.withPruneListener(chunks -> releaseSkills(MAIN.value(), chunks));
+        ms.planMode().maxExploreCalls(config.plan().maxExploreCalls());
+        agent.withToolFilter(ms.planMode()::refuse)
+                .withStepBoundary(() -> ms.planMode().notes());
+        agent.withPruneListener(chunks -> releaseSkills(id.value(), chunks));
         var compaction = config.context().compaction();
-        var store = main.store();
-        pruner = new Pruner(compactorClient, store, TermStats.of(store, countingStore::appendedCount),
+        var store = ms.store();
+        ms.pruner(new Pruner(compactorClient, store, TermStats.of(store, counting::appendedCount),
                 new Pruner.Config(compaction.levels(), compaction.batchChunks(), compaction.batchTokens(),
-                        compaction.maxKeywords(), config.prompts().compaction(), cwd));
-        normalCompactor = new ContextCompactor(pruner, CompactionSettings.from(config.context(), window), MAIN);
-        agent.withCompactor(normalCompactor).withHardCompactor(hardCompactor(MAIN));
-        main.runtime().registerRoot(MAIN, "main", new CancellationToken(), rootTools, workerPolicy,
-                input -> self.get().submit(input), () -> self.get().turns().size() + 1);
-        if (bridge != null) {
-            bridge.attach(main.runtime(), rootTools, workerPolicy, input -> self.get().submit(input),
-                    () -> main.store());
+                        compaction.maxKeywords(), config.prompts().compaction(), cwd)));
+        agent.withCompactor(new ContextCompactor(ms.pruner(), CompactionSettings.from(config.context(), window), id))
+                .withHardCompactor(hardCompactor(ms, id));
+        ms.runtime().registerRoot(id, ms.name(), new CancellationToken(), rootTools, workerPolicy,
+                ms.input(), () -> self.get().turns().size() + 1);
+        if (first && bridge != null) {
+            bridge.attach(ms.runtime(), rootTools, workerPolicy, ms.input(), () -> ms.store());
         }
         agent.start();
     }
@@ -607,8 +672,7 @@ public final class InteractiveSession implements AutoCloseable {
      * the earlier conversation in the chat.
      */
     private void releaseSkills(String agentId, List<org.github.lscoughlin.jeorje.core.model.Chunk> chunks) {
-        var skills = skillTool;
-        if (skills != null) skills.releasePruned(agentId, chunks);
+        for (var skills : skillTools) skills.releasePruned(agentId, chunks);
     }
 
     private void restoreAgent() {
@@ -637,7 +701,7 @@ public final class InteractiveSession implements AutoCloseable {
     }
 
     private void buildOrchestrator() {
-        var settings = agentSettings();
+        var settings = agentSettings(main.session().id());
         var workerPolicy = new GatedPolicy(skillGrants(), null, this::askForWorker);
         var builder = ImplementOrchestrator.builder(main.session().id(),
                         settings, model -> advisor.tap(clientFor(model)), config.implement())
@@ -647,7 +711,7 @@ public final class InteractiveSession implements AutoCloseable {
                 .orchestratorInput(input -> notice(MAIN, input.text()))
                 .limits(limits()).policy(workerPolicy).workspacePolicies(this::policyForWorkspace)
                 .approver(plan -> askApproval(plan.render()))
-                .baseTools(baseTools(workerPolicy))
+                .baseTools(baseTools(workerPolicy, main.session().id(), false))
                 .workerTools(StoryTools.factory(List.of()));
         if (hooks.mergeRetryInterval() != null) builder.mergeRetryInterval(hooks.mergeRetryInterval());
         if (roles.advisorSet() && "advisor".equals(config.implement().review())) {
@@ -824,7 +888,7 @@ public final class InteractiveSession implements AutoCloseable {
     void refreshStatus() {
         if (screen == null || !uiStarted) return;
         var status = screen.status();
-        status.model(roles.defaultModel()).yolo(options.yolo()).plan(main.planMode().active());
+        status.model(roles.defaultModel()).yolo(options.yolo()).plan(fg().planMode().active());
         status.branch(branchOf(screen.foreground()));
         status.peers(swarm == null ? 0 : swarm.peers(PeerState.ALIVE).size());
         var rows = orchestrator == null ? List.<ImplementOrchestrator.Row>of() : orchestrator.rows();
@@ -843,8 +907,8 @@ public final class InteractiveSession implements AutoCloseable {
     }
 
     private String branchOf(AgentId id) {
-        if (!id.equals(MAIN)) {
-            for (var r : List.of(main.runtime(), orchestrator.runtime())) {
+        if (hub.get(id) == null) {
+            for (var r : allRuntimes()) {
                 var info = r.info(id);
                 if (info.isPresent() && info.get().branch() != null) return info.get().branch();
             }
@@ -866,14 +930,15 @@ public final class InteractiveSession implements AutoCloseable {
         if (bridge != null) bridge.onAgentEvent(event);
         screen.post(event);
         notifyEditor(event);
-        if (!event.agent().equals(MAIN)) return;
+        var owner = hub.get(event.agent());
+        if (owner == null) return;
         switch (event) {
-            case AgentEvent.TokenDelta d -> main.busy().set(true);
-            case AgentEvent.ToolStarted s -> main.busy().set(true);
+            case AgentEvent.TokenDelta d -> owner.busy().set(true);
+            case AgentEvent.ToolStarted s -> owner.busy().set(true);
             case AgentEvent.TurnFinished t -> {
-                main.busy().set(false);
+                owner.busy().set(false);
                 modelOverride = null;
-                saveManifest("idle");
+                saveManifest(owner, "idle");
             }
             default -> { }
         }
@@ -897,7 +962,7 @@ public final class InteractiveSession implements AutoCloseable {
         };
         notice(MAIN, line);
         refreshStatus();
-        if (event instanceof ImplementEvent.RunFinished) saveManifest("idle");
+        if (event instanceof ImplementEvent.RunFinished) saveManifest(main, "idle");
     }
 
     /** Appends lines to the chat of an agent. */
@@ -913,7 +978,7 @@ public final class InteractiveSession implements AutoCloseable {
         var title = form.title() != null && !form.title().isBlank() ? form.title() : form.firstPrompt();
         var text = "Question from " + question.agent() + ": " + title;
         notice(question.agent(), text);
-        if (!question.agent().equals(MAIN)) notice(MAIN, text);
+        if (hub.get(question.agent()) == null) notice(fg().id(), text);
         screen.status().state("waiting for you");
         screen.showForm(new FormPrompt(question.agent(), form), answer -> {
             broker.answer(question.id(), answer);
@@ -921,7 +986,7 @@ public final class InteractiveSession implements AutoCloseable {
         });
     }
 
-    private void onPlanSubmitted(Path file) {
+    private void onPlanSubmitted(AgentId session, Path file) {
         var text = new StringBuilder("Plan written: " + file + "\n");
         try {
             text.append(Files.readString(file));
@@ -929,15 +994,15 @@ public final class InteractiveSession implements AutoCloseable {
             text.append("(cannot read the plan: ").append(e.getMessage()).append(')');
         }
         text.append("\nUse /plan edit to change the plan, ask for changes, or use /plan done to leave plan mode.");
-        notice(MAIN, text.toString());
+        notice(session, text.toString());
     }
 
     // ---- permission ----
 
     private PermissionPolicy.Decision askForWorker(AgentId who, ToolUse use) {
         var story = orchestrator == null ? Optional.<String>empty() : orchestrator.storyOf(who);
-        var label = story.orElseGet(() -> main.runtime() == null ? who.value()
-                : main.runtime().nameOf(who.value()));
+        var label = story.orElseGet(() -> allRuntimes().stream().map(r -> r.info(who))
+                .flatMap(Optional::stream).map(i -> i.name()).findFirst().orElse(who.value()));
         screen.status().notice(label + " asks to run " + use.tool());
         var decision = gate.ask(who, use);
         rememberDecision(use, decision);
@@ -956,26 +1021,27 @@ public final class InteractiveSession implements AutoCloseable {
     /** Writes the rule "allow this tool" into the project config. It does so only in a trusted project. */
     private void saveProjectRule(String tool) {
         if (!trusted) {
-            notice(MAIN, "The project is not trusted. The rule to allow " + tool + " holds for this session only. "
+            notice(fg().id(), "The project is not trusted. The rule to allow " + tool + " holds for this session only. "
                     + "Use /trust to trust the project.");
             return;
         }
         try {
             var changed = ProjectRuleWriter.allow(cwd, tool);
-            notice(MAIN, changed ? "Saved a rule to allow " + tool + " in " + ProjectRuleWriter.configFile(cwd) + "."
+            notice(fg().id(), changed ? "Saved a rule to allow " + tool + " in " + ProjectRuleWriter.configFile(cwd) + "."
                     : "The project config already allows " + tool + ".");
         } catch (java.io.IOException | RuntimeException e) {
             log.atWarn().log(() -> "Cannot save the rule for " + tool + ": " + e.getMessage());
-            notice(MAIN, "Cannot save the rule in the project config: " + e.getMessage()
+            notice(fg().id(), "Cannot save the rule in the project config: " + e.getMessage()
                     + " The rule holds for this session only.");
         }
     }
 
     private void onDecision(AgentId who, ToolUse use, Decision decision) {
         if (gate.complete(who, use, decision)) return;
-        if (who.equals(MAIN)) {
+        var root = hub.get(who);
+        if (root != null) {
             rememberDecision(use, decision);
-            main.agent().confirm(use.id(), decision.approved());
+            root.agent().confirm(use.id(), decision.approved());
         }
     }
 
@@ -1004,11 +1070,12 @@ public final class InteractiveSession implements AutoCloseable {
                 attachments.clear();
             }
             var target = screen.foreground();
-            if (target.equals(MAIN)) {
-                main.busy().set(true);
-                main.planMode().resetExploration();
+            var root = hub.get(target);
+            if (root != null) {
+                root.busy().set(true);
+                root.planMode().resetExploration();
                 // A text during a turn joins that turn. A text when the agent has no turn starts a turn.
-                if (!main.agent().steer(text)) main.agent().submit(new AgentInput.UserInput(text));
+                if (!root.agent().steer(text)) root.agent().submit(new AgentInput.UserInput(text));
             } else {
                 roster.steer(target, text);
             }
@@ -1022,8 +1089,9 @@ public final class InteractiveSession implements AutoCloseable {
     void sendPrompt(String prompt, String model) {
         promptSent = true;
         modelOverride = model;
-        main.busy().set(true);
-        main.agent().submit(new AgentInput.UserInput(prompt));
+        var session = fg();
+        session.busy().set(true);
+        session.agent().submit(new AgentInput.UserInput(prompt));
     }
 
     private void onInterrupt() {
@@ -1043,22 +1111,51 @@ public final class InteractiveSession implements AutoCloseable {
     String cancel(String name) {
         var target = name == null ? screen.foreground() : roster.find(name).map(e -> e.id()).orElse(null);
         if (target == null) return "No agent named " + name + ".";
-        if (target.equals(MAIN)) {
-            main.agent().cancel();
-            gate.denyAgent(MAIN);
-            screen.cancelForms(MAIN);
+        var root = hub.get(target);
+        if (root != null) {
+            root.agent().cancel();
+            gate.denyAgent(target);
+            screen.cancelForms(target);
             return "Interrupted the main agent.";
         }
         var any = false;
-        for (var r : List.of(main.runtime(), orchestrator.runtime())) any |= r.cancel(target.value());
+        for (var r : allRuntimes()) any |= r.cancel(target.value());
         gate.denyAgent(target);
         screen.cancelForms(target);
         return any ? "Interrupted " + target + "." : "Nothing to interrupt for " + target + ".";
     }
 
     private void steerMain(AgentId id, String text) {
-        main.busy().set(true);
-        main.agent().submit(new AgentInput.UserInput(text));
+        var root = hub.get(id);
+        if (root == null) root = main;
+        root.busy().set(true);
+        root.agent().submit(new AgentInput.UserInput(text));
+    }
+
+    /** The runtimes of all sessions and the runtime of {@code /implement}. */
+    private List<SubagentRuntime> allRuntimes() {
+        var list = new ArrayList<SubagentRuntime>();
+        for (var session : hub.sessions()) {
+            if (session.runtime() != null) list.add(session.runtime());
+        }
+        if (orchestrator != null) list.add(orchestrator.runtime());
+        return list;
+    }
+
+    /** The session that owns an agent: the session of a root agent, or of a subagent. Null when none owns it. */
+    private MainSession ownerOf(AgentId id) {
+        var root = hub.get(id);
+        if (root != null) return root;
+        for (var session : hub.sessions()) {
+            if (session.runtime() != null && session.runtime().info(id).isPresent()) return session;
+        }
+        return null;
+    }
+
+    /** The agent of a view: the main agent of a session, or a live subagent. */
+    private Agent agentOf(AgentId id) {
+        var root = hub.get(id);
+        return root != null ? root.agent() : Agent.live(id).orElse(null);
     }
 
     private List<String> historyOf(AgentId id) {
@@ -1130,7 +1227,11 @@ public final class InteractiveSession implements AutoCloseable {
             switcher.back();
             return;
         }
+        var owner = ownerOf(id);
+        if (owner != null) hub.setForeground(owner.id());
         screen.setForeground(id);
+        var root = hub.get(id);
+        if (root != null) screen.status().agent(root.name()).state(root.busy().get() ? "working" : "idle");
         refreshStatus();
     }
 
@@ -1158,7 +1259,7 @@ public final class InteractiveSession implements AutoCloseable {
         var tables = new ArrayList<AgentState>();
         if (toolState != null) tables.add(toolState);
         var foreground = screen.foreground();
-        var target = foreground.equals(MAIN) ? main.agent() : Agent.live(foreground).orElse(null);
+        var target = agentOf(foreground);
         if (target != null) tables.add(target.state());
         return tables;
     }
@@ -1293,21 +1394,21 @@ public final class InteractiveSession implements AutoCloseable {
 
     // ---- manifest ----
 
-    private synchronized void saveManifest(String runState) {
+    private synchronized void saveManifest(MainSession ms, String runState) {
         try {
             var agents = new ArrayList<SessionManifest.AgentNode>();
-            agents.add(new SessionManifest.AgentNode(MAIN.value(), null, "main"));
-            for (var info : main.runtime().status()) {
+            agents.add(new SessionManifest.AgentNode(ms.id().value(), null, ms.name()));
+            for (var info : ms.runtime().status()) {
                 if (info.parent() != null) {
                     agents.add(new SessionManifest.AgentNode(info.id().value(), info.parent().value(), info.name()));
                 }
             }
-            var agent = main.agent();
-            var conversation = main.session();
+            var agent = ms.agent();
+            var conversation = ms.session();
             var manifest = agent.recordInto(conversation.manifest().withAgents(agents)
                     .withUpdate(Clock.systemUTC().instant(), agent.turns().size(), runState));
             conversation = conversation.with(manifest);
-            main.session(conversation);
+            ms.session(conversation);
             conversation.save();
         } catch (RuntimeException e) {
             log.atWarn().log(() -> "Cannot save the manifest: " + e.getMessage());
@@ -1327,16 +1428,21 @@ public final class InteractiveSession implements AutoCloseable {
             }
         }
         if (ticker != null) ticker.interrupt();
-        if (main.agent() != null) main.agent().close();
-        if (main.runtime() != null) main.runtime().close();
+        for (var session : hub.sessions()) {
+            session.end();
+            if (session.agent() != null) session.agent().close();
+            if (session.runtime() != null) session.runtime().close();
+        }
         if (mcp != null) closeQuietly(mcp);
         if (orchestrator != null) orchestrator.close();
         if (mouse != null) mouse.close();
         if (screen != null) screen.close();
         if (bridge != null) bridge.close();
-        if (main.agent() != null && main.session() != null) saveManifest("idle");
-        closeQuietly(main.transcript());
-        closeQuietly(main.store());
+        for (var session : hub.sessions()) {
+            if (session.agent() != null && session.session() != null) saveManifest(session, "idle");
+            closeQuietly(session.transcript());
+            closeQuietly(session.store());
+        }
         if (embedder instanceof AutoCloseable c) closeQuietly(c);
     }
 
@@ -1382,13 +1488,13 @@ public final class InteractiveSession implements AutoCloseable {
      */
     String compactForeground() {
         var foreground = screen.foreground();
-        var target = foreground.equals(MAIN) ? main.agent() : Agent.live(foreground).orElse(null);
+        var target = agentOf(foreground);
         if (target == null) return "The agent of this view is not running. There is nothing to compact.";
         var recent = config.context().recentTurns();
         if (target.turns().size() <= recent) {
             return "There is nothing to compact. The last " + recent + " turns stay as they are.";
         }
-        target.withHardCompactor(hardCompactor(foreground));
+        target.withHardCompactor(hardCompactor(ownerOf(foreground) == null ? main : ownerOf(foreground), foreground));
         var result = target.compactNow();
         if (result.chunksPruned() == 0) {
             return "There is nothing to prune. All old chunks are at their highest level.";
@@ -1400,17 +1506,17 @@ public final class InteractiveSession implements AutoCloseable {
     /** The context report of the foreground agent, for the {@code /context} command. */
     String contextReport() {
         var foreground = screen.foreground();
-        var target = foreground.equals(MAIN) ? main.agent() : Agent.live(foreground).orElse(null);
+        var target = agentOf(foreground);
         if (target == null) return "The agent of this view is not running. There is no context to show.";
         return target.contextReport().render();
     }
 
     /** A compactor with a budget so small that every old chunk is over the hard limit. */
-    private ContextCompactor hardCompactor(AgentId who) {
+    private ContextCompactor hardCompactor(MainSession owner, AgentId who) {
         var base = CompactionSettings.from(config.context(), window);
         var hard = new CompactionSettings(1, base.softPercent(), base.hardPercent(), base.recentTurns(),
                 base.aggressiveDropAfterTurns(), base.batchChunks(), base.batchTokens(), base.protectedRecentTurns());
-        return new ContextCompactor(pruner, hard, who);
+        return new ContextCompactor(owner.pruner(), hard, who);
     }
 
     // ---- clear ----
@@ -1425,15 +1531,16 @@ public final class InteractiveSession implements AutoCloseable {
      */
     String clearForeground() {
         var target = screen.foreground();
-        if (!target.equals(MAIN)) {
+        var root = hub.get(target);
+        if (root == null) {
             var child = Agent.live(target).orElse(null);
             if (child == null) return "The agent of this view is not running. There is nothing to clear.";
             return child.clear() < 0 ? inTurn() : "";
         }
-        if (main.agent().clear() < 0) return inTurn();
-        if (toolState != null) toolState = new AgentState();
+        if (root.agent().clear() < 0) return inTurn();
+        if (root == main && toolState != null) toolState = new AgentState();
         attachments.clear();
-        saveManifest("idle");
+        saveManifest(root, "idle");
         return "";
     }
 
@@ -1468,7 +1575,7 @@ public final class InteractiveSession implements AutoCloseable {
 
         @Override
         public String pinLast() {
-            var agent = main.agent();
+            var agent = fg().agent();
             var turns = agent.turns();
             for (var i = turns.size() - 1; i >= 0; i--) {
                 var messages = turns.get(i).messages();
@@ -1490,7 +1597,7 @@ public final class InteractiveSession implements AutoCloseable {
 
         @Override
         public List<String> recall(String query) {
-            var hits = main.store().search(new HistoryQuery(query, Syntax.HYBRID, Filters.none(), 5));
+            var hits = fg().store().search(new HistoryQuery(query, Syntax.HYBRID, Filters.none(), 5));
             return hits.stream().map(h -> h.chunk().chunkId() + "  " + h.snippet().replace('\n', ' ')).toList();
         }
 

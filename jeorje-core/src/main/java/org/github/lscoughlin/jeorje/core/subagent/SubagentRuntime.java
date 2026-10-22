@@ -80,6 +80,7 @@ public final class SubagentRuntime implements AutoCloseable {
 
     private final Object lock = new Object();
     private volatile ExternalDelivery externalDelivery;
+    private final Set<AgentId> externalSenders = new java.util.HashSet<>();
     private final Map<AgentId, AgentNode> nodes = new LinkedHashMap<>();
     private final Map<String, Question> questions = new LinkedHashMap<>();
     private final Set<String> pending = new LinkedHashSet<>();
@@ -195,6 +196,23 @@ public final class SubagentRuntime implements AutoCloseable {
             if (nodes.putIfAbsent(id, node) != null) throw new IllegalArgumentException("agent exists: " + id);
         }
         return id;
+    }
+
+    /**
+     * Registers the sender of a message or a question from outside this runtime, for example the root agent of
+     * another session. The question table of this runtime needs a node for the sender. Agents of this runtime
+     * cannot find this node by id or by name, so their messages to the sender go to the external sink.
+     *
+     * @return false when this runtime has a node with this id already
+     */
+    public boolean registerExternalSender(AgentId id, String name) {
+        synchronized (lock) {
+            if (nodes.containsKey(id)) return false;
+            externalSenders.add(id);
+            nodes.put(id, new AgentNode(id, name, null, null, CancellationToken.none(), List.of(),
+                a -> PermissionPolicy.Decision.DENY, in -> { }, () -> 1, Set.of(), true));
+            return true;
+        }
     }
 
     /** Sets the sink that gets a message or a question for an agent that this runtime does not own. */
@@ -864,6 +882,7 @@ public final class SubagentRuntime implements AutoCloseable {
         if (key == null) return null;
         AgentNode ended = null;
         for (var n : nodes.values()) {
+            if (externalSenders.contains(n.id)) continue;
             var match = n.id.value().equals(key) || n.name.equalsIgnoreCase(key) || key.equals(n.storyId());
             if (!match) continue;
             if (!n.ended()) return n;
