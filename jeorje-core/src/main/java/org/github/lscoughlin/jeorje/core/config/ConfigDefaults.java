@@ -164,6 +164,7 @@ final class ConfigDefaults {
               level: INFO
               file: ${HOME}/.jeorje/logs/jeorje.log
             mcp:
+              projectFile: true
               servers: {}
             """;
 

@@ -114,6 +114,7 @@ public final class ConfigLoader {
         var flags = flagLayer();
         merge(tree, flags, "", ConfigSource.of(ConfigSource.Kind.FLAG));
 
+        mergeProjectMcpFile(tree, trusted);
         registerSecrets(tree);
         normalizeWindows(tree);
         JeorjeConfig config;
@@ -124,6 +125,47 @@ public final class ConfigLoader {
         }
         validate(config);
         return new LoadedConfig(config, tree, sources, warnings, trusted);
+    }
+
+    /** Adds the servers of the .mcp.json file for the names that the config layers do not define. */
+    @SuppressWarnings("unchecked")
+    private void mergeProjectMcpFile(Map<String, Object> tree, boolean trusted) {
+        var mcp = tree.get("mcp") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.<String, Object>of();
+        if (Boolean.FALSE.equals(mcp.get("projectFile"))) {
+            return;
+        }
+        var file = options.cwd().resolve(ProjectMcpFile.FILE_NAME);
+        if (!trusted) {
+            if (Files.exists(file)) {
+                warn("Ignored " + file + ": the project is not trusted.");
+            }
+            return;
+        }
+        Map<?, ?> existing = mcp.get("servers") instanceof Map<?, ?> s ? s : Map.of();
+        var servers = new LinkedHashMap<String, Object>();
+        ProjectMcpFile.read(options.cwd(), options.env(), this::warn).forEach((name, server) -> {
+            if (!existing.containsKey(name)) {
+                servers.put(name, serverTree(server));
+            }
+        });
+        if (servers.isEmpty()) {
+            return;
+        }
+        var overlay = new LinkedHashMap<String, Object>();
+        overlay.put("mcp", new LinkedHashMap<String, Object>(Map.of("servers", servers)));
+        merge(tree, overlay, "", new ConfigSource(ConfigSource.Kind.PROJECT, file));
+    }
+
+    private static Map<String, Object> serverTree(JeorjeConfig.McpServer s) {
+        var out = new LinkedHashMap<String, Object>();
+        out.put("transport", s.transport());
+        if (s.command() != null) out.put("command", s.command());
+        if (!s.args().isEmpty()) out.put("args", new ArrayList<Object>(s.args()));
+        if (s.cwd() != null) out.put("cwd", s.cwd());
+        if (!s.env().isEmpty()) out.put("env", new LinkedHashMap<String, Object>(s.env()));
+        if (s.url() != null) out.put("url", s.url());
+        if (!s.headers().isEmpty()) out.put("headers", new LinkedHashMap<String, Object>(s.headers()));
+        return out;
     }
 
     // ---------------------------------------------------------------- reading

@@ -37,6 +37,9 @@ public final class GlobalOptions {
     @Option(names = "--no-mcp", scope = ScopeType.INHERIT, description = "Do not start the MCP servers of the config.")
     private boolean noMcp;
 
+    @Option(names = "--no-mcp-file", scope = ScopeType.INHERIT, description = "Do not read the .mcp.json file of the working directory.")
+    private boolean noMcpFile;
+
     @Option(names = "--no-mouse", scope = ScopeType.INHERIT, description = "Turn off mouse support in the interface.")
     private boolean noMouse;
 
@@ -62,6 +65,8 @@ public final class GlobalOptions {
     public boolean noMouse() { return noMouse; }
 
     public boolean noMcp() { return noMcp; }
+
+    public boolean noMcpFile() { return noMcpFile; }
 
     public Path configFile() { return configFile; }
 }
