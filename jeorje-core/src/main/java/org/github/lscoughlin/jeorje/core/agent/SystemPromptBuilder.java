@@ -22,6 +22,7 @@ public final class SystemPromptBuilder {
     public static final String DEFAULT_IDENTITY = """
         You are Jeorje, a coding agent. You work in the workspace of the user and you finish the tasks that the user gives you.
         Read the code before you change it. Make small, focused changes. Run the tests when you change behavior.
+        Prefer native tools over using bash.
         Say what you did in short, plain sentences. If you are not sure, ask.""";
 
     /** The guidance for pruned chunks and the recall keyword hints. */

@@ -98,6 +98,7 @@ class ContextAndPromptTest {
     void defaultPrompt() {
         var p = prompt(null, "", null);
         assertTrue(p.contains(SystemPromptBuilder.DEFAULT_IDENTITY));
+        assertTrue(p.contains("Prefer native tools over using bash."));
         assertAlwaysThere(p);
         assertFalse(p.contains("## Instructions"));
         assertFalse(p.contains("## Plan mode"));
