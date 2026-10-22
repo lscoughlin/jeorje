@@ -381,7 +381,12 @@ public final class InteractiveSession implements AutoCloseable {
             if (orchestrator != null) list.add(orchestrator.runtime());
             return list;
         }, () -> swarm == null ? List.of() : AgentRoster.alive(swarm.peers(PeerState.ALIVE)),
-                () -> branchOf(MAIN), () -> main.busy().get() ? "RUNNING" : "IDLE", this::historyOf, this::steerMain);
+                () -> branchOf(MAIN), () -> main.busy().get() ? "RUNNING" : "IDLE", this::historyOf, this::steerMain,
+                new RemoteRosters(peerId -> swarm == null
+                        ? java.util.concurrent.CompletableFuture.completedFuture(
+                                List.<org.github.lscoughlin.jeorje.swarm.SwarmHandlers.PeerAgent>of())
+                        : swarm.roster(peerId), System::currentTimeMillis, 3000, null)::get,
+                () -> cwd.getFileName() == null ? "this instance" : cwd.getFileName().toString());
         var size = realTerminal.getSize();
         switcher = new AgentSwitcher(roster, MAIN,
                 new org.github.lscoughlin.jeorje.ui.mouse.Rect(0, 0, Math.max(1, size.getColumns()),

@@ -33,6 +33,28 @@ public final class InMemoryAgentDirectory implements AgentDirectory {
     @Override
     public synchronized List<AgentEntry> agents() { return List.copyOf(entries.values()); }
 
+    /** One harness, {@code local}, with the entries as agents and, by parent, as subagents. */
+    @Override
+    public synchronized List<RosterNode> tree() {
+        var roots = new ArrayList<RosterNode>();
+        for (var entry : entries.values()) {
+            if (entry.parent() == null || !entries.containsKey(entry.parent())) {
+                roots.add(node(RosterKind.AGENT, entry, new java.util.HashSet<>()));
+            }
+        }
+        return List.of(new RosterNode(RosterKind.HARNESS, "harness:local", "local", "", roots));
+    }
+
+    private RosterNode node(RosterKind kind, AgentEntry entry, java.util.Set<AgentId> seen) {
+        var children = new ArrayList<RosterNode>();
+        if (seen.add(entry.id())) {
+            for (var other : entries.values()) {
+                if (entry.id().equals(other.parent())) children.add(node(RosterKind.SUBAGENT, other, seen));
+            }
+        }
+        return new RosterNode(kind, entry.id().value(), entry.name(), entry.state(), children);
+    }
+
     @Override
     public synchronized List<String> history(AgentId agent) {
         return List.copyOf(histories.getOrDefault(agent, List.of()));

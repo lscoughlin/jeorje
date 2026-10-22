@@ -32,6 +32,30 @@ class AgentDirectoryTest {
     }
 
     @Test
+    void theDefaultTreeIsEmptyAndTheInMemoryTreeFollowsTheParents() {
+        AgentDirectory plain = new AgentDirectory() {
+            @Override public List<AgentEntry> agents() { return List.of(); }
+
+            @Override public List<String> history(AgentId agent) { return List.of(); }
+
+            @Override public void steer(AgentId agent, String text) { }
+        };
+        assertTrue(plain.tree().isEmpty());
+        var dir = new InMemoryAgentDirectory()
+                .add(new AgentEntry(ROOT, "root", null, "RUNNING", null, "main", ""))
+                .add(new AgentEntry(KID, "kid", ROOT, "IDLE", null, null, null));
+        var harness = dir.tree().getFirst();
+        assertEquals(RosterKind.HARNESS, harness.kind());
+        var root = harness.children().getFirst();
+        assertEquals(RosterKind.AGENT, root.kind());
+        assertEquals("root", root.id());
+        assertEquals(RosterKind.SUBAGENT, root.children().getFirst().kind());
+        assertEquals("kid", root.children().getFirst().id());
+        assertTrue(root.hasChildren());
+        assertEquals("", new RosterNode(RosterKind.AGENT, "a", "a", null, null).detail());
+    }
+
+    @Test
     void transcriptHistoryReadsOneAgentInOrder(@TempDir Path tmp) {
         var file = tmp.resolve("transcript.jsonl");
         try (var w = new TranscriptWriter(file)) {
