@@ -79,6 +79,7 @@ public final class SubagentRuntime implements AutoCloseable {
     private final WorkspacePolicies workspacePolicies;
 
     private final Object lock = new Object();
+    private volatile ExternalDelivery externalDelivery;
     private final Map<AgentId, AgentNode> nodes = new LinkedHashMap<>();
     private final Map<String, Question> questions = new LinkedHashMap<>();
     private final Set<String> pending = new LinkedHashSet<>();
@@ -194,6 +195,11 @@ public final class SubagentRuntime implements AutoCloseable {
             if (nodes.putIfAbsent(id, node) != null) throw new IllegalArgumentException("agent exists: " + id);
         }
         return id;
+    }
+
+    /** Sets the sink that gets a message or a question for an agent that this runtime does not own. */
+    public void setExternalDelivery(ExternalDelivery external) {
+        this.externalDelivery = external;
     }
 
     /** Adds tools that every subagent gets, for example {@code recall} and the agent tools. */
@@ -917,20 +923,36 @@ public final class SubagentRuntime implements AutoCloseable {
 
     /** Sends a message with no answer expected. */
     public AskResult message(AgentId from, String to, String text) {
+        return message(from, null, to, text);
+    }
+
+    /**
+     * Sends a message with no answer expected.
+     *
+     * @param fromName the display name of the sender, or null to use the name of the sender node
+     */
+    public AskResult message(AgentId from, String fromName, String to, String text) {
         AgentNode sender;
         AgentNode target;
+        ExternalDelivery external = null;
         synchronized (lock) {
             sender = nodes.get(from);
             if (sender == null) return AskResult.failure(AskResult.UNKNOWN);
             target = resolve(to);
             if (target == null) {
-                return pending.contains(to) ? AskResult.failure(AskResult.NOT_STARTED)
-                    : AskResult.failure(AskResult.UNKNOWN);
+                if (pending.contains(to)) return AskResult.failure(AskResult.NOT_STARTED);
+                external = externalDelivery;
+                if (external == null) return AskResult.failure(AskResult.UNKNOWN);
             }
-            if (target.state == AgentLifecycle.CREATED) return AskResult.failure(AskResult.NOT_STARTED);
+            if (target != null && target.state == AgentLifecycle.CREATED) return AskResult.failure(AskResult.NOT_STARTED);
+        }
+        if (target == null) {
+            var name = fromName == null ? sender.name : fromName;
+            return external.deliver(from, name, new AgentId(to), text, false, new CancellationToken())
+                .orElse(AskResult.failure(AskResult.UNKNOWN));
         }
         if (target.ended()) return endedResult(target);
-        var body = "[message from " + sender.name + " (" + label(sender) + ")]\n" + text;
+        var body = "[message from " + (fromName == null ? sender.name : fromName) + " (" + label(sender) + ")]\n" + text;
         if (!send(sender, target, body, null)) return endedResult(target);
         return AskResult.answer("Message sent to " + target.name + ".");
     }
@@ -967,17 +989,36 @@ public final class SubagentRuntime implements AutoCloseable {
 
     /** Asks a question and waits for the answer. */
     public AskResult ask(AgentId fromId, String to, String text, CancellationToken cancel) {
+        return ask(fromId, null, to, text, cancel);
+    }
+
+    /**
+     * Asks a question and waits for the answer.
+     *
+     * @param fromName the display name of the sender, or null to use the name of the sender node
+     */
+    public AskResult ask(AgentId fromId, String fromName, String to, String text, CancellationToken cancel) {
         AgentNode from;
         AgentNode target;
+        ExternalDelivery external = null;
         Question q = null;
         synchronized (lock) {
             from = nodes.get(fromId);
             if (from == null) return AskResult.failure(AskResult.UNKNOWN);
             target = resolve(to);
             if (target == null) {
-                return pending.contains(to) ? AskResult.failure(AskResult.NOT_STARTED)
-                    : AskResult.failure(AskResult.UNKNOWN);
+                if (pending.contains(to)) return AskResult.failure(AskResult.NOT_STARTED);
+                external = externalDelivery;
+                if (external == null) return AskResult.failure(AskResult.UNKNOWN);
             }
+        }
+        if (target == null) {
+            // The lock is not held here, because the answer of an external target can take a long time.
+            var name = fromName == null ? from.name : fromName;
+            return external.deliver(fromId, name, new AgentId(to), text, true, cancel)
+                .orElse(AskResult.failure(AskResult.UNKNOWN));
+        }
+        synchronized (lock) {
             if (target == from) return AskResult.failure("self");
             if (target.state == AgentLifecycle.CREATED) return AskResult.failure(AskResult.NOT_STARTED);
             if (!target.ended()) {
@@ -995,7 +1036,7 @@ public final class SubagentRuntime implements AutoCloseable {
         var question = q;
         enterWait(from, AgentLifecycle.WAITING_AGENT, target.name);
         try {
-            var body = "[question from " + from.name + " (" + label(from) + "), id " + question.id + "]\n" + text;
+            var body = "[question from " + (fromName == null ? from.name : fromName) + " (" + label(from) + "), id " + question.id + "]\n" + text;
             if (target.request != null && target.request.remote()) {
                 askRemote(target, question);
             } else if (!send(from, target, body, question)) {
