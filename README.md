@@ -17,7 +17,7 @@ See [doc/usage.md](doc/usage.md) for a guide to daily use.
 - **Queryable context memory.** Each turn becomes a chunk in a Lucene index with text and vector search. Old chunks shrink, and each one keeps search keywords. The `recall` tool restores the full text.
 - **A swarm with no server.** Instances find each other with a gossip protocol, zeroconf, a local rendezvous, or a list of addresses. Agents message each other and ask each other questions over SSH. A shared token protects the swarm.
 - **Remote foreground.** Attach to an agent on a peer. Its chat shows in your terminal. You can steer it and answer its permission requests.
-- **Agent tree.** The agent switcher shows each instance, its agents, and their subagents as a tree you can collapse.
+- **Agent tree.** The [agent switcher](doc/agent-switcher.md) shows each instance, its agents, and their subagents as a tree you can collapse.
 - **Sessions in the background.** `/agents new` starts a fresh conversation. The old one keeps running, and you can switch back at any time.
 - **Plan, then implement.** `/plan` explores the project in read-only mode. `/implement` gives each story to its own subagent, and the orchestrator checks the result.
 - **An advisor for every agent.** A second model reviews the work. It is on by default.
@@ -111,7 +111,7 @@ The terminal UI is built on JLine and includes:
 - syntax highlighting of code and diffs in the chat view and the editor,
 - a file browser app in the chat region, with arrow-key movement, `Right` to open a directory, `Left` to close it or to move to the parent, `Enter` to edit a file or to expand a directory, and a keys row; `Ctrl-X f` and `/files` open it, and `/files list [filter]` prints the tree,
 - an `@path` mention: a word that starts with `@` and names a path in the working directory adds the file to the next message, with a `Files: <paths>` line,
-- a modeless, menu-driven text editor in the style of the MS-DOS QBasic editor, built on JLine.
+- a modeless, menu-driven text editor in the style of the MS-DOS QBasic editor, built on JLine. See [doc/editor.jpg](doc/editor.jpg) for a screenshot.
 
 ## Tech Stack
 
