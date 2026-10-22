@@ -85,6 +85,7 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     private volatile List<String> capabilities = List.of();
     private volatile SwarmNode node;
     private volatile PeerDiscovery discovery;
+    private volatile PeerAnswerer answerer;
     private volatile SwarmSshServer sshServer;
     private volatile SshChannelTransport sshTransport;
     private volatile SubagentRuntime runtime;
@@ -281,6 +282,12 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         capabilities = List.copyOf(caps);
     }
 
+    /** Sets the receiver of messages from peers for the agent of the user. {@link #attach} sets it too. */
+    public SwarmBridge mainInput(Consumer<AgentInput> value) {
+        this.mainInput = value;
+        return this;
+    }
+
     /** Starts the node and joins the swarm. */
     public SwarmBridge start() {
         var started = new SwarmNode(swarmConfig, self.withCapabilities(capabilities), transport, sshTransport, clock,
@@ -293,6 +300,41 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
 
     /** The node, or null when the bridge did not start. */
     public String address() { return node == null ? self.address() : node.address(); }
+
+    // ---- messages between agents, over SSH ----
+
+    /**
+     * Finds the id of an alive peer from its id, its name, or its address. Returns the argument when no peer
+     * matches, so that the caller gets a clear error from the node.
+     */
+    private String peerIdOf(String peer) {
+        var n = node;
+        if (n == null || peer == null) return peer;
+        return n.peers(PeerState.ALIVE).stream()
+                .filter(p -> p.peerId().equals(peer) || p.name().equalsIgnoreCase(peer) || p.address().equals(peer))
+                .findFirst().map(PeerRecord::peerId).orElse(peer);
+    }
+
+    /** Sends text to an agent on a peer over SSH. The stage fails when the peer cannot be reached. */
+    public java.util.concurrent.CompletableFuture<Void> sendMessage(String peerId, String agent, String text) {
+        var n = node;
+        if (n == null) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("the swarm is not started"));
+        }
+        return n.sendAgentMessage(peerIdOf(peerId), agent, text);
+    }
+
+    /**
+     * Asks a question of an agent on a peer over SSH. The stage completes with the answer. It fails with the
+     * reason of the peer, with a timeout, or when the peer is unknown or has no SSH address. It does not throw.
+     */
+    public java.util.concurrent.CompletableFuture<String> askPeer(String peerId, String agent, String question) {
+        var n = node;
+        if (n == null) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("the swarm is not started"));
+        }
+        return n.ask(peerIdOf(peerId), agent, question, null);
+    }
 
     // ---- the client side: RemoteSpawner ----
 
@@ -466,6 +508,31 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     @Override
     public void onAgentMessage(String fromPeer, String toAgent, String text) {
         mainInput.accept(new AgentInput.PeerMessage(new AgentId("peer:" + nameOf(fromPeer)), text));
+    }
+
+    /** Answers a question from an agent on a peer. */
+    @FunctionalInterface
+    public interface PeerAnswerer {
+        java.util.concurrent.CompletionStage<String> answer(String fromPeerName, String toAgent, String question);
+    }
+
+    /**
+     * Sets the code that answers questions from peers. Without it, the question goes to the agent of the user as
+     * a message, and the asking peer gets an error that says so. The agent can reply with a message.
+     */
+    public SwarmBridge answerPeersWith(PeerAnswerer value) {
+        this.answerer = value;
+        return this;
+    }
+
+    @Override
+    public java.util.concurrent.CompletionStage<String> onAgentAsk(String fromPeer, String toAgent, String question) {
+        var name = nameOf(fromPeer);
+        var current = answerer;
+        if (current != null) return current.answer(name, toAgent, question);
+        mainInput.accept(new AgentInput.PeerMessage(new AgentId("peer:" + name), "[question] " + question));
+        return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException(
+                "the agent received the question as a message and has no direct answer; it can reply with send_message"));
     }
 
     @Override
