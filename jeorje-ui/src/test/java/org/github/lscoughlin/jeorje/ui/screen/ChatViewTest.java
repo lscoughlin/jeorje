@@ -19,6 +19,33 @@ class ChatViewTest {
     }
 
     @Test
+    void localBlockShowsHeaderBodyAndFooter() {
+        var chat = new ChatView();
+        chat.appendLocalBlock("! true", "", "[exit code 0]");
+        chat.appendLocalBlock("! echo hi", "hi", "[exit code 0]");
+        assertEquals(List.of("! true", "[exit code 0]", "! echo hi", "hi", "[exit code 0]"),
+                plain(chat.logicalLines()));
+    }
+
+    @Test
+    void localBlockWithLongBodyStaysInTheView() {
+        var chat = new ChatView();
+        var body = String.join("\n", java.util.stream.IntStream.range(0, 300).mapToObj(i -> "line " + i).toList());
+        chat.appendLocalBlock("! seq", body, "[exit code 0]");
+        var rows = chat.visible(40, 10);
+        assertTrue(rows.size() <= 10);
+        assertEquals("[exit code 0]", rows.getLast().toString());
+    }
+
+    @Test
+    void localBlockWrapsALongLine() {
+        var chat = new ChatView();
+        chat.appendLocalBlock("! x", "x".repeat(500) + "\u001b[31m\ttab", "[exit code 0]");
+        for (var row : chat.visible(40, 50)) assertTrue(row.columnLength() <= 40);
+        assertFalse(chat.plainText().contains("\u001b"));
+    }
+
+    @Test
     void eventsRenderInOrder() {
         var chat = new ChatView();
         chat.appendUser("hello");

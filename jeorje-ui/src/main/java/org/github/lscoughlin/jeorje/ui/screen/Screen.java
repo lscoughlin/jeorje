@@ -277,6 +277,14 @@ public final class Screen implements AutoCloseable {
 
     public AgentId foreground() { return foreground; }
 
+    /**
+     * Appends a block to the end of the chat view of an agent. The block is local: it is not part of the
+     * conversation and never goes to the model. The caller redraws the screen.
+     */
+    public void localBlock(AgentId agent, String header, String body, String footer) {
+        chat(agent).appendLocalBlock(header, body, footer);
+    }
+
     /** The chat view of an agent. It is created on first use. */
     public ChatView chat(AgentId agent) {
         return chats.computeIfAbsent(agent, a -> {
