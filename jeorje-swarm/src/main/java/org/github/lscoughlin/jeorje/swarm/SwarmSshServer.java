@@ -53,13 +53,21 @@ public final class SwarmSshServer implements AutoCloseable {
      * @param token the swarm token; it must not be empty
      */
     public SwarmSshServer(String bind, String advertiseHost, String token) {
+        this(bind, advertiseHost, token, SshKeys.ephemeral());
+    }
+
+    /**
+     * @param keys the host key of this run
+     * @see #SwarmSshServer(String, String, String)
+     */
+    public SwarmSshServer(String bind, String advertiseHost, String token, SshKeys keys) {
         if (token == null || token.isEmpty()) {
             throw new IllegalArgumentException("the SSH server needs a non-empty swarm token");
         }
         this.bind = bind == null || bind.isBlank() ? "127.0.0.1:0" : bind;
         this.advertiseHost = advertiseHost == null ? "" : advertiseHost;
         this.token = token.getBytes(StandardCharsets.UTF_8);
-        this.keys = SshKeys.ephemeral();
+        this.keys = keys;
     }
 
     /** Sets the handler of command channels. Set it before {@link #start()}. */
