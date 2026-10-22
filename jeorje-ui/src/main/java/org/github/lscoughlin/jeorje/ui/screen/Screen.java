@@ -356,7 +356,9 @@ public final class Screen implements AutoCloseable {
         chat(agent);
         foreground = agent;
         status.agent(agent.value());
-        wakeInput();
+        // A prompt of this agent can wait in the queue. The input loop must see it now. Without a prompt, a wake
+        // would look like a Ctrl-C to the input loop.
+        if (pendingPrompt() != null) wakeInput();
         draw();
     }
 
@@ -443,7 +445,7 @@ public final class Screen implements AutoCloseable {
      */
     public void promptFilter(java.util.function.Predicate<AgentId> filter) {
         this.promptFilter = filter == null ? a -> true : filter;
-        wakeInput();
+        if (pendingPrompt() != null) wakeInput();
     }
 
     /** The first prompt that the filter accepts. The caller holds the lock of the queue. */

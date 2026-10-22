@@ -71,6 +71,7 @@ The UI has one foreground agent. The user sees its chat and types to it. All oth
 - `Ctrl-X a` or `/back` returns the user to the parent.
 - A background agent that needs input shows a notice in the status line. The user can switch to it.
 - A remote subagent behaves in the same way. The UI sends the steering text to the peer. See [swarm.md](swarm.md).
+- `/agents new [name]` starts a second session and keeps the first one in the background. Each session has its own subagent runtime. The main agent of one session can use `agent_message` and `agent_ask` with the id or the name of the main agent of the other session. The runtime of the sender passes the call to the session directory when it cannot find the target. See [ui.md](ui.md#sessions-in-the-switcher).
 
 ## Talking to other agents
 

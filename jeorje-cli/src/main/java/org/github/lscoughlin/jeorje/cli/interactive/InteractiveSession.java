@@ -281,6 +281,8 @@ public final class InteractiveSession implements AutoCloseable {
 
     AgentRoster roster() { return roster; }
 
+    SessionHub hub() { return hub; }
+
     AgentSwitcher switcher() { return switcher; }
 
     PromptGate gate() { return gate; }
