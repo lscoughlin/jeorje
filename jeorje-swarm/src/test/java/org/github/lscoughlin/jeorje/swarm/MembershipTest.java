@@ -15,7 +15,7 @@ class MembershipTest {
     private final Membership table = new Membership(PeerRecord.of("me", "mem:me", "me"), config, clock);
 
     private static PeerRecord peer(String id, long incarnation, PeerState state) {
-        return new PeerRecord(id, "mem:" + id, id, incarnation, state, java.util.List.of(), "");
+        return new PeerRecord(id, "mem:" + id, "", id, incarnation, state, java.util.List.of(), "");
     }
 
     @Test

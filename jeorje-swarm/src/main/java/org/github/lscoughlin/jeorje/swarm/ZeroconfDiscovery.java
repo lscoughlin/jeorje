@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Zeroconf discovery with multicast DNS (mDNS) and DNS-SD. Each instance registers the service
  * {@value #SERVICE_TYPE}. The service name is the peer id. The text record has the keys {@code peerId},
- * {@code address}, and {@code name}. The class also browses the same type and keeps the instances that
+ * {@code address}, {@code sshAddress}, and {@code name}. The class also browses the same type and keeps the instances that
  * it sees.
  */
 public final class ZeroconfDiscovery implements PeerDiscovery {
@@ -46,7 +46,7 @@ public final class ZeroconfDiscovery implements PeerDiscovery {
     public void announce(PeerRecord self) {
         var port = portOf(self.address());
         var properties = Map.of("peerId", self.peerId(), "address", self.address(),
-                "name", self.name() == null ? "" : self.name());
+                "sshAddress", self.sshAddress(), "name", self.name() == null ? "" : self.name());
         try {
             jmdns.registerService(ServiceInfo.create(SERVICE_TYPE, self.peerId(), port, 0, 0, properties));
         } catch (IOException e) {
@@ -73,15 +73,15 @@ public final class ZeroconfDiscovery implements PeerDiscovery {
      * Makes an entry from the data of a resolved service. A service address with a wildcard host cannot
      * be dialed, so the first resolved host replaces it. The result is null if the data is not enough.
      */
-    static Entry entryOf(String serviceName, int port, String peerId, String address, String name,
-                         List<String> resolvedHosts) {
+    static Entry entryOf(String serviceName, int port, String peerId, String address, String sshAddress,
+                         String name, List<String> resolvedHosts) {
         var id = peerId == null || peerId.isBlank() ? serviceName : peerId;
         var host = address == null || address.isBlank() ? "" : address.substring(0, Math.max(0, address.lastIndexOf(':')));
         if (host.isBlank() || host.equals("0.0.0.0") || host.equals("::") || host.equals("[::]")) {
             if (resolvedHosts.isEmpty()) return null;
             host = resolvedHosts.getFirst();
         }
-        return new Entry(id, host + ":" + port, name == null ? "" : name);
+        return new Entry(id, host + ":" + port, sshAddress, name == null ? "" : name);
     }
 
     private static int portOf(String address) {
@@ -103,7 +103,8 @@ public final class ZeroconfDiscovery implements PeerDiscovery {
         public void serviceResolved(ServiceEvent event) {
             var info = event.getInfo();
             var entry = entryOf(event.getName(), info.getPort(), info.getPropertyString("peerId"),
-                    info.getPropertyString("address"), info.getPropertyString("name"),
+                    info.getPropertyString("address"), info.getPropertyString("sshAddress"),
+                    info.getPropertyString("name"),
                     List.of(info.getInet4Addresses()).stream().map(a -> a.getHostAddress()).toList());
             if (entry != null) {
                 seen.put(entry.peerId(), entry);

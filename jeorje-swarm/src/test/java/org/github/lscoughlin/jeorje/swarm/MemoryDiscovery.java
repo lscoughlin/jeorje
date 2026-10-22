@@ -13,7 +13,7 @@ final class MemoryDiscovery implements PeerDiscovery {
 
     @Override
     public void announce(PeerRecord self) {
-        shared.put(self.peerId(), new Entry(self.peerId(), self.address(), self.name()));
+        shared.put(self.peerId(), new Entry(self.peerId(), self.address(), self.sshAddress(), self.name()));
     }
 
     @Override

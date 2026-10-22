@@ -24,20 +24,20 @@ class DiscoveryTest {
 
     @Test
     void aServiceBecomesAnEntryWithTheAdvertisedAddress() {
-        var entry = ZeroconfDiscovery.entryOf("a", 7601, "a", "192.168.1.5:7601", "alpha", List.of("10.0.0.2"));
-        assertEquals(new PeerDiscovery.Entry("a", "192.168.1.5:7601", "alpha"), entry);
+        var entry = ZeroconfDiscovery.entryOf("a", 7601, "a", "192.168.1.5:7601", "192.168.1.5:2222", "alpha", List.of("10.0.0.2"));
+        assertEquals(new PeerDiscovery.Entry("a", "192.168.1.5:7601", "192.168.1.5:2222", "alpha"), entry);
     }
 
     @Test
     void aWildcardAddressIsReplacedByTheResolvedHost() {
-        var entry = ZeroconfDiscovery.entryOf("a", 7601, "a", "0.0.0.0:7601", "alpha", List.of("10.0.0.2"));
+        var entry = ZeroconfDiscovery.entryOf("a", 7601, "a", "0.0.0.0:7601", "", "alpha", List.of("10.0.0.2"));
         assertEquals("10.0.0.2:7601", entry.address());
-        assertNull(ZeroconfDiscovery.entryOf("a", 7601, "a", "0.0.0.0:7601", "alpha", List.of()));
+        assertNull(ZeroconfDiscovery.entryOf("a", 7601, "a", "0.0.0.0:7601", "", "alpha", List.of()));
     }
 
     @Test
     void theServiceNameIsThePeerIdWhenTheRecordHasNone() {
-        var entry = ZeroconfDiscovery.entryOf("svc", 7601, null, "10.0.0.3:7601", null, List.of());
+        var entry = ZeroconfDiscovery.entryOf("svc", 7601, null, "10.0.0.3:7601", null, null, List.of());
         assertEquals("svc", entry.peerId());
         assertEquals("", entry.name());
     }
