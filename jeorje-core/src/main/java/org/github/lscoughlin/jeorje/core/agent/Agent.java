@@ -121,6 +121,7 @@ public final class Agent implements AutoCloseable {
     private final BlockingQueue<AgentInput> inbox = new LinkedBlockingQueue<>();
     private final Map<String, CompletableFuture<Boolean>> confirmations = new ConcurrentHashMap<>();
     private final List<Turn> completed = new ArrayList<>();
+    private final List<String> pendingNotes = new ArrayList<>();
     /** The index in {@code completed} before which turns count as older, because the agent moved them out. */
     private int forcedStart;
     /** Tools that are not read-only but never change the files of the workspace, so they keep the repeat guard. */
@@ -406,6 +407,16 @@ public final class Agent implements AutoCloseable {
     }
 
     /**
+     * Holds a text for the next turn. The call starts no turn, makes no model call, publishes no event, and
+     * changes no turn counter. The next turn adds the text to its messages as a note before the user text, so
+     * the model sees it in the request of that turn. A note that no turn follows stays in memory only.
+     */
+    public synchronized void note(String text) {
+        if (text == null || text.isBlank()) return;
+        pendingNotes.add(text.strip());
+    }
+
+    /**
      * True while a turn can take a text of the user at its next step boundary. The input of the interface uses it
      * to decide between steering a turn and starting a turn.
      */
@@ -558,6 +569,12 @@ public final class Agent implements AutoCloseable {
         try {
             var number = ++turnNumber;
             var messages = new ArrayList<Message>();
+            List<String> notes;
+            synchronized (this) {
+                notes = List.copyOf(pendingNotes);
+                pendingNotes.clear();
+            }
+            for (var note : notes) messages.add(Message.user(Notes.of(note)));
             messages.add(Message.user(input));
             flushed = 0;
             var calls = 0;
