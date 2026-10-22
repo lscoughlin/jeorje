@@ -53,7 +53,7 @@ public final class SwarmSshServer implements AutoCloseable {
      * @param token the swarm token; it must not be empty
      */
     public SwarmSshServer(String bind, String advertiseHost, String token) {
-        this(bind, advertiseHost, token, SshKeys.ephemeral());
+        this(bind, advertiseHost, token, SshKeys.background());
     }
 
     /**
