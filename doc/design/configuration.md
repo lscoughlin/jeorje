@@ -53,6 +53,7 @@ Only a few flags and variables set config values:
 | `--swarm-token` | `swarm.token` |
 | `--no-mouse` | `ui.mouse.enabled` is `false` |
 | `--no-mcp` | No key. The session starts no MCP server. |
+| `--no-mcp-file` | `mcp.projectFile: false`. Jeorje does not read the `.mcp.json` file of the working directory. |
 | `JEORJE_SWARM_TOKEN` | `swarm.token` |
 
 The flag `--swarm-token` wins over `JEORJE_SWARM_TOKEN`. Other flags (`--dir`, `--config`, `--trust`, `--yes`, `--yolo`) and other variables do not set config keys. See [Environment variables](#environment-variables).
@@ -278,6 +279,29 @@ mcp:
 - A project config merges with the user config for each server name. Jeorje ignores `mcp` in the project config of an untrusted project.
 - `jeorje config` hides the values of `env` and `headers`.
 - The flag `--no-mcp` starts no server for one run. The command `/mcp` shows each server, its state, and its tools.
+
+### The .mcp.json file
+
+Jeorje also reads the file `.mcp.json` in the working directory at startup. The working directory is the one that `--dir` selects, or the current directory. Other tools write the same file.
+
+The file holds the JSON object `mcpServers`. Each key is a server name. The name uses only `a-z`, `0-9`, `_`, and `-`.
+
+```json
+{"mcpServers": {
+  "clarity": {"type": "stdio", "command": "clarity", "args": ["mcp"], "env": {"A": "b"}},
+  "remote": {"type": "http", "url": "http://127.0.0.1:9000/mcp", "headers": {"X": "y"}}
+}}
+```
+
+- Each entry has `type`, which is `stdio` or `http`. The fields of a `stdio` entry are `command`, `args`, and `env`. The fields of an `http` entry are `url` and `headers`. An entry can also have `cwd`.
+- If `type` is absent, Jeorje uses `stdio` when `command` is present and `http` when `url` is present.
+- The key `mcp.servers` has more power. When `.jeorje/config.yaml` and `.mcp.json` define the same server name, Jeorje uses the entry of `.jeorje/config.yaml`. Jeorje adds the other names from `.mcp.json`.
+- The key `mcp.projectFile` is a boolean. The default is `true`. The value `false` stops the read of `.mcp.json`. The flag `--no-mcp-file` sets it to `false`.
+- Jeorje replaces each `${VAR}` in `command`, in each `args` value, in each `env` value, in `url`, and in each `headers` value with the environment variable `VAR`. A missing variable becomes an empty string.
+- Jeorje reads `.mcp.json` only when the user trusts the project. When the project is not trusted, Jeorje ignores the file and logs one warning. The project config cannot change this, because restricted mode removes the key `mcp.*`.
+- A bad entry does not stop the session. Jeorje logs one warning for each entry with a bad name, an unknown `type`, or a missing `command` or `url`. Jeorje skips that entry and keeps the other entries.
+- `jeorje config` shows `.mcp.json` as the origin of these servers.
+- The tools of these servers appear in `/mcp` and in the tool list. Their names are `mcp__<server>__<tool>`.
 
 ## Prompts
 
