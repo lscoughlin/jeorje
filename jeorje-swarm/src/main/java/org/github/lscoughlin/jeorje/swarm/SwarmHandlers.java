@@ -40,6 +40,51 @@ public interface SwarmHandlers {
         }
     }
 
+    /**
+     * One agent of this peer, as a remote client sees it in the roster.
+     *
+     * @param agentId the id of the agent
+     * @param name the display name
+     * @param parentId the id of the parent agent, or an empty string for a root agent
+     * @param state the state name, for example {@code RUNNING}
+     */
+    record PeerAgent(String agentId, String name, String parentId, String state) {
+        public PeerAgent {
+            name = name == null ? "" : name;
+            parentId = parentId == null ? "" : parentId;
+            state = state == null ? "" : state;
+        }
+    }
+
+    /**
+     * A local agent that a remote client has in its foreground. The client reads the history and the live lines,
+     * steers the agent, and answers its questions. The remote user acts as the local user for this agent.
+     */
+    interface ForegroundHost {
+        /** The lines of the history of the agent, oldest first. */
+        List<String> history();
+
+        /** The id of the agent. */
+        String agentId();
+
+        /** Steering text from the client. It acts as text that the user types for the agent. */
+        void steer(String text);
+
+        /**
+         * The answer of the client to a question of the agent, for example a permission prompt. The request id
+         * is the id that the live lines name.
+         */
+        void answer(String requestId, String text);
+
+        /** Sets the sink for the live lines. A null sink stops the delivery. */
+        void onLine(Consumer<String> sink);
+
+        /** Called when the client detaches or is lost. The default does nothing. */
+        default void detach() {
+            onLine(null);
+        }
+    }
+
     /** Thrown by {@link DelegateHost#accept} when the permission policy denies the task. */
     final class DelegateRejectedException extends RuntimeException {
         public DelegateRejectedException(String reason) {
@@ -66,6 +111,19 @@ public interface SwarmHandlers {
     /** A question from an agent on a peer. The default fails the answer. */
     default CompletionStage<String> onAgentAsk(String fromPeer, String toAgent, String question) {
         return CompletableFuture.failedFuture(new UnsupportedOperationException("no agent can answer"));
+    }
+
+    /**
+     * Attaches a remote client to a local agent. Returns null when this peer has no such agent or does not allow
+     * the attach. The default returns null.
+     */
+    default ForegroundHost attach(String fromPeer, String agentId) {
+        return null;
+    }
+
+    /** The agents of this peer that a remote client can attach to. The default is empty. */
+    default List<PeerAgent> roster() {
+        return List.of();
     }
 
     /** The host for delegated tasks, or null to reject all delegation. */

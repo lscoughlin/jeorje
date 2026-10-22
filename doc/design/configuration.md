@@ -50,13 +50,16 @@ Only a few flags and variables set config values:
 | `--model` | `models.default` |
 | `--base-url` | `llm.baseUrl` |
 | `--peer host:port` (repeatable) | `swarm.wka`, and `swarm.enabled` is `true` |
+| `--swarm` | `swarm.enabled` is `true` (the default) |
+| `--no-swarm` | `swarm.enabled` is `false` |
+| `--swarm-bind host:port` | `swarm.bind` |
 | `--swarm-token` | `swarm.token` |
 | `--no-mouse` | `ui.mouse.enabled` is `false` |
 | `--no-mcp` | No key. The session starts no MCP server. |
 | `--no-mcp-file` | `mcp.projectFile: false`. Jeorje does not read the `.mcp.json` file of the working directory. |
 | `JEORJE_SWARM_TOKEN` | `swarm.token` |
 
-The flag `--swarm-token` wins over `JEORJE_SWARM_TOKEN`. Other flags (`--dir`, `--config`, `--trust`, `--yes`, `--yolo`) and other variables do not set config keys. See [Environment variables](#environment-variables).
+The flag `--swarm-token` wins over `JEORJE_SWARM_TOKEN`. An empty `swarm.token` is valid. Jeorje then reads or creates the token file `${HOME}/.jeorje/swarm-token` at start. A token that you set always wins. Other flags (`--dir`, `--config`, `--trust`, `--yes`, `--yolo`) and other variables do not set config keys. See [Environment variables](#environment-variables).
 
 The command `jeorje config` prints the effective config and the source of each value. It prints YAML by default, with the source as a comment on each line. The option `--format json` prints a JSON object with the keys `config` and `sources`. The command hides secrets.
 
@@ -109,12 +112,17 @@ permissions:
     allow: []
     deny: []
 swarm:
-  enabled: false
-  bind: 127.0.0.1:7600
+  enabled: true                      # the swarm is on by default
+  bind: 127.0.0.1:0                  # port 0 means a free port
   wka: []                            # list of host:port
-  token: ""                          # prefer JEORJE_SWARM_TOKEN
+  token: ""                          # empty means Jeorje makes one and saves it. Prefer JEORJE_SWARM_TOKEN
   gossipIntervalMs: 1000
   discovery: false                   # zeroconf (mDNS) discovery of peers on the network
+  rendezvous: true                   # file-based discovery of instances that share one user directory
+  ssh:
+    enabled: true                    # SSH channel for agent messages, questions, and foreground attach
+    bind: 127.0.0.1:0                # port 0 means a free port
+    advertiseHost: ""                # host that peers dial. Empty means the host of the bind address.
   tls:
     keyStore: ""                     # PKCS12 key store that all peers share. Empty means no TLS.
     passwordEnv: ""                  # name of the environment variable with the key store password

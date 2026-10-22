@@ -126,7 +126,8 @@ public final class Agent implements AutoCloseable {
     private int forcedStart;
     /** Tools that are not read-only but never change the files of the workspace, so they keep the repeat guard. */
     private static final java.util.Set<String> KEEPS_WORKSPACE = java.util.Set.of("ask_user", "todo", "advisor",
-        "plan_submit", "skill", "recall", "agent_status", "agent_message", "agent_ask", "agent_answer");
+        "plan_submit", "skill", "recall", "agent_status", "agent_message", "agent_ask", "agent_answer",
+        "send_message", "ask_peer");
     /** The turn that already published a notice about a request that stays over the budget. */
     private int overBudgetNoticeTurn = -1;
     private int spilledTotal;

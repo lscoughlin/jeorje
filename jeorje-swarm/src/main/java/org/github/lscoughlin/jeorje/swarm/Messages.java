@@ -10,6 +10,15 @@ public final class Messages {
     public static final String ACK = "ack";
     public static final String PING_REQ = "ping-req";
     public static final String AGENT_MESSAGE = "agent_message";
+    public static final String AGENT_ASK = "agent_ask";
+    public static final String AGENT_ANSWER = "agent_answer";
+    public static final String AGENT_ERROR = "agent_error";
+    public static final String AGENT_ATTACH = "agent_attach";
+    public static final String AGENT_ROSTER = "agent_roster";
+    public static final String AGENT_LINE = "agent_line";
+    public static final String AGENT_STEER = "agent_steer";
+    public static final String AGENT_ANSWER_REQ = "agent_answer_req";
+    public static final String AGENT_ANSWER_REPLY = "agent_answer_reply";
     public static final String DELEGATE = "delegate";
     public static final String DELEGATE_EVENT = "delegate_event";
     public static final String HISTORY_QUERY = "history_query";
@@ -29,8 +38,12 @@ public final class Messages {
      */
     public record Message(int v, String type, String from, String fromAddr, String id, long time, JsonNode body) {}
 
-    /** A digest entry: the incarnation and state of one peer. */
-    public record DigestEntry(String peerId, long incarnation, PeerState state) {}
+    /** A digest entry: the incarnation, state, and SSH address of one peer. */
+    public record DigestEntry(String peerId, long incarnation, PeerState state, String sshAddress) {
+        public DigestEntry {
+            sshAddress = sshAddress == null ? "" : sshAddress;
+        }
+    }
 
     /**
      * The gossip body. A request has a digest. The answer has the records that differ and a want list.
@@ -59,6 +72,59 @@ public final class Messages {
      */
     public record AgentPayload(
             String kind, String toAgent, String taskId, String questionId, String answerTo, String text) {}
+
+    /**
+     * The body of {@code agent_ask}: a question from an agent to an agent on a peer.
+     *
+     * @param requestId the id that the answer or the error repeats
+     * @param toAgent the target agent on the peer, may be null
+     * @param text the question
+     */
+    public record AskPayload(String requestId, String toAgent, String text) {}
+
+    /** The body of {@code agent_answer}: the answer to the question with the same request id. */
+    public record AnswerPayload(String requestId, String text) {}
+
+    /** The body of {@code agent_error}: the reason why the question with the same request id has no answer. */
+    public record ErrorPayload(String requestId, String reason) {}
+
+    /**
+     * The body of {@code agent_attach}. A client sends {@code open} and {@code close}. The host answers with
+     * {@code opened} (with the history lines), {@code error}, or {@code closed}.
+     *
+     * @param attachId the id that the client chose for the attachment
+     * @param kind {@code open}, {@code close}, {@code opened}, {@code error}, or {@code closed}
+     * @param agentId the agent on the host
+     * @param lines the history lines of an {@code opened} body
+     * @param error the reason of an {@code error} body
+     */
+    public record AttachBody(String attachId, String kind, String agentId, List<String> lines, String error) {
+        public AttachBody {
+            lines = lines == null ? List.of() : List.copyOf(lines);
+        }
+    }
+
+    /** The body of {@code agent_line}: one live line from the host. */
+    public record LineBody(String attachId, String text) {}
+
+    /** The body of {@code agent_steer}: steering text from the client. */
+    public record SteerBody(String attachId, String text) {}
+
+    /** The body of {@code agent_answer_req}: the answer of the client to a question of the agent. */
+    public record AnswerReqBody(String attachId, String requestId, String text) {}
+
+    /** The body of {@code agent_answer_reply}: the host tells if it took the answer. */
+    public record AnswerReplyBody(String attachId, String requestId, boolean ok, String error) {}
+
+    /**
+     * The body of {@code agent_roster}. A {@code request} has a request id. A {@code reply} has the same id
+     * and the agents.
+     */
+    public record RosterBody(String requestId, String kind, List<SwarmHandlers.PeerAgent> agents) {
+        public RosterBody {
+            agents = agents == null ? List.of() : List.copyOf(agents);
+        }
+    }
 
     /**
      * The body of {@code delegate}.

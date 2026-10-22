@@ -25,6 +25,15 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
 import org.github.lscoughlin.jeorje.core.port.Transport;
 import org.github.lscoughlin.jeorje.swarm.Messages.AgentPayload;
+import org.github.lscoughlin.jeorje.swarm.Messages.AnswerPayload;
+import org.github.lscoughlin.jeorje.swarm.Messages.AnswerReplyBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.AnswerReqBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.AttachBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.LineBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.RosterBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.SteerBody;
+import org.github.lscoughlin.jeorje.swarm.Messages.AskPayload;
+import org.github.lscoughlin.jeorje.swarm.Messages.ErrorPayload;
 import org.github.lscoughlin.jeorje.swarm.Messages.Delegate;
 import org.github.lscoughlin.jeorje.swarm.Messages.DigestEntry;
 import org.github.lscoughlin.jeorje.swarm.Messages.Gossip;
@@ -147,6 +156,7 @@ public final class SwarmNode implements AutoCloseable {
 
     private final SwarmConfig config;
     private final Transport transport;
+    private final Transport ssh;
     private final Clock clock;
     private final SwarmHandlers handlers;
     private final PeerDiscovery discovery;
@@ -162,6 +172,8 @@ public final class SwarmNode implements AutoCloseable {
     private final Map<String, SerialExecutor> outboxes = new ConcurrentHashMap<>();
     private final Set<String> bootstrap = ConcurrentHashMap.newKeySet();
     private final Map<String, PendingQuestion> questions = new ConcurrentHashMap<>();
+    private final SshMessenger messenger;
+    private final AttachService attach;
     private final Map<String, PendingHistory> histories = new ConcurrentHashMap<>();
     private final Map<String, Delegation> delegations = new ConcurrentHashMap<>();
     private final Map<String, Hosted> hosted = new ConcurrentHashMap<>();
@@ -176,8 +188,31 @@ public final class SwarmNode implements AutoCloseable {
 
     public SwarmNode(SwarmConfig config, PeerRecord self, Transport transport, Clock clock,
             SwarmHandlers handlers, PeerDiscovery discovery) {
+        this(config, self, transport, clock, handlers, discovery, "");
+    }
+
+    /**
+     * @param sshAddress the {@code host:port} address of the SSH server of this peer, or null or blank for none;
+     *        the node publishes it in its record, in digests, and in the discovery announcement
+     */
+    public SwarmNode(SwarmConfig config, PeerRecord self, Transport transport, Clock clock,
+            SwarmHandlers handlers, PeerDiscovery discovery, String sshAddress) {
+        this(config, self, transport, null, clock, handlers, discovery, sshAddress);
+    }
+
+    /**
+     * @param ssh the transport of the SSH channel, or null when SSH is off; envelopes from it go through the
+     *        same {@code receive} path as envelopes from the TCP transport
+     */
+    public SwarmNode(SwarmConfig config, PeerRecord self, Transport transport, Transport ssh, Clock clock,
+            SwarmHandlers handlers, PeerDiscovery discovery, String sshAddress) {
+        self = sshAddress == null || sshAddress.isBlank() ? self : self.withSshAddress(sshAddress);
         this.config = config;
         this.transport = transport;
+        this.ssh = ssh;
+        this.messenger = new SshMessenger(this::sendSsh, Duration.ofMillis(config.requestTimeoutMs()));
+        this.attach = new AttachService(this::sendSsh, () -> handlers,
+                Duration.ofMillis(config.requestTimeoutMs()));
         this.clock = clock;
         this.handlers = handlers;
         this.discovery = discovery;
@@ -195,7 +230,10 @@ public final class SwarmNode implements AutoCloseable {
             return this;
         }
         bootstrap.addAll(config.wka());
-        transport.onMessage(this::receive);
+        transport.onMessage(envelope -> receive(envelope, false));
+        if (ssh != null) {
+            ssh.onMessage(envelope -> receive(envelope, true));
+        }
         if (discovery != null) {
             try {
                 discovery.announce(membership.self());
@@ -258,6 +296,8 @@ public final class SwarmNode implements AutoCloseable {
         delegations.clear();
         questions.values().forEach(q -> q.future().completeExceptionally(lost));
         questions.clear();
+        messenger.close(lost);
+        attach.close();
         histories.values().forEach(q -> q.future().completeExceptionally(lost));
         histories.clear();
         hosted.values().forEach(h -> cancelQuietly(h.task));
@@ -265,8 +305,14 @@ public final class SwarmNode implements AutoCloseable {
         try {
             transport.close();
         } finally {
-            if (discovery != null) {
-                discovery.withdraw(selfId);
+            try {
+                if (ssh != null) {
+                    ssh.close();
+                }
+            } finally {
+                if (discovery != null) {
+                    discovery.withdraw(selfId);
+                }
             }
         }
     }
@@ -321,26 +367,41 @@ public final class SwarmNode implements AutoCloseable {
 
     // ---- peer API -------------------------------------------------------------------------------------
 
-    /** Sends text to an agent on a peer. */
+    /**
+     * Sends text to an agent on a peer. The message travels over SSH only. The stage fails when SSH is off
+     * or the peer has no SSH address.
+     */
     public CompletableFuture<Void> sendAgentMessage(String peerId, String toAgent, String text) {
-        return sendTo(addressOf(peerId), Messages.AGENT_MESSAGE, new AgentPayload("text", toAgent, null, null, null, text));
+        return messenger.message(peerId, toAgent, text);
     }
 
-    /** Asks a question of an agent on a peer. The answer carries the same question id. */
+    /**
+     * Asks a question of an agent on a peer over SSH. The stage completes with the answer. It fails with the
+     * reason of the peer, with a timeout, or when the peer has no SSH address. It does not throw.
+     */
     public CompletableFuture<String> ask(String peerId, String toAgent, String question, Duration timeout) {
-        var address = addressOf(peerId);
-        var questionId = UUID.randomUUID().toString();
-        var future = new CompletableFuture<String>();
-        questions.put(questionId, new PendingQuestion(peerId, future));
-        future.whenComplete((v, e) -> questions.remove(questionId));
-        sendTo(address, Messages.AGENT_MESSAGE, new AgentPayload("ask", toAgent, null, questionId, null, question))
-                .whenComplete((v, e) -> {
-                    if (e != null) {
-                        future.completeExceptionally(e);
-                    }
-                });
-        future.orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS);
-        return future;
+        return messenger.ask(peerId, toAgent, question, timeout);
+    }
+
+    /** True when this node has an SSH transport. */
+    public boolean sshEnabled() {
+        return ssh != null;
+    }
+
+    /** Asks a peer for the agents that a client can attach to. Needs SSH. */
+    public CompletableFuture<List<SwarmHandlers.PeerAgent>> roster(String peerId) {
+        return attach.roster(peerId);
+    }
+
+    /**
+     * Attaches to an agent of a peer: the caller gets the history, then the live lines, and can steer the agent
+     * and answer its questions. Needs SSH.
+     *
+     * @param onLine receives the live lines, on one serial thread
+     * @param onClosed is called once when the host or the peer ends the attachment
+     */
+    public RemoteAttachment attach(String peerId, String agentId, Consumer<String> onLine, Runnable onClosed) {
+        return attach.attach(peerId, agentId, onLine, onClosed);
     }
 
     /** Asks a peer to search the history of one of its agents. The remote user rules decide. */
@@ -417,6 +478,38 @@ public final class SwarmNode implements AutoCloseable {
         return future;
     }
 
+    /** Sends a message to a peer over the SSH transport. The peer is named by its id, not by its address. */
+    private CompletableFuture<Void> sendSsh(String peerId, String type, Object body) {
+        if (ssh == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException("SSH is off on this peer"));
+        }
+        var record = snapshot.get(peerId);
+        if (record == null || !record.state().reachable() || peerId.equals(selfId)) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("unknown or unreachable peer: " + peerId));
+        }
+        if (record.sshAddress().isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("peer " + peerId + " has no SSH address"));
+        }
+        String json;
+        try {
+            json = encode(type, body);
+        } catch (RuntimeException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        var outbox = outboxes.computeIfAbsent("ssh:" + peerId, a -> new SerialExecutor());
+        var future = new CompletableFuture<Void>();
+        outbox.execute(() -> {
+            try {
+                ssh.send(peerId, json);
+                future.complete(null);
+            } catch (RuntimeException e) {
+                log.atDebug().log(() -> "SSH send to " + peerId + " failed: " + e.getMessage());
+                future.completeExceptionally(e);
+            }
+        });
+        return future;
+    }
+
     private void runOwner(Runnable task) {
         try {
             owner.execute(() -> {
@@ -435,7 +528,7 @@ public final class SwarmNode implements AutoCloseable {
 
     // ---- receiving ------------------------------------------------------------------------------------
 
-    private void receive(Transport.Envelope envelope) {
+    private void receive(Transport.Envelope envelope, boolean viaSsh) {
         Message message;
         try {
             message = Json.MAPPER.readValue(envelope.body(), Message.class);
@@ -455,14 +548,14 @@ public final class SwarmNode implements AutoCloseable {
             return;
         }
         final var accepted = message;
-        runOwner(() -> dispatch(accepted));
+        runOwner(() -> dispatch(accepted, viaSsh));
     }
 
     private <T> T body(Message message, Class<T> type) {
         return Json.MAPPER.convertValue(message.body(), type);
     }
 
-    private void dispatch(Message message) {
+    private void dispatch(Message message, boolean viaSsh) {
         try {
             switch (message.type()) {
                 case Messages.GOSSIP -> onGossip(message, body(message, Gossip.class));
@@ -471,7 +564,42 @@ public final class SwarmNode implements AutoCloseable {
                 case Messages.PING_REQ -> onPingReq(message, body(message, PingReq.class));
                 case Messages.AGENT_MESSAGE -> {
                     var payload = body(message, AgentPayload.class);
-                    callbacks.execute(() -> onAgentMessage(message, payload));
+                    // Delegation control (steer, cancel, task questions and answers) may use TCP. Text and
+                    // questions between agents travel over SSH only.
+                    if (!viaSsh && ("text".equals(payload.kind()) || payload.kind() == null
+                            || ("ask".equals(payload.kind()) && payload.taskId() == null))) {
+                        log.atWarn().log(() -> "agent message from " + message.from() + " ignored: it did not come over SSH");
+                    } else {
+                        callbacks.execute(() -> onAgentMessage(message, payload));
+                    }
+                }
+                case Messages.AGENT_ASK -> {
+                    var payload = body(message, AskPayload.class);
+                    if (viaSsh) {
+                        callbacks.execute(() -> onAgentAsk(message, payload));
+                    } else {
+                        log.atWarn().log(() -> "agent question from " + message.from() + " ignored: it did not come over SSH");
+                    }
+                }
+                case Messages.AGENT_ANSWER -> {
+                    var payload = body(message, AnswerPayload.class);
+                    if (viaSsh) {
+                        messenger.answered(message.from(), payload.requestId(), payload.text());
+                    }
+                }
+                case Messages.AGENT_ERROR -> {
+                    var payload = body(message, ErrorPayload.class);
+                    if (viaSsh) {
+                        messenger.failed(message.from(), payload.requestId(), payload.reason());
+                    }
+                }
+                case Messages.AGENT_ATTACH, Messages.AGENT_ROSTER, Messages.AGENT_LINE, Messages.AGENT_STEER,
+                        Messages.AGENT_ANSWER_REQ, Messages.AGENT_ANSWER_REPLY -> {
+                    if (viaSsh) {
+                        dispatchAttach(message);
+                    } else {
+                        log.atWarn().log(() -> message.type() + " from " + message.from() + " ignored: it did not come over SSH");
+                    }
                 }
                 case Messages.DELEGATE -> {
                     var payload = body(message, Delegate.class);
@@ -489,6 +617,37 @@ public final class SwarmNode implements AutoCloseable {
             }
         } catch (RuntimeException e) {
             log.atWarn().log(() -> "cannot handle " + message.type() + ": " + e);
+        }
+    }
+
+    private void dispatchAttach(Message message) {
+        var from = message.from();
+        switch (message.type()) {
+            case Messages.AGENT_ATTACH -> {
+                var payload = body(message, AttachBody.class);
+                callbacks.execute(() -> attach.onAttach(from, payload));
+            }
+            case Messages.AGENT_ROSTER -> {
+                var payload = body(message, RosterBody.class);
+                callbacks.execute(() -> attach.onRoster(from, payload));
+            }
+            case Messages.AGENT_LINE -> {
+                var payload = body(message, LineBody.class);
+                callbacks.execute(() -> attach.onLine(from, payload));
+            }
+            case Messages.AGENT_STEER -> {
+                var payload = body(message, SteerBody.class);
+                callbacks.execute(() -> attach.onSteer(from, payload));
+            }
+            case Messages.AGENT_ANSWER_REQ -> {
+                var payload = body(message, AnswerReqBody.class);
+                callbacks.execute(() -> attach.onAnswerRequest(from, payload));
+            }
+            case Messages.AGENT_ANSWER_REPLY -> {
+                var payload = body(message, AnswerReplyBody.class);
+                callbacks.execute(() -> attach.onAnswerReply(from, payload));
+            }
+            default -> { }
         }
     }
 
@@ -541,7 +700,7 @@ public final class SwarmNode implements AutoCloseable {
     private List<DigestEntry> digest() {
         var list = new ArrayList<DigestEntry>();
         for (var record : membership.snapshot().values()) {
-            list.add(new DigestEntry(record.peerId(), record.incarnation(), record.state()));
+            list.add(new DigestEntry(record.peerId(), record.incarnation(), record.state(), record.sshAddress()));
         }
         return list;
     }
@@ -722,6 +881,8 @@ public final class SwarmNode implements AutoCloseable {
         });
         questions.values().stream().filter(q -> q.peerId().equals(id))
                 .forEach(q -> q.future().completeExceptionally(lost));
+        messenger.peerLost(id, lost);
+        callbacks.execute(() -> attach.peerLost(id));
         histories.values().stream().filter(q -> q.peerId().equals(id))
                 .forEach(q -> q.future().completeExceptionally(lost));
         hosted.entrySet().removeIf(e -> {
@@ -751,18 +912,11 @@ public final class SwarmNode implements AutoCloseable {
         switch (kind) {
             case "text" -> handlers.onAgentMessage(message.from(), payload.toAgent(), payload.text());
             case "ask" -> {
-                var from = message.fromAddr();
-                var questionId = payload.questionId();
                 if (payload.taskId() != null) {
                     askTask(message, payload);
-                    return;
+                } else {
+                    log.atDebug().log(() -> "untargeted ask over agent_message ignored");
                 }
-                handlers.onAgentAsk(message.from(), payload.toAgent(), payload.text()).whenComplete((answer, error) -> {
-                    var reply = error == null
-                            ? new AgentPayload("answer", null, null, null, questionId, answer)
-                            : new AgentPayload("answer_error", null, null, null, questionId, String.valueOf(error.getMessage()));
-                    sendQuietly(from, Messages.AGENT_MESSAGE, reply);
-                });
             }
             case "answer", "answer_error" -> {
                 var task = payload.taskId() == null ? null : ownedTask(message, payload.taskId());
@@ -793,6 +947,27 @@ public final class SwarmNode implements AutoCloseable {
             case "cancel" -> cancelQuietly(ownedTask(message, payload.taskId()));
             default -> log.atDebug().log(() -> "unknown agent_message kind ignored: " + kind);
         }
+    }
+
+    /** A question from an agent on a peer. The answer or the error goes back over SSH with the same request id. */
+    private void onAgentAsk(Message message, AskPayload payload) {
+        var from = message.from();
+        var requestId = payload.requestId();
+        java.util.concurrent.CompletionStage<String> stage;
+        try {
+            stage = handlers.onAgentAsk(from, payload.toAgent(), payload.text());
+        } catch (RuntimeException e) {
+            stage = CompletableFuture.failedFuture(e);
+        }
+        stage.whenComplete((answer, error) -> {
+            var cause = error instanceof java.util.concurrent.CompletionException && error.getCause() != null
+                    ? error.getCause() : error;
+            var reply = error == null
+                    ? sendSsh(from, Messages.AGENT_ANSWER, new AnswerPayload(requestId, answer))
+                    : sendSsh(from, Messages.AGENT_ERROR, new ErrorPayload(requestId,
+                            cause.getMessage() == null ? "no answer" : cause.getMessage()));
+            reply.exceptionally(e -> null);
+        });
     }
 
     /** A question from the delegating peer to a hosted task. The answer or the refusal goes back with the same id. */

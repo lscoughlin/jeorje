@@ -7,6 +7,7 @@ import java.util.List;
  *
  * @param peerId the random id of the peer
  * @param address the {@code host:port} address of the peer
+ * @param sshAddress the {@code host:port} address of the SSH channel; blank when the peer has none
  * @param name the display name
  * @param incarnation the incarnation number; a higher number replaces a lower one
  * @param state the state of the peer
@@ -16,6 +17,7 @@ import java.util.List;
 public record PeerRecord(
         String peerId,
         String address,
+        String sshAddress,
         String name,
         long incarnation,
         PeerState state,
@@ -23,29 +25,34 @@ public record PeerRecord(
         String workspace) {
 
     public PeerRecord {
+        sshAddress = sshAddress == null ? "" : sshAddress;
         capabilities = capabilities == null ? List.of() : List.copyOf(capabilities);
         state = state == null ? PeerState.ALIVE : state;
         workspace = workspace == null ? "" : workspace;
     }
 
     public static PeerRecord of(String peerId, String address, String name) {
-        return new PeerRecord(peerId, address, name, 0, PeerState.ALIVE, List.of(), "");
+        return new PeerRecord(peerId, address, "", name, 0, PeerState.ALIVE, List.of(), "");
     }
 
     public PeerRecord withState(PeerState newState) {
-        return new PeerRecord(peerId, address, name, incarnation, newState, capabilities, workspace);
+        return new PeerRecord(peerId, address, sshAddress, name, incarnation, newState, capabilities, workspace);
     }
 
     public PeerRecord withIncarnation(long newIncarnation) {
-        return new PeerRecord(peerId, address, name, newIncarnation, state, capabilities, workspace);
+        return new PeerRecord(peerId, address, sshAddress, name, newIncarnation, state, capabilities, workspace);
     }
 
     public PeerRecord withCapabilities(List<String> newCapabilities) {
-        return new PeerRecord(peerId, address, name, incarnation, state, newCapabilities, workspace);
+        return new PeerRecord(peerId, address, sshAddress, name, incarnation, state, newCapabilities, workspace);
+    }
+
+    public PeerRecord withSshAddress(String newSshAddress) {
+        return new PeerRecord(peerId, address, newSshAddress, name, incarnation, state, capabilities, workspace);
     }
 
     public PeerRecord withWorkspace(String newWorkspace) {
-        return new PeerRecord(peerId, address, name, incarnation, state, capabilities, newWorkspace);
+        return new PeerRecord(peerId, address, sshAddress, name, incarnation, state, capabilities, newWorkspace);
     }
 
     /** Returns true when this record is newer than the given incarnation and state. */

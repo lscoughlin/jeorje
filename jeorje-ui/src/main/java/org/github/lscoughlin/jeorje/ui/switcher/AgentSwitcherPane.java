@@ -21,7 +21,7 @@ public final class AgentSwitcherPane implements Pane<AgentId> {
     }
 
     @Override
-    public String title() { return "Agents - Up/Down move, Enter switch, Esc cancel"; }
+    public String title() { return "Agents - Up/Down move, Left/Right fold, Enter switch, Esc cancel"; }
 
     @Override
     public String toggleAction() { return "agents"; }
@@ -47,6 +47,8 @@ public final class AgentSwitcherPane implements Pane<AgentId> {
         switch (key) {
             case "k" -> switcher.handleKey("UP");
             case "j" -> switcher.handleKey("DOWN");
+            case "h" -> switcher.handleKey("LEFT");
+            case "l" -> switcher.handleKey("RIGHT");
             case "ESC" -> {
                 cancelled = true;
                 switcher.handleKey("ESC");

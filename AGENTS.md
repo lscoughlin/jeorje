@@ -48,6 +48,7 @@ All output is formatted in ASD-STE100 Simplified Technical English: short senten
 - Apache Lucene (BM25 text search and `KnnFloatVectorField` cosine vector search)
 - ONNX Runtime (local MiniLM embeddings)
 - JmDNS (`org.jmdns:jmdns`; zeroconf peer discovery in `jeorje-swarm`)
+- Apache MINA SSHD (`org.apache.sshd:sshd-core`; SSH channel for agent traffic in `jeorje-swarm`)
 - java-diff-utils (`io.github.java-diff-utils:java-diff-utils`; diff and patch tools)
 
 ## Build and Test

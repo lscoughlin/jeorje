@@ -390,16 +390,6 @@ class SwarmBridgeTest {
         assertEquals("remote", result.hits().getFirst().agentId());
     }
 
-    @Test
-    void aMessageFromAPeerGoesToTheAgentOfTheUserAndNeverApprovesAnything() throws Exception {
-        var p = pair(new Model(), List.of(), x -> false, ALLOW);
-        p[0].bridge.node().sendAgentMessage("remote", "main", "please look at the build");
-        await(() -> !p[1].mainInput.isEmpty(), "the message arrives");
-        var input = p[1].mainInput.getFirst();
-        assertTrue(input instanceof AgentInput.PeerMessage);
-        assertTrue(input.text().contains("please look at the build"));
-    }
-
     /** A tool that runs a body with the context of the call. */
     interface ContextBody { String run(ToolContext context) throws Exception; }
 

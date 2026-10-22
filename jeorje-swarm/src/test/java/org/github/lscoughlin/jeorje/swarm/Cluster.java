@@ -9,6 +9,8 @@ import org.github.lscoughlin.jeorje.testkit.swarm.InMemoryNetwork;
 /** Test helper: many swarm nodes on one in-memory network with fast timers. */
 final class Cluster implements AutoCloseable {
     final InMemoryNetwork network = new InMemoryNetwork();
+    /** A second network that stands in for the SSH channel. Its targets are peer ids. */
+    final InMemoryNetwork sshNetwork = new InMemoryNetwork();
     final List<SwarmNode> nodes = new ArrayList<>();
     SwarmConfig base = SwarmConfig.defaults()
             .withGossipIntervalMs(30)
@@ -33,7 +35,8 @@ final class Cluster implements AutoCloseable {
         var config = base.withToken(token).withWka(wkaNames.stream().map(Cluster::address).toList());
         var transport = network.join(address(name), name, token);
         var self = PeerRecord.of(name, address(name), name).withCapabilities(capabilities);
-        var node = new SwarmNode(config, self, transport, Clock.systemUTC(), handlers, null);
+        var ssh = new SshStandIn(sshNetwork.join("ssh:" + name, name, token));
+        var node = new SwarmNode(config, self, transport, ssh, Clock.systemUTC(), handlers, null, "ssh:" + name);
         nodes.add(node);
         node.start();
         return node;
@@ -79,5 +82,16 @@ final class Cluster implements AutoCloseable {
     public void close() {
         nodes.forEach(SwarmNode::kill);
         network.close();
+        sshNetwork.close();
+    }
+
+    /** A transport whose send target is a peer id, as with the SSH transport. */
+    private record SshStandIn(org.github.lscoughlin.jeorje.core.port.Transport inner)
+            implements org.github.lscoughlin.jeorje.core.port.Transport {
+        @Override public void send(String peerId, String body) { inner.send("ssh:" + peerId, body); }
+
+        @Override public void onMessage(java.util.function.Consumer<Envelope> handler) { inner.onMessage(handler); }
+
+        @Override public void close() { inner.close(); }
     }
 }

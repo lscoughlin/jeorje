@@ -22,7 +22,7 @@ The interface is in `jeorje-ui`. It uses JLine 4 (`org.jline:jline`). The parent
 
 - The **chat view** shows the conversation of the foreground agent. It uses all rows above the input line. A permission prompt appears as a box at the bottom of this region. A pane (the agent switcher or the file browser) replaces the chat view while it is open.
 - The **input line** is owned by a JLine `LineReader`. It has history and multi-line input. The history file is `${HOME}/.jeorje/history`. `Alt-Enter` adds a new line. The input area grows with the text, up to three rows less than the terminal height. `Tab` completes the text before the cursor. See [Tab completion](#tab-completion).
-- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the estimated size of the last request as a percent of the budget; the whole status line changes its color from 85%), `peers n` (the number of live peers), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
+- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the estimated size of the last request as a percent of the budget; the whole status line changes its color from 85%), `peers n` (the number of live peers, or `peers off` when the swarm is off), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
 
 JLine `Display` draws the chat region. It writes only the lines that change. The status line is written directly to the last row after each draw. The input line belongs to the `LineReader`, which draws its own rows. A permission prompt interrupts the input read. While the prompt waits, the screen reads the answer keys itself. After the answer, the input read starts again and keeps the text that the user had typed.
 
@@ -215,14 +215,19 @@ In a text field the keys are `Left`, `Right`, `Home`, `End`, `Backspace`, `Delet
 
 ## Agent switcher
 
-`Ctrl-X a` opens the agent switcher as a pane in the chat region. The pane has a title row and a list of agents and peers.
+`Ctrl-X a` opens the agent switcher as a pane in the chat region. The pane has a title row and a tree with three levels.
 
-- Each row shows the agent name, parent, state, where the agent runs (`local` or the peer), the git branch, and the last output line.
-- The up and down keys (and `k` and `j`) select a row. `Enter` makes the agent the foreground agent. `Esc` closes the pane. A click selects a row, and a double click switches to it.
+- The first level is the **harness**: one instance of Jeorje. The first harness is this instance. Each live peer of the swarm is one more harness.
+- The second level is the **agent**: an agent of a harness. The main agent of an instance is an agent.
+- The third level is the **subagent**: a subagent of an agent. A subagent can have subagents of its own, and each level adds one indent.
+- Each level has an indent of two spaces. A node with children shows `-` when it is open and `+` when it is collapsed. A row shows the name, and the state after a bar.
+- The up and down keys (and `k` and `j`) select a row. The left key (or `h`) collapses the selected node, and its children are hidden. The right key (or `l`) expands it.
+- `Enter` on an agent or a subagent makes it the foreground agent. `Enter` on a harness does nothing. `Esc` closes the pane. A click selects a row, and a double click runs `Enter` on it.
+- The agents of a peer come from the roster of that peer. Jeorje reads the roster in the background and keeps it for a few seconds, so a new peer agent can take a moment to show.
 - The foreground chat shows the history of the selected agent, then new output. See [subagents.md](subagents.md).
-- A remote peer cannot become the foreground agent. Jeorje shows a notice.
+- An agent of a peer becomes the foreground agent through foreground attach. The chat shows the history of the remote agent and its new lines. Text that you type steers the remote agent. When the remote agent asks for a permission, the chat shows a line with the request id. Type `yes` or `no` to answer the last request. See [swarm.md](swarm.md#foreground-attach).
 - `/back` returns to the parent of the foreground agent.
-- `/agents` with no argument prints the same list in the chat view. `/agents <name or number>` switches to that agent.
+- `/agents` with no argument prints the same tree in the chat view. `/agents <name or number>` switches to that local agent.
 
 ### Sessions in the switcher
 

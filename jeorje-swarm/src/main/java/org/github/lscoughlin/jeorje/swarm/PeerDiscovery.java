@@ -10,7 +10,12 @@ import java.util.List;
 public interface PeerDiscovery {
 
     /** One instance that discovery has seen. */
-    record Entry(String peerId, String address, String name) {}
+    record Entry(String peerId, String address, String sshAddress, String name) {
+        public Entry {
+            sshAddress = sshAddress == null ? "" : sshAddress;
+            name = name == null ? "" : name;
+        }
+    }
 
     /** Starts to announce this instance. */
     void announce(PeerRecord self);

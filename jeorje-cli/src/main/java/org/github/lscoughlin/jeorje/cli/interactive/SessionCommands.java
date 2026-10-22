@@ -229,9 +229,9 @@ final class SessionCommands {
         var switcher = session.switcher();
         if (args.isBlank()) {
             var size = session.realTerminal().getSize();
-            switcher.setBounds(new Rect(0, 0, Math.max(1, size.getColumns()), Math.max(1, roster.agents().size())));
+            switcher.setBounds(new Rect(0, 0, Math.max(1, size.getColumns()), Math.max(50, roster.agents().size() * 2)));
             switcher.open();
-            var sb = new StringBuilder("Agents (name | parent | state | where | branch | last output)\n");
+            var sb = new StringBuilder("Agents (harness, agent, subagent; each level is indented)\n");
             var lines = switcher.render();
             for (var i = 0; i < lines.size(); i++) sb.append(String.format("%2d ", i + 1)).append(lines.get(i)).append('\n');
             switcher.close();
@@ -243,7 +243,7 @@ final class SessionCommands {
         var found = roster.find(args.strip());
         if (found.isEmpty()) return CommandResult.fail("No agent: " + args.strip());
         if (found.get().id().value().startsWith(AgentRoster.PEER_PREFIX)) {
-            return CommandResult.fail(found.get().name() + " is a remote peer. You cannot switch into it.");
+            return CommandResult.fail(found.get().name() + " is a remote instance. Pick one of its agents in the switcher pane.");
         }
         switcher.switchTo(found.get().id());
         return CommandResult.ok("Foreground agent: " + found.get().name() + ". Use /back to return.");

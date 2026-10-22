@@ -25,6 +25,16 @@ public final class GlobalOptions {
     @Option(names = "--swarm-token", scope = ScopeType.INHERIT, description = "Shared swarm token.")
     private String swarmToken;
 
+    @Option(names = "--swarm", scope = ScopeType.INHERIT, description = "Turn the swarm on. This is the default.")
+    private boolean swarm;
+
+    @Option(names = "--no-swarm", scope = ScopeType.INHERIT, description = "Turn the swarm off.")
+    private boolean noSwarm;
+
+    @Option(names = "--swarm-bind", scope = ScopeType.INHERIT, paramLabel = "host:port",
+            description = "Bind address of the swarm transport. Default: a free port on 127.0.0.1.")
+    private String swarmBind;
+
     @Option(names = "--yes", scope = ScopeType.INHERIT, description = "Approve all permission prompts.")
     private boolean yes;
 
@@ -55,6 +65,12 @@ public final class GlobalOptions {
     public List<String> peers() { return peers; }
 
     public String swarmToken() { return swarmToken; }
+
+    public boolean swarm() { return swarm; }
+
+    public boolean noSwarm() { return noSwarm; }
+
+    public String swarmBind() { return swarmBind; }
 
     public boolean yes() { return yes; }
 

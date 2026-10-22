@@ -31,7 +31,9 @@ import org.github.lscoughlin.jeorje.core.subagent.SpawnException;
 import org.github.lscoughlin.jeorje.core.subagent.SpawnRequest;
 import org.github.lscoughlin.jeorje.core.subagent.SubagentEvent;
 import org.github.lscoughlin.jeorje.core.subagent.SubagentRuntime;
+import org.github.lscoughlin.jeorje.swarm.CompositeDiscovery;
 import org.github.lscoughlin.jeorje.swarm.DelegateEvent;
+import org.github.lscoughlin.jeorje.swarm.LocalRendezvous;
 import org.github.lscoughlin.jeorje.swarm.Messages;
 import org.github.lscoughlin.jeorje.swarm.PeerDiscovery;
 import org.github.lscoughlin.jeorje.swarm.ZeroconfDiscovery;
@@ -40,7 +42,10 @@ import org.github.lscoughlin.jeorje.swarm.PeerRecord;
 import org.github.lscoughlin.jeorje.swarm.PeerState;
 import org.github.lscoughlin.jeorje.swarm.SwarmConfig;
 import org.github.lscoughlin.jeorje.swarm.SwarmHandlers;
+import org.github.lscoughlin.jeorje.swarm.SshChannelTransport;
 import org.github.lscoughlin.jeorje.swarm.SwarmNode;
+import org.github.lscoughlin.jeorje.swarm.SwarmSshServer;
+import org.github.lscoughlin.jeorje.swarm.SwarmTokenStore;
 import org.github.lscoughlin.jeorje.swarm.TcpTransport;
 import org.github.lscoughlin.jeorje.swarm.TlsSupport;
 import org.slf4j.Logger;
@@ -80,6 +85,10 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     private volatile List<String> capabilities = List.of();
     private volatile SwarmNode node;
     private volatile PeerDiscovery discovery;
+    private volatile PeerAnswerer answerer;
+    private volatile AgentAccess access;
+    private volatile SwarmSshServer sshServer;
+    private volatile SshChannelTransport sshTransport;
     private volatile SubagentRuntime runtime;
     private volatile PermissionPolicy hostPolicy = action -> PermissionPolicy.Decision.ASK;
     private volatile Consumer<AgentInput> mainInput = input -> { };
@@ -124,14 +133,22 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
                                         java.util.Map<String, String> environment, Consumer<String> notice,
                                         Runnable onChange) {
         var cfg = config.swarm();
-        var base = SwarmConfig.defaults().withBind(cfg.bind()).withWka(cfg.wka()).withToken(cfg.token())
-                .withGossipIntervalMs(cfg.gossipIntervalMs());
         var stateDir = home.resolve(".jeorje");
-        var discovery = cfg.discovery() ? zeroconf() : null;
-        var savedId = PeerIdStore.loadOrCreate(stateDir);
+        // The token is resolved here and only here. A blank config token means the token file of the state directory.
+        var token = SwarmTokenStore.resolve(stateDir, cfg.token());
+        var base = SwarmConfig.defaults().withBind(cfg.bind()).withWka(cfg.wka()).withToken(token)
+                .withGossipIntervalMs(cfg.gossipIntervalMs());
+        var parts = new ArrayList<PeerDiscovery>();
+        if (cfg.rendezvous()) parts.add(new LocalRendezvous(stateDir, Clock.systemUTC()));
+        if (cfg.discovery()) {
+            var zeroconf = zeroconf();
+            if (zeroconf != null) parts.add(zeroconf);
+        }
+        var discovery = parts.isEmpty() ? null : new CompositeDiscovery(parts);
         // Another instance of the same user can be live and use the saved id. This instance takes its own id then.
-        var peerId = discovery != null && discovery.peers("").stream().anyMatch(e -> e.peerId().equals(savedId))
-                ? java.util.UUID.randomUUID().toString() : savedId;
+        var live = discovery == null ? java.util.Set.<String>of()
+                : discovery.peers("").stream().map(PeerDiscovery.Entry::peerId).collect(java.util.stream.Collectors.toSet());
+        var peerId = PeerIdStore.fresh(stateDir, live);
         var tls = tlsContext(cfg.tls(), cwd, environment);
         TcpTransport tcp;
         try {
@@ -145,8 +162,16 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         }
         var name = cwd.getFileName() == null ? "jeorje" : cwd.getFileName().toString();
         var record = PeerRecord.of(peerId, tcp.address(), name);
-        return new SwarmBridge(base, tcp, record, Clock.systemUTC(), historyRule(config), notice, onChange)
+        var bridge = new SwarmBridge(base, tcp, record, Clock.systemUTC(), historyRule(config), notice, onChange)
                 .withDiscovery(discovery);
+        if (cfg.ssh().enabled()) {
+            try {
+                bridge.withSsh(new SwarmSshServer(cfg.ssh().bind(), cfg.ssh().advertiseHost(), token));
+            } catch (RuntimeException e) {
+                log.atWarn().log(() -> "The SSH channel did not start: " + e.getMessage());
+            }
+        }
+        return bridge;
     }
 
     /** Starts zeroconf discovery and waits a short time for the first answers. Returns null on failure. */
@@ -182,6 +207,48 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         }
     }
 
+    /**
+     * Turns on the SSH channel. The bridge starts the server and builds the SSH transport. Call it before
+     * {@link #start}. A server that cannot start leaves the bridge without SSH.
+     */
+    public SwarmBridge withSsh(SwarmSshServer server) {
+        try {
+            server.start();
+        } catch (RuntimeException e) {
+            server.close();
+            log.atWarn().log(() -> "The SSH server did not start: " + e.getMessage());
+            return this;
+        }
+        var transport = new SshChannelTransport(swarmConfig, self.peerId(), server.keys(), swarmConfig.token(),
+                this::sshAddressOf);
+        server.handler(transport.serverHandler());
+        this.sshServer = server;
+        this.sshTransport = transport;
+        return this;
+    }
+
+    /** The SSH address of a peer, from the membership table; blank when it is unknown. */
+    private String sshAddressOf(String peerId) {
+        var n = node;
+        var record = n == null ? null : n.members().get(peerId);
+        return record == null ? "" : record.sshAddress();
+    }
+
+    /** The other peers in the given state; empty when the node did not start. */
+    public List<PeerRecord> peers(PeerState state) {
+        var n = node;
+        return n == null ? List.of() : n.peers(state);
+    }
+
+    /** The swarm token that this bridge uses. It is never empty. */
+    String token() { return swarmConfig.token(); }
+
+    /** The peer id of this instance. */
+    public String peerId() { return self.peerId(); }
+
+    /** The {@code host:port} address of the SSH server, or blank when SSH is off. */
+    public String sshAddress() { return sshServer == null ? "" : sshServer.address(); }
+
     /** Turns on discovery. Call it before {@link #start}. */
     public SwarmBridge withDiscovery(PeerDiscovery value) {
         this.discovery = value;
@@ -216,9 +283,16 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
         capabilities = List.copyOf(caps);
     }
 
+    /** Sets the receiver of messages from peers for the agent of the user. {@link #attach} sets it too. */
+    public SwarmBridge mainInput(Consumer<AgentInput> value) {
+        this.mainInput = value;
+        return this;
+    }
+
     /** Starts the node and joins the swarm. */
     public SwarmBridge start() {
-        var started = new SwarmNode(swarmConfig, self.withCapabilities(capabilities), transport, clock, this, discovery);
+        var started = new SwarmNode(swarmConfig, self.withCapabilities(capabilities), transport, sshTransport, clock,
+                this, discovery, sshAddress());
         node = started.start();
         return this;
     }
@@ -227,6 +301,71 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
 
     /** The node, or null when the bridge did not start. */
     public String address() { return node == null ? self.address() : node.address(); }
+
+    // ---- messages between agents, over SSH ----
+
+    /**
+     * Finds the id of an alive peer from its id, its name, or its address. Returns the argument when no peer
+     * matches, so that the caller gets a clear error from the node.
+     */
+    private String peerIdOf(String peer) {
+        var n = node;
+        if (n == null || peer == null) return peer;
+        return n.peers(PeerState.ALIVE).stream()
+                .filter(p -> p.peerId().equals(peer) || p.name().equalsIgnoreCase(peer) || p.address().equals(peer))
+                .findFirst().map(PeerRecord::peerId).orElse(peer);
+    }
+
+    /** Sends text to an agent on a peer over SSH. The stage fails when the peer cannot be reached. */
+    public java.util.concurrent.CompletableFuture<Void> sendMessage(String peerId, String agent, String text) {
+        var n = node;
+        if (n == null) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("the swarm is not started"));
+        }
+        return n.sendAgentMessage(peerIdOf(peerId), agent, text);
+    }
+
+    /**
+     * Asks a question of an agent on a peer over SSH. The stage completes with the answer. It fails with the
+     * reason of the peer, with a timeout, or when the peer is unknown or has no SSH address. It does not throw.
+     */
+    public java.util.concurrent.CompletableFuture<String> askPeer(String peerId, String agent, String question) {
+        var n = node;
+        if (n == null) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("the swarm is not started"));
+        }
+        return n.ask(peerIdOf(peerId), agent, question, null);
+    }
+
+    /** The messenger for the tools {@code send_message} and {@code ask_peer}. */
+    public org.github.lscoughlin.jeorje.core.port.PeerMessenger messenger() {
+        return new org.github.lscoughlin.jeorje.core.port.PeerMessenger() {
+            @Override
+            public void message(String peerId, String agent, String text) {
+                try {
+                    sendMessage(peerId, agent, text).get(30, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (java.util.concurrent.ExecutionException e) {
+                    var cause = e.getCause() == null ? e : e.getCause();
+                    throw new IllegalStateException(String.valueOf(cause.getMessage()), cause);
+                } catch (java.util.concurrent.TimeoutException e) {
+                    throw new IllegalStateException("the peer did not take the message in time", e);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("interrupted", e);
+                }
+            }
+
+            @Override
+            public java.util.concurrent.CompletableFuture<String> ask(String peerId, String agent, String question) {
+                return askPeer(peerId, agent, question);
+            }
+
+            @Override
+            public List<String> peerIds() {
+                return peers(PeerState.ALIVE).stream().map(PeerRecord::peerId).toList();
+            }
+        };
+    }
 
     // ---- the client side: RemoteSpawner ----
 
@@ -371,6 +510,18 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
 
     /** Call it for each event of a subagent loop. It sends progress to the delegating peer. */
     public void onAgentEvent(AgentEvent event) {
+        var sinks = lineSinks.get(event.agent());
+        if (sinks != null && !sinks.isEmpty()) {
+            for (var line : agentLines.render(event)) {
+                for (var sink : sinks) {
+                    try {
+                        sink.accept(line);
+                    } catch (RuntimeException e) {
+                        log.atDebug().log(() -> "a line sink failed: " + e);
+                    }
+                }
+            }
+        }
         var entry = hosted.get(event.agent());
         if (entry == null || entry.done().get()) return;
         switch (event) {
@@ -400,6 +551,137 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
     @Override
     public void onAgentMessage(String fromPeer, String toAgent, String text) {
         mainInput.accept(new AgentInput.PeerMessage(new AgentId("peer:" + nameOf(fromPeer)), text));
+    }
+
+    // ---- foreground attach: the host side ----
+
+    /**
+     * The access of remote clients to the local agents. The interactive session sets its own access, which uses
+     * the chat history and the permission prompts. Without one, the bridge uses the subagent runtime.
+     */
+    public interface AgentAccess {
+        /** The agents that a client can attach to. */
+        List<PeerAgent> roster();
+
+        /** The history lines of an agent, oldest first. */
+        List<String> history(AgentId agent);
+
+        /** Steering text from a client, as if the user typed it for the agent. */
+        void steer(AgentId agent, String text);
+
+        /** The answer of a client to a question of the agent, for example {@code yes} to a permission request. */
+        void answer(AgentId agent, String requestId, String text);
+    }
+
+    /** Sets the access of remote clients to the local agents. */
+    public SwarmBridge agentAccess(AgentAccess value) {
+        this.access = value;
+        return this;
+    }
+
+    private AgentAccess access() {
+        var current = access;
+        return current != null ? current : runtimeAccess;
+    }
+
+    /** The access that needs only the subagent runtime. It has no history and answers nothing. */
+    private final AgentAccess runtimeAccess = new AgentAccess() {
+        @Override
+        public List<PeerAgent> roster() {
+            var rt = runtime;
+            if (rt == null) return List.of();
+            return rt.status().stream().filter(info -> !HOST_ROOT.equals(info.id()))
+                    .map(info -> new PeerAgent(info.id().value(), info.name(),
+                            info.parent() == null ? "" : info.parent().value(), info.state().name())).toList();
+        }
+
+        @Override
+        public List<String> history(AgentId agent) { return List.of(); }
+
+        @Override
+        public void steer(AgentId agent, String text) {
+            var rt = runtime;
+            if (rt == null || !rt.steer(agent, text)) {
+                throw new IllegalStateException("the agent " + agent + " cannot take steering now");
+            }
+        }
+
+        @Override
+        public void answer(AgentId agent, String requestId, String text) {
+            throw new IllegalStateException("this instance cannot take answers from a client");
+        }
+    };
+
+    private final ConcurrentHashMap<AgentId, java.util.concurrent.CopyOnWriteArrayList<Consumer<String>>> lineSinks =
+            new ConcurrentHashMap<>();
+    private final AgentLines agentLines = new AgentLines();
+
+    @Override
+    public List<PeerAgent> roster() { return access().roster(); }
+
+    @Override
+    public ForegroundHost attach(String fromPeer, String agentId) {
+        if (agentId == null || agentId.isBlank()) return null;
+        var known = roster().stream().anyMatch(a -> a.agentId().equals(agentId));
+        if (!known) return null;
+        var id = new AgentId(agentId);
+        var name = nameOf(fromPeer);
+        log.atInfo().log(() -> "peer " + name + " attached to " + agentId);
+        notice.accept("Peer " + name + " attached to the agent " + agentId + ".");
+        return new ForegroundHost() {
+            private volatile Consumer<String> mine;
+
+            @Override public List<String> history() { return access().history(id); }
+
+            @Override public String agentId() { return agentId; }
+
+            @Override public void steer(String text) { access().steer(id, text); }
+
+            @Override public void answer(String requestId, String text) { access().answer(id, requestId, text); }
+
+            @Override
+            public void onLine(Consumer<String> sink) {
+                var old = mine;
+                if (old != null) {
+                    var list = lineSinks.get(id);
+                    if (list != null) list.remove(old);
+                }
+                mine = sink;
+                if (sink != null) lineSinks.computeIfAbsent(id, k -> new java.util.concurrent.CopyOnWriteArrayList<>())
+                        .add(sink);
+            }
+
+            @Override
+            public void detach() {
+                onLine(null);
+                notice.accept("Peer " + name + " detached from the agent " + agentId + ".");
+            }
+        };
+    }
+
+    /** Answers a question from an agent on a peer. */
+    @FunctionalInterface
+    public interface PeerAnswerer {
+        java.util.concurrent.CompletionStage<String> answer(String fromPeerName, String toAgent, String question);
+    }
+
+    /**
+     * Sets the code that answers questions from peers. Without it, the question goes to the agent of the user as
+     * a message, and the asking peer gets an error that says so. The agent can reply with a message.
+     */
+    public SwarmBridge answerPeersWith(PeerAnswerer value) {
+        this.answerer = value;
+        return this;
+    }
+
+    @Override
+    public java.util.concurrent.CompletionStage<String> onAgentAsk(String fromPeer, String toAgent, String question) {
+        var name = nameOf(fromPeer);
+        var current = answerer;
+        if (current != null) return current.answer(name, toAgent, question);
+        mainInput.accept(new AgentInput.PeerMessage(new AgentId("peer:" + name), "[question] " + question));
+        return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException(
+                "the agent received the question as a message and has no direct answer; it can reply with send_message"));
     }
 
     @Override
@@ -442,6 +724,11 @@ public final class SwarmBridge implements SwarmHandlers, SwarmHandlers.DelegateH
             }
         } else {
             transport.close();
+            if (sshTransport != null) sshTransport.close();
         }
+        var server = sshServer;
+        if (server != null) server.close();
+        var disco = discovery;
+        if (n == null && disco != null) disco.withdraw(self.peerId());
     }
 }

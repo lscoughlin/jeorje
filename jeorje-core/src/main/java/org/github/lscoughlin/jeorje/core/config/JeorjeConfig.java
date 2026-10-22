@@ -129,17 +129,27 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
         public boolean enabled() { return !keyStore.isBlank(); }
     }
 
+    /** The SSH channel of the swarm. An empty {@code advertiseHost} means the host of the bind address. */
+    public record Ssh(boolean enabled, String bind, String advertiseHost) {
+        public Ssh {
+            bind = bind == null ? "" : bind;
+            advertiseHost = advertiseHost == null ? "" : advertiseHost;
+        }
+    }
+
     public record Swarm(boolean enabled, String bind, List<String> wka, String token, long gossipIntervalMs,
-                        boolean discovery, Tls tls) {
+                        boolean discovery, boolean rendezvous, Ssh ssh, Tls tls) {
         public Swarm {
             wka = list(wka);
+            ssh = ssh == null ? new Ssh(true, "127.0.0.1:0", "") : ssh;
             tls = tls == null ? new Tls("", "") : tls;
         }
 
         @Override
         public String toString() {
             return "Swarm[enabled=" + enabled + ", bind=" + bind + ", wka=" + wka + ", token="
-                    + (token == null || token.isEmpty() ? "" : "***") + ", gossipIntervalMs=" + gossipIntervalMs + ", discovery=" + discovery
+                    + (token == null || token.isEmpty() ? "" : "***") + ", gossipIntervalMs=" + gossipIntervalMs
+                    + ", discovery=" + discovery + ", rendezvous=" + rendezvous + ", ssh=" + ssh
                     + ", tls=" + tls + "]";
         }
     }

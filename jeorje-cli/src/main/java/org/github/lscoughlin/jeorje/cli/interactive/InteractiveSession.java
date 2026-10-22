@@ -228,6 +228,8 @@ public final class InteractiveSession implements AutoCloseable {
     private SlashCommands slash;
     private AgentSwitcher switcher;
     private AgentRoster roster;
+    private final java.util.Map<AgentId, RemoteAgent> remotes = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<AgentId, String> remoteRequests = new java.util.concurrent.ConcurrentHashMap<>();
     private UserQuestionBroker broker;
     private Thread ticker;
     private SessionCommands commands;
@@ -388,7 +390,12 @@ public final class InteractiveSession implements AutoCloseable {
         roster = new AgentRoster(hub, () -> orchestrator == null ? List.<SubagentRuntime>of()
                 : List.of(orchestrator.runtime()),
                 () -> swarm == null ? List.of() : AgentRoster.alive(swarm.peers(PeerState.ALIVE)),
-                session -> branchOf(session.id()), this::historyOf, this::steerMain);
+                session -> branchOf(session.id()), this::historyOf, this::steerMain,
+                new RemoteRosters(peerId -> swarm == null
+                        ? java.util.concurrent.CompletableFuture.completedFuture(
+                                List.<org.github.lscoughlin.jeorje.swarm.SwarmHandlers.PeerAgent>of())
+                        : swarm.roster(peerId), System::currentTimeMillis, 3000, null)::get,
+                () -> cwd.getFileName() == null ? "this instance" : cwd.getFileName().toString());
         screen.promptFilter(agent -> {
             var owner = ownerOf(agent);
             return owner == null || owner == fg();
@@ -636,7 +643,8 @@ public final class InteractiveSession implements AutoCloseable {
         tools.put(PlanSubmitTool.NAME, new PlanSubmitTool(config.plan().dir(), ms.planMode(),
                 file -> onPlanSubmitted(id, file)));
         tools.put(AskUserTool.NAME, new AskUserTool(broker));
-        var agentTools = AgentTools.install(ms.runtime(), sessionId, directory);
+        var agentTools = AgentTools.install(ms.runtime(), sessionId, directory,
+                bridge == null ? null : bridge.messenger());
         var peerTools = bridge == null ? agentTools : PeerSpawnTool.wrap(agentTools, ms.runtime());
         WorktreeSpawnTool.wrap(peerTools, ms.runtime(), worktrees, () -> agentTypes)
                 .forEach(t -> tools.putIfAbsent(t.definition().name(), t));
@@ -779,8 +787,42 @@ public final class InteractiveSession implements AutoCloseable {
                 });
     }
 
+    /** What a remote client sees of this session: the agents, their chat history, steering, and answers. */
+    private final class RemoteAccess implements SwarmBridge.AgentAccess {
+        @Override
+        public List<org.github.lscoughlin.jeorje.swarm.SwarmHandlers.PeerAgent> roster() {
+            return AgentRoster.localOnly(AgentRoster.PEER_PREFIX, InteractiveSession.this.roster.agents()).stream()
+                    .map(e -> new org.github.lscoughlin.jeorje.swarm.SwarmHandlers.PeerAgent(e.id().value(), e.name(),
+                            e.parent() == null ? "" : e.parent().value(), e.state()))
+                    .toList();
+        }
+
+        @Override
+        public List<String> history(AgentId agent) { return historyOf(agent); }
+
+        @Override
+        public void steer(AgentId agent, String text) { InteractiveSession.this.roster.steer(agent, text); }
+
+        @Override
+        public void answer(AgentId agent, String requestId, String text) {
+            var approved = switch (text.strip().toLowerCase(java.util.Locale.ROOT)) {
+                case "yes", "y", "allow", "ok", "approve", "approved" -> true;
+                default -> false;
+            };
+            if (agent.equals(MAIN)) {
+                main.agent().confirm(requestId, approved);
+                return;
+            }
+            var use = new ToolUse(requestId, "", MAPPER.createObjectNode());
+            if (!gate.complete(agent, use, approved ? Decision.ALLOW_ONCE : Decision.DENY)) {
+                throw new IllegalStateException("the agent " + agent + " does not wait for request " + requestId);
+            }
+        }
+    }
+
     private void startSwarm() {
         if (bridge == null) return;
+        bridge.agentAccess(new RemoteAccess());
         try {
             swarm = bridge.start().node();
             notice(MAIN, "Swarm started on " + swarm.address() + ".");
@@ -895,6 +937,7 @@ public final class InteractiveSession implements AutoCloseable {
         var status = screen.status();
         status.model(roles.defaultModel()).yolo(options.yolo()).plan(fg().planMode().active());
         status.branch(branchOf(screen.foreground()));
+        status.swarmOff(swarm == null);
         status.peers(swarm == null ? 0 : swarm.peers(PeerState.ALIVE).size());
         var rows = orchestrator == null ? List.<ImplementOrchestrator.Row>of() : orchestrator.rows();
         if (orchestrator != null && (orchestrator.active() || !rows.isEmpty())) {
@@ -1085,6 +1128,8 @@ public final class InteractiveSession implements AutoCloseable {
                 root.planMode().resetExploration();
                 // A text during a turn joins that turn. A text when the agent has no turn starts a turn.
                 if (!root.agent().steer(text)) root.agent().submit(new AgentInput.UserInput(text));
+            } else if (RemoteAgent.peerOf(target.value()) != null) {
+                if (!steerRemote(target, text)) notice(target, "The remote agent is not attached.");
             } else {
                 roster.steer(target, text);
             }
@@ -1274,8 +1319,12 @@ public final class InteractiveSession implements AutoCloseable {
     }
 
     private void onForeground(AgentId id) {
+        if (RemoteAgent.peerOf(id.value()) != null) {
+            openRemote(id);
+            return;
+        }
         if (id.value().startsWith(AgentRoster.PEER_PREFIX)) {
-            notice(screen.foreground(), "That agent is a remote peer. You cannot switch into it.");
+            notice(screen.foreground(), "That row is a remote instance. Pick one of its agents.");
             switcher.back();
             return;
         }
@@ -1285,6 +1334,64 @@ public final class InteractiveSession implements AutoCloseable {
         var root = hub.get(id);
         if (root != null) screen.status().agent(root.name()).state(root.busy().get() ? "working" : "idle");
         refreshStatus();
+    }
+
+    /**
+     * Brings an agent of a peer into the foreground. The history and the live lines go to the chat view of the
+     * remote id. Typed text steers the remote agent. Typing yes or no answers its last permission request.
+     */
+    private void openRemote(AgentId id) {
+        if (swarm == null) {
+            notice(screen.foreground(), "The swarm is off. You cannot attach to a remote agent.");
+            switcher.back();
+            return;
+        }
+        screen.setForeground(id);
+        refreshStatus();
+        if (remotes.containsKey(id)) return;
+        var peerId = RemoteAgent.peerOf(id.value());
+        var agentId = RemoteAgent.agentOf(id.value());
+        notice(id, "Attaching to " + agentId + " on " + peerId + " ...");
+        Thread.ofVirtual().name("jeorje-attach").start(() -> {
+            try {
+                var remote = new RemoteAgent(swarm::attach)
+                        .onLine(line -> onRemoteLine(id, line))
+                        .onClosed(() -> notice(id, "The remote agent ended the attachment."))
+                        .attach(peerId, agentId);
+                remotes.put(id, remote);
+                notice(id, "Attached. The history of the remote agent follows. Text that you type steers it.");
+                remote.history().forEach(line -> notice(id, line));
+            } catch (RuntimeException e) {
+                notice(id, "Cannot attach: " + e.getMessage());
+            }
+        });
+    }
+
+    private static final java.util.regex.Pattern REQUEST = java.util.regex.Pattern.compile("\\(request ([^)]+)\\)");
+
+    private void onRemoteLine(AgentId id, String line) {
+        var matcher = REQUEST.matcher(line);
+        if (line.startsWith("? ") && matcher.find()) remoteRequests.put(id, matcher.group(1));
+        notice(id, line);
+    }
+
+    /** Sends typed text to a remote agent. Returns false when the id is not an attached remote agent. */
+    private boolean steerRemote(AgentId id, String text) {
+        var remote = remotes.get(id);
+        if (remote == null) return false;
+        var answer = text.strip().toLowerCase(java.util.Locale.ROOT);
+        var request = remoteRequests.get(id);
+        if (request != null && (answer.equals("yes") || answer.equals("no") || answer.equals("y") || answer.equals("n"))) {
+            remoteRequests.remove(id);
+            try {
+                remote.answer(request, answer);
+            } catch (RuntimeException e) {
+                notice(id, "The remote agent did not take the answer: " + e.getMessage());
+            }
+            return true;
+        }
+        remote.steer(text);
+        return true;
     }
 
     /** Shows the agent switcher in the chat region. Enter on an agent makes it the foreground agent. */
@@ -1489,6 +1596,8 @@ public final class InteractiveSession implements AutoCloseable {
         if (orchestrator != null) orchestrator.close();
         if (mouse != null) mouse.close();
         if (screen != null) screen.close();
+        remotes.values().forEach(RemoteAgent::close);
+        remotes.clear();
         if (bridge != null) bridge.close();
         for (var session : hub.sessions()) {
             if (session.agent() != null && session.session() != null) saveManifest(session, "idle");

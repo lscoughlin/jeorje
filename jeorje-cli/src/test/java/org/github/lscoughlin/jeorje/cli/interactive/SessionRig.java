@@ -122,6 +122,8 @@ final class SessionRig implements AutoCloseable {
         this.repo = Files.createDirectories(tmp.resolve("repo"));
         // The advisor is on by default. A rig with no config turns it off, so that no test needs a script for it.
         var config = userConfig != null ? userConfig : "models:\n  advisor: none\n";
+        // The swarm is on by default. A rig turns it off, so that no session test binds a port.
+        if (!config.contains("swarm:")) config = config + "swarm:\n  enabled: false\n";
         Files.createDirectories(home.resolve(".jeorje"));
         Files.writeString(home.resolve(".jeorje").resolve("config.yaml"), config);
         var in = new PipedInputStream(keys, 1 << 16);

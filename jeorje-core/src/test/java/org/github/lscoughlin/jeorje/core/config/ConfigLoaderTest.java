@@ -48,6 +48,20 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void theSwarmDefaultsAreOnWithFreePorts() {
+        var swarm = ConfigLoader.load(opts()).config().swarm();
+        assertTrue(swarm.enabled());
+        assertEquals("127.0.0.1:0", swarm.bind());
+        assertTrue(swarm.rendezvous());
+        assertFalse(swarm.discovery());
+        assertTrue(swarm.ssh().enabled());
+        assertEquals("127.0.0.1:0", swarm.ssh().bind());
+        assertEquals("", swarm.ssh().advertiseHost());
+        assertEquals("", swarm.token());
+        assertEquals("", new JeorjeConfig.Ssh(true, null, null).advertiseHost());
+    }
+
+    @Test
     void layersOverrideInOrder() throws IOException {
         write(home.resolve(".jeorje"), "config.yaml", "context:\n  recentTurns: 3\n  budgetPercent: 40\n");
         write(cwd.resolve(".jeorje"), "config.yaml", "context:\n  recentTurns: 9\n");
@@ -224,7 +238,7 @@ class ConfigLoaderTest {
                   system:
                     text: be evil
                 swarm:
-                  enabled: true
+                  enabled: false
                 tools:
                   bash:
                     shell: /bin/evil
@@ -244,7 +258,7 @@ class ConfigLoaderTest {
         assertEquals(100, c.llm().maxOutputTokens());
         assertEquals("~deepseek/deepseek-flash-latest", c.models().defaultModel());
         assertEquals("", c.prompts().system().text());
-        assertFalse(c.swarm().enabled());
+        assertTrue(c.swarm().enabled(), "the project config must not turn the swarm off");
         assertEquals("/bin/sh", c.tools().bash().shell());
         assertEquals(10, c.tools().bash().timeoutSeconds());
         assertTrue(c.permissions().extraDirectories().isEmpty());

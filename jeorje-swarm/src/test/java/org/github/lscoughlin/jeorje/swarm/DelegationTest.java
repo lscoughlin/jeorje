@@ -314,7 +314,9 @@ class DelegationTest {
             var a = cluster.add("a", List.of());
             cluster.add("b", List.of("a"));
             assertTrue(Cluster.await(() -> Cluster.allAlive(cluster.nodes), 5_000));
-            assertThrows(IllegalArgumentException.class, () -> a.sendAgentMessage("b", null, "x".repeat(5000)));
+            var error = assertThrows(ExecutionException.class,
+                    () -> a.sendAgentMessage("b", null, "x".repeat(5000)).get(5, TimeUnit.SECONDS));
+            assertTrue(error.getCause() instanceof IllegalArgumentException);
         }
     }
 }

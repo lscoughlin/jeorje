@@ -5,6 +5,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 import java.util.UUID;
 
 /** Saves the {@code PeerId} of the instance in its state directory. */
@@ -28,5 +29,26 @@ public final class PeerIdStore {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * Returns the saved id when no live instance uses it. Otherwise makes a new random id, saves it, and
+     * returns it. Two instances of one user on one machine share the state directory, so the saved id can be
+     * live in another instance.
+     *
+     * @param liveIds the peer ids that other instances use now
+     */
+    public static String fresh(Path stateDir, Set<String> liveIds) {
+        var saved = loadOrCreate(stateDir);
+        if (!liveIds.contains(saved)) {
+            return saved;
+        }
+        var id = UUID.randomUUID().toString();
+        try {
+            Files.writeString(stateDir.resolve("peer-id"), id + "\n", StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return id;
     }
 }

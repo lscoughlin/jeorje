@@ -27,6 +27,8 @@ public final class DefaultRules {
             Map.entry("agent_message", Decision.ALLOW),
             Map.entry("agent_ask", Decision.ALLOW),
             Map.entry("agent_answer", Decision.ALLOW),
+            Map.entry("send_message", Decision.ALLOW),
+            Map.entry("ask_peer", Decision.ALLOW),
             Map.entry("story_read", Decision.ALLOW),
             Map.entry("skill", Decision.ALLOW),
             Map.entry("worktree_merge", Decision.ASK),
