@@ -481,8 +481,51 @@ class ConfigLoaderTest {
         assertTrue(loaded.warnings().stream().anyMatch(w -> w.contains("mcp")));
     }
 
+    private static final String MCP_JSON = """
+            {"mcpServers": {"x": {"type": "stdio", "command": "from-json", "args": ["a"]},
+                            "y": {"type": "http", "url": "http://127.0.0.1:9/mcp"}}}
+            """;
+
     @Test
-    void mcpEnvAndHeaderValuesAreHidden() throws IOException {
+    void mcpJsonServersJoinTheConfigWithTheirSource() throws IOException {
+        Files.writeString(cwd.resolve(".mcp.json"), MCP_JSON);
+        var loaded = ConfigLoader.load(opts().withTrusted(true));
+        var servers = loaded.config().mcp().servers();
+        assertEquals("from-json", servers.get("x").command());
+        assertEquals("http", servers.get("y").transport());
+        assertTrue(loaded.sourceOf("mcp.servers.x.command").file().toString().endsWith(".mcp.json"));
+        assertTrue(loaded.config().mcp().projectFile());
+    }
+
+    @Test
+    void aConfigServerWinsOverTheSameNameInMcpJson() throws IOException {
+        Files.writeString(cwd.resolve(".mcp.json"), MCP_JSON);
+        write(cwd.resolve(".jeorje"), "config.yaml", "mcp:\n  servers:\n    x:\n      command: from-yaml\n");
+        var servers = ConfigLoader.load(opts().withTrusted(true)).config().mcp().servers();
+        assertEquals("from-yaml", servers.get("x").command());
+        assertTrue(servers.containsKey("y"));
+    }
+
+    @Test
+    void anUntrustedProjectIgnoresMcpJsonWithOneWarning() throws IOException {
+        Files.writeString(cwd.resolve(".mcp.json"), MCP_JSON);
+        var loaded = ConfigLoader.load(opts());
+        assertTrue(loaded.config().mcp().servers().isEmpty());
+        assertEquals(1, loaded.warnings().size());
+        assertTrue(loaded.warnings().getFirst().contains(".mcp.json"));
+    }
+
+    @Test
+    void projectFileFalseTurnsTheReadOff() throws IOException {
+        Files.writeString(cwd.resolve(".mcp.json"), MCP_JSON);
+        write(home.resolve(".jeorje"), "config.yaml", "mcp:\n  projectFile: false\n");
+        var loaded = ConfigLoader.load(opts().withTrusted(true));
+        assertTrue(loaded.config().mcp().servers().isEmpty());
+        assertFalse(loaded.config().mcp().projectFile());
+    }
+
+    @Test
+    void mcpEnvAndHeaderValuesAreHidden()throws IOException {
         write(home.resolve(".jeorje"), "config.yaml", MCP_YAML);
         var text = ConfigLoader.load(opts()).toYaml();
         assertFalse(text.contains("s3cret"), text);

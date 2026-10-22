@@ -107,6 +107,7 @@ public final class Wiring {
         }
         if (options.swarmToken() != null) flags.put("swarm.token", options.swarmToken());
         if (options.noMouse()) flags.put("ui.mouse.enabled", false);
+        if (options.noMcpFile()) flags.put("mcp.projectFile", false);
         var configOptions = new ConfigOptions(env.home(), workDir(options, env), env.env(), flags,
                 options.configFile() == null ? null : options.configFile().toAbsolutePath(), options.trust());
         return ConfigLoader.load(configOptions);

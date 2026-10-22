@@ -271,8 +271,9 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
     }
 
     /** MCP client settings. The map key of each server is its name. */
-    public record Mcp(Map<String, McpServer> servers) {
+    public record Mcp(Map<String, McpServer> servers, Boolean projectFile) {
         public Mcp {
+            projectFile = projectFile == null || projectFile;
             servers = servers == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(servers));
         }
     }

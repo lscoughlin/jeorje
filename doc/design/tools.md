@@ -269,7 +269,7 @@ You can add external tools in the config key `tools.extensions` as command tools
 
 ## MCP tools
 
-Jeorje is a client for the Model Context Protocol (MCP). It offers the tools of the MCP servers in the config key `mcp.servers` to the agent. It uses only the tools part of the protocol. It does not use resources, prompts, sampling, or roots. The code is in the package `tools.mcp` of `jeorje-tools`. It has no extra dependency.
+Jeorje is a client for the Model Context Protocol (MCP). It offers the tools of the MCP servers to the agent. The servers come from the config key `mcp.servers` and from the `.mcp.json` file of the working directory. See [configuration.md](configuration.md#mcp-servers). It uses only the tools part of the protocol. It does not use resources, prompts, sampling, or roots. The code is in the package `tools.mcp` of `jeorje-tools`. It has no extra dependency.
 
 - **Transports.** A server is a `stdio` server or an `http` server. A `stdio` server is a child process. The messages are lines of JSON on stdin and stdout. An `http` server uses Streamable HTTP. Each message is a POST. The reply is one JSON body or an event stream. Jeorje keeps the `Mcp-Session-Id` header and ends the session with a DELETE. Jeorje never follows a redirect. The legacy SSE transport is not supported.
 - **Start.** The `McpManager` connects all enabled servers at the same time when the session needs its tools first. For each server it does the handshake and reads the tool list, page by page. A server that fails is skipped, and its error shows in `/mcp`. A failed server never stops the session. The tool list does not change during the session. If a server says that its tools changed, `/mcp` shows a notice.
