@@ -118,6 +118,7 @@ public final class SessionStore {
     private static JsonNode snapshot(JeorjeConfig config) {
         var tree = MAPPER.valueToTree(config);
         if (tree.path("swarm") instanceof ObjectNode swarm && swarm.has("token")) swarm.put("token", "");
+        if (tree.path("llm") instanceof ObjectNode llm && llm.has("apiKey")) llm.put("apiKey", "");
         return tree;
     }
 }

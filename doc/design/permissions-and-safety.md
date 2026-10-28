@@ -40,7 +40,7 @@ Default rules:
 | `todo`, `ask_user`, `advisor`, `plan_submit` | `ALLOW` |
 | Any other tool, including extension tools and MCP tools | `ASK` |
 
-The user can choose "always allow" in a prompt. Jeorje then saves a rule for the session. The user can also save the rule in the project config (`${CWD}/.jeorje/config.yaml`). For a project that the user does not trust, Jeorje ignores `allow` rules, `permissions.extraDirectories`, and `permissions.webfetch.allow` in the project config. See [instructions-and-skills.md](instructions-and-skills.md#trust).
+The user can choose "always allow" in a prompt. Jeorje then saves a rule for the session. The user can also save the rule in the project config (`${CWD}/.jeorje/config.yaml`). For a project that the user does not trust, Jeorje ignores `allow` rules, `permissions.extraDirectories`, `permissions.tempDirectory`, and `permissions.webfetch.allow` in the project config. See [instructions-and-skills.md](instructions-and-skills.md#trust).
 
 ## Plan mode and workers
 
@@ -61,10 +61,11 @@ The user can choose "always allow" in a prompt. Jeorje then saves a rule for the
 ## Path sandbox
 
 - Project skills, commands, and subagent definitions load only for a trusted project. See [instructions-and-skills.md](instructions-and-skills.md#trust).
-- The workspace is the working directory and the directories that the config adds (`permissions.extraDirectories`). The sandbox can also have read-only directories. A write tool is `DENY` in a read-only directory. The CLI does not pass the folders of skills as read-only directories.
+- The workspace is the working directory and the directories that the config adds (`permissions.extraDirectories`), and the temp directory (`permissions.tempDirectory`, `/tmp` by default; an empty value turns it off). The sandbox can also have read-only directories. A write tool is `DENY` in a read-only directory. The CLI does not pass the folders of skills as read-only directories.
 - Jeorje resolves each path with `toRealPath`. This removes symbolic links and `..` segments. For a path that does not exist, it resolves the nearest parent that exists.
 - The policy checks the input fields `path`, `file_path`, `filePath`, `a`, `b`, and `paths`. A tool call that has none of these fields has no path check in the policy.
-- A path outside the workspace is `DENY`, unless a rule with a pattern matches the path.
+- A write to a path outside the workspace is `DENY`, unless a rule with a pattern matches the path.
+- A read of a path outside the workspace by `read`, `ls`, `glob`, `grep`, or `diff` is `ASK`. If the user approves, the approval holds for that path and everything below it for the rest of the session. A sensitive path (for example the config directory) is `DENY`. With `--yes`, such a read is `DENY`, because `--yes` keeps the sandbox.
 - A path under a `.git` directory in the workspace, under the `.jeorje` directory of the workspace, or under a configuration directory that the sandbox knows is sensitive gets at least `ASK`, for every tool, also for reads. With `--yes`, this `ASK` becomes `ALLOW`.
 - The `patch` tool also refuses a path under `.git/` and a path outside the workspace by itself, in every mode.
 
@@ -85,8 +86,8 @@ The user can choose "always allow" in a prompt. Jeorje then saves a rule for the
 
 ## Secrets
 
-- API keys come from environment variables. The config key `llm.apiKeyEnv` lists the names.
-- `SecretScrubber` removes key values. It knows the API key, the values of all variables in `llm.apiKeyEnv`, the swarm token (config and `JEORJE_SWARM_TOKEN`), and `OPENAI_API_KEY`, and it knows the patterns of common keys (`sk-`, `ghp_`, `AKIA`, `xox`, bearer tokens, and `name=value` pairs where the name has `api_key`, `token`, `secret`, `password`, or `passwd`). Log output shows `***` instead. Jeorje uses the scrubber for the debug log of permission decisions, for the audit log, for error texts of the config loader, for git output, and for error events of the run mode.
+- API keys come from the flag `--api-key`, from environment variables, or from `llm.apiKey` in a config file, in this order. The config key `llm.apiKeyEnv` lists the names of the variables. The config file of an untrusted project cannot set `llm.apiKey`. Jeorje never writes the key to a file. The session manifest holds the config snapshot with an empty `llm.apiKey`. The text of the config record, the output of `jeorje config`, and the logs show `***` for the key.
+- `SecretScrubber` removes key values. It knows the API key (also the one from the flag or the config file), the values of all variables in `llm.apiKeyEnv`, the swarm token (config and `JEORJE_SWARM_TOKEN`), and `OPENAI_API_KEY`, and it knows the patterns of common keys (`sk-`, `ghp_`, `AKIA`, `xox`, bearer tokens, and `name=value` pairs where the name has `api_key`, `token`, `secret`, `password`, or `passwd`). Log output shows `***` instead. Jeorje uses the scrubber for the debug log of permission decisions, for the audit log, for error texts of the config loader, for git output, and for error events of the run mode.
 - The application removes secrets from tool output before the output goes anywhere else. A key that a tool prints therefore never reaches the chat view, the transcript, the index, or the model. `ScrubbingContextStore` removes secrets from the text of each chunk before the chunk enters the index. `TranscriptWriter` removes secrets from each message before it writes the message to `transcript.jsonl`. The same scrubber also cleans the events that go to the UI. The child processes of tools have no keys in their environment.
 - Jeorje does not send the environment of the user to the model.
 

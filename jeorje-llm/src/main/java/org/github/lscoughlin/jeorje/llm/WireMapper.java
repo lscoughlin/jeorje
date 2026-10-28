@@ -7,7 +7,11 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
-/** Maps an {@link LlmRequest} to the Chat Completions wire format. */
+/**
+ * Maps an {@link LlmRequest} to the Chat Completions wire format. For a model whose name starts with
+ * {@code anthropic}, the mapper adds {@code cache_control} breakpoints when the request asks for the prompt cache.
+ * The other providers cache a stable prefix on their own.
+ */
 final class WireMapper {
 
     private final ObjectMapper mapper;
@@ -35,11 +39,21 @@ final class WireMapper {
         root.put("stream", true);
         root.putObject("stream_options").put("include_usage", true);
         if (request.maxOutputTokens() > 0) root.put("max_tokens", request.maxOutputTokens());
+        var cache = request.cachedPrefixMessages() >= 0 && usesCacheControl(model);
         var messages = root.putArray("messages");
         if (request.system() != null && !request.system().isBlank()) {
-            messages.addObject().put("role", "system").put("content", request.system());
+            var system = messages.addObject().put("role", "system").put("content", request.system());
+            // The first breakpoint covers the tool definitions and the system prompt.
+            if (cache) markCache(system);
         }
-        for (var message : request.messages()) addMessage(messages, message);
+        var index = 0;
+        for (var message : request.messages()) {
+            addMessage(messages, message);
+            // The second breakpoint is on the last message of the prefix that stays the same.
+            if (cache && ++index == request.cachedPrefixMessages() && !messages.isEmpty()) {
+                markCache((ObjectNode) messages.get(messages.size() - 1));
+            }
+        }
         if (!request.tools().isEmpty()) {
             var tools = root.putArray("tools");
             for (var tool : request.tools()) {
@@ -52,6 +66,20 @@ final class WireMapper {
             }
         }
         return root;
+    }
+
+    /** True for the models that need explicit cache breakpoints. */
+    static boolean usesCacheControl(String model) {
+        return model != null && model.toLowerCase(java.util.Locale.ROOT).startsWith("anthropic");
+    }
+
+    /** Moves the text of the message into a content block with a cache breakpoint. A message with no text stays. */
+    private void markCache(ObjectNode message) {
+        var content = message.get("content");
+        if (content == null || !content.isString() || content.asString().isBlank()) return;
+        var block = mapper.createObjectNode().put("type", "text").put("text", content.asString());
+        block.putObject("cache_control").put("type", "ephemeral");
+        message.putArray("content").add(block);
     }
 
     private void addMessage(ArrayNode out, Message message) {

@@ -49,6 +49,12 @@ class AgentCompactionTest {
         return sb.toString();
     }
 
+    private static String lastUserText(LlmRequest request) {
+        var sb = new StringBuilder();
+        for (var c : request.messages().getLast().content()) if (c instanceof Text t) sb.append(t.text());
+        return sb.toString();
+    }
+
     private static Tool todoTool(String output, boolean error) {
         return tool("todo", false, (in, ctx) -> error ? ToolResultData.error(output) : ToolResultData.ok(output));
     }
@@ -63,9 +69,9 @@ class AgentCompactionTest {
         rig.agent.runTurn("third");
         rig.agent.runTurn("fourth");
         var last = llm.requests.getLast();
-        var first = firstUserText(last);
-        assertTrue(first.contains("[Pinned items]") && first.contains("TODO-MARKER-ALPHA"), first);
-        assertTrue(first.indexOf("TODO-MARKER-ALPHA") < first.indexOf("[Earlier context]"), "pinned above the history");
+        var tail = lastUserText(last);
+        assertTrue(tail.contains("[Current state]") && tail.contains("TODO-MARKER-ALPHA"), tail);
+        assertFalse(firstUserText(last).contains("[Pinned items]"), "the list is not pinned at the stable start");
         for (var i = 2; i < llm.requests.size(); i++) {
             assertTrue(ContextBuilderSupport.text(llm.requests.get(i)).contains("TODO-MARKER-ALPHA"), "request " + i);
         }
@@ -81,10 +87,9 @@ class AgentCompactionTest {
         rig.agent.runTurn("two");
         rig.agent.runTurn("three");
         rig.agent.runTurn("four");
-        var first = firstUserText(llm.requests.getLast());
-        var pinned = first.substring(0, first.indexOf("[Earlier context]"));
-        assertTrue(pinned.contains("LIST-2"), first);
-        assertFalse(pinned.contains("LIST-1"), first);
+        var tail = lastUserText(llm.requests.getLast());
+        assertTrue(tail.contains("LIST-2"), tail);
+        assertFalse(tail.contains("LIST-1"), tail);
     }
 
     @Test
@@ -94,25 +99,26 @@ class AgentCompactionTest {
         rig.agent.runTurn("one");
         rig.agent.runTurn("two");
         rig.agent.runTurn("three");
-        assertFalse(firstUserText(empty.requests.getLast()).contains("[Pinned items]"));
+        assertFalse(lastUserText(empty.requests.getLast()).contains("[Current state]"));
 
         var failed = new Scripted(calls("c1", "todo", "{}"), text("a"), text("b"), text("c"));
         var rig2 = new Rig(failed, policy(Decision.ALLOW), settings(1), todoTool("More than one task is in_progress.", true));
         rig2.agent.runTurn("one");
         rig2.agent.runTurn("two");
         rig2.agent.runTurn("three");
-        assertFalse(firstUserText(failed.requests.getLast()).contains("[Pinned items]"));
+        assertFalse(lastUserText(failed.requests.getLast()).contains("[Current state]"));
     }
 
     @Test
-    void userPinsAndTheTodoListShareThePinnedSection() {
+    void userPinsStayAtTheStartAndTheTodoListMovesToTheEnd() {
         var llm = new Scripted(calls("c1", "todo", "{}"), text("a"), text("b"));
         var rig = new Rig(llm, policy(Decision.ALLOW), settings(1), todoTool("Todo list:\n1. [ ] TODO-X", false));
         rig.agent.pin("USER-PIN");
         rig.agent.runTurn("one");
         rig.agent.runTurn("two");
         var first = firstUserText(llm.requests.getLast());
-        assertTrue(first.indexOf("USER-PIN") < first.indexOf("TODO-X"), first);
+        assertTrue(first.contains("USER-PIN") && !first.contains("TODO-X"), first);
+        assertTrue(lastUserText(llm.requests.getLast()).contains("TODO-X"));
         assertEquals(List.of("USER-PIN"), rig.agent.pinnedTexts(), "the todo list is not a pin of the user");
     }
 

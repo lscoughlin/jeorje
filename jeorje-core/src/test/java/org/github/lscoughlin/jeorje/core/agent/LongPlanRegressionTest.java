@@ -99,13 +99,13 @@ class LongPlanRegressionTest {
             assertTrue(usage.tokens() <= usage.budget(), "the status line stays below 100%: " + usage);
         }
 
-        // The answer of turn 1 is pinned in every request of turn 2.
+        // The answer of turn 1 is in the trailing state of every request of turn 2.
         var turn2 = llm.requests.subList(32, llm.requests.size());
         assertEquals(13, turn2.size());
         for (var request : turn2) {
-            var first = request.messages().getFirst().content().getFirst().toString();
-            assertTrue(first.contains("Decisions of the user:\n- Which defaults?: sqlite for every platform"),
-                first.substring(0, Math.min(300, first.length())));
+            var tail = request.messages().getLast().content().getFirst().toString();
+            assertTrue(tail.contains("Decisions of the user:\n- Which defaults?: sqlite for every platform"),
+                tail.substring(0, Math.min(300, tail.length())));
         }
 
         // The repeated reads do not run again.

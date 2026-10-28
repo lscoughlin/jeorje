@@ -10,7 +10,7 @@ This page shows how to use Jeorje. Each section has the commands that you type. 
 ## Start
 
 1. Install Java 25.
-2. Set the API key of your model provider. The default is OpenRouter: `export OPENROUTER_API_KEY=...`.
+2. Set the API key of your model provider. The default is OpenRouter: `export OPENROUTER_API_KEY=...`. You can also write the endpoint and the key in `~/.jeorje/config.yaml` (`llm.baseUrl` and `llm.apiKey`). A variable wins over the file. The flags `--base-url` and `--api-key` win over the variable. See [design/configuration.md](design/configuration.md#precedence).
 3. Go to your project directory and run `jeorje`.
 
 Jeorje opens the interactive interface in the current directory. Use `--dir <path>` to open another directory. Use `--model <slug>` to choose a model for this run.
@@ -64,7 +64,7 @@ See [design/permissions-and-safety.md](design/permissions-and-safety.md).
 
 ## Plan, then implement
 
-1. Type `/plan <goal>`. The agent explores the project. It cannot write files in this mode. It writes a plan: a list of stories, each with tasks.
+1. Type `/plan <goal>`. The agent explores the project. While plan mode is on, and while `/implement` runs, the main agent uses the advisor model (see `/advisor`). The workers of `/implement` use the regular model. If the advisor is off, it uses the normal model. It cannot write files in this mode. It writes a plan: a list of stories, each with tasks.
 2. Read the plan with `/plan show`. Change it with `/plan edit`.
 3. Type `/plan done` to keep the plan.
 4. Type `/implement` to start a team of subagents. Each subagent builds one story in its own git worktree. The orchestrator checks each story with its verification command.
@@ -90,7 +90,7 @@ To continue an earlier session, run `jeorje resume` or `jeorje --resume`.
 
 Jeorje prunes the context by itself. You can look at it and change it:
 
-- `/context` shows how full the context is.
+- `/context` shows how full the context is and how much of the prompt the provider read from its cache.
 - `/compact` runs compaction now.
 - `/pin` pins the last assistant message, so it stays in the context.
 - `/recall <query>` searches the full history.
@@ -101,7 +101,7 @@ See [design/context-and-compaction.md](design/context-and-compaction.md).
 ## Choose models
 
 - `/model [slug]` sets the default model.
-- `/advisor [slug|none]` sets the model that reviews the work, or turns the review off.
+- `/advisor [slug|none]` sets the model that reviews the work and writes plans in plan mode, or turns the advisor off.
 - `/compactor [slug|off]` sets the model that prunes the context.
 
 ## Add instructions and skills

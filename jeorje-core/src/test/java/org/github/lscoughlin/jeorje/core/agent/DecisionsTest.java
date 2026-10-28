@@ -98,9 +98,12 @@ class DecisionsTest {
         var rig = new Rig(llm, policy(Decision.ALLOW), Rig.settings(dir), ask);
         rig.agent.runTurn("plan it");
         rig.agent.runTurn("go on");
-        var first = llm.requests.getLast().messages().getFirst().content().getFirst().toString();
-        assertTrue(first.contains("Decisions of the user:\n- Which db?: sqlite"), first);
-        assertTrue(first.indexOf("[Pinned items]") < first.indexOf("Decisions of the user:"), first);
+        var request = llm.requests.getLast();
+        var tail = request.messages().getLast().content().getFirst().toString();
+        assertTrue(tail.contains("[Current state]") && tail.contains("Decisions of the user:\n- Which db?: sqlite"),
+            tail);
+        assertFalse(request.messages().getFirst().toString().contains("Decisions of the user:"),
+            "the block is not in the stable start");
         assertFalse(llm.requests.getFirst().toString().contains("Decisions of the user:"), "none before a decision");
     }
 }

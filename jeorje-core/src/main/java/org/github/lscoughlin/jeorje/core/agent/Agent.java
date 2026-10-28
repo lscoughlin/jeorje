@@ -143,9 +143,13 @@ public final class Agent implements AutoCloseable {
     /** How full the context was at the last model call, or a report with no numbers before the first call. */
     public ContextReport contextReport() {
         var report = lastReport;
-        return report != null ? report
-            : new ContextReport(id.value(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, contextBuilder.budget(), 0, List.of());
+        return (report != null ? report
+            : new ContextReport(id.value(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, contextBuilder.budget(), 0, List.of()))
+            .withCache(cacheStats.snapshot());
     }
+
+    /** The prompt cache numbers that the provider reported for the model calls of this agent. */
+    private final CacheStats cacheStats = new CacheStats();
     private final List<String> pinned = new ArrayList<>();
     /** The texts of the user for the running turn. {@link #steeringOpen} says whether a turn takes them. */
     private final Queue<String> steering = new ConcurrentLinkedQueue<>();
@@ -593,8 +597,7 @@ public final class Agent implements AutoCloseable {
                 }
                 calls++;
                 total++;
-                var built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
-                    olderEntries(), recentTurns(), messages, definitions()));
+                var built = contextBuilder.build(input(messages));
                 if (built.estimate() > spillTrigger(built.budget())) {
                     var target = (long) (built.budget() * SPILL_TARGET_PERCENT / 100.0);
                     var chars = (long) ((built.estimate() - target) * 4 / Math.max(0.25, contextBuilder.scale()));
@@ -603,13 +606,11 @@ public final class Agent implements AutoCloseable {
                         spilledTotal += outcome.spilled();
                         log.atDebug().log(() -> "spilled " + outcome.spilled() + " tool results of turn " + number);
                         publish(new AgentEvent.Compacted(id, outcome.spilled(), outcome.freedChars() / 4));
-                        built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
-                            olderEntries(), recentTurns(), messages, definitions()));
+                        built = contextBuilder.build(input(messages));
                     }
                 }
                 built = fitRecent(built, messages);
-                lastReport = ContextReport.of(id.value(), new ContextBuilder.Input(systemPrompt(),
-                    pinnedItems(messages), olderEntries(), recentTurns(), messages, definitions()), built, spilledTotal);
+                lastReport = ContextReport.of(id.value(), input(messages), built, spilledTotal);
                 publish(new AgentEvent.ContextUsage(id, built.estimate(), built.budget()));
                 lastRequest = built.request();
                 flushMessages(messages, spill, number);
@@ -792,8 +793,18 @@ public final class Agent implements AutoCloseable {
     }
 
     /** The pinned items of the user, and then the latest todo list. The list is read from the history of the agent. */
-    private synchronized List<String> pinnedItems(List<Message> current) {
-        var items = new ArrayList<>(pinned);
+    /** The parts of the next request. */
+    private ContextBuilder.Input input(List<Message> messages) {
+        return new ContextBuilder.Input(systemPrompt(), pinnedItems(), olderEntries(), recentTurns(), messages,
+            definitions(), trailingItems(messages));
+    }
+
+    /**
+     * The state that changes often: the decisions of the user and the latest todo list. The request puts it after
+     * the messages, so that a change does not break the prompt cache for the messages before it.
+     */
+    private synchronized List<String> trailingItems(List<Message> current) {
+        var items = new ArrayList<String>();
         var decisions = Decisions.build(completed);
         if (decisions != null) items.add(decisions);
         var todo = latestTodo(current);
@@ -876,8 +887,7 @@ public final class Agent implements AutoCloseable {
                 count = outcome == null ? 0 : outcome.chunksPruned();
             }
             pruned += count;
-            built = contextBuilder.build(new ContextBuilder.Input(systemPrompt(), pinnedItems(messages),
-                olderEntries(), recentTurns(), messages, definitions()));
+            built = contextBuilder.build(input(messages));
         }
         var firstOverBudget = built.overBudget() && overBudgetNoticeTurn != turnNumber;
         if (built.overBudget()) overBudgetNoticeTurn = turnNumber;
@@ -1022,7 +1032,10 @@ public final class Agent implements AutoCloseable {
             var assembler = new Assembler(token);
             try {
                 stream(built.request(), token, assembler);
-                if (assembler.usage != null) contextBuilder.observe(built.rawEstimate(), assembler.usage.inputTokens());
+                if (assembler.usage != null) {
+                    contextBuilder.observe(built.rawEstimate(), assembler.usage.inputTokens());
+                    cacheStats.add(assembler.usage);
+                }
                 return reply(assembler, null);
             } catch (CancellationException e) {
                 return reply(assembler, null);

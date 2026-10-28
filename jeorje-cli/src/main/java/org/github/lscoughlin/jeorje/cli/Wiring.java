@@ -101,6 +101,7 @@ public final class Wiring {
         var flags = new LinkedHashMap<String, Object>();
         if (options.model() != null) flags.put("models.default", options.model());
         if (options.baseUrl() != null) flags.put("llm.baseUrl", options.baseUrl());
+        if (options.apiKey() != null && !options.apiKey().isBlank()) flags.put("llm.apiKey", options.apiKey());
         if (!options.peers().isEmpty()) {
             flags.put("swarm.wka", List.copyOf(options.peers()));
             flags.put("swarm.enabled", true);
@@ -159,7 +160,8 @@ public final class Wiring {
         if (key.isEmpty()) {
             var names = config.llm().apiKeyEnv().isEmpty() ? List.of(ApiKeyResolver.DEFAULT_ENV)
                     : config.llm().apiKeyEnv();
-            throw new CliException("No API key found. Set the environment variable " + String.join(" or ", names) + ".");
+            throw new CliException("No API key found. Set llm.apiKey in the config file, or set the environment variable "
+                    + String.join(" or ", names) + ".");
         }
         var settings = OpenAiSettings.fromConfig(config, model, key.get());
         if (!settings.extraBody().isEmpty() && EXTRA_BODY_LOGGED.compareAndSet(false, true)) {
@@ -200,7 +202,9 @@ public final class Wiring {
     /** The permission policy for a session. */
     public static ToolPermissionPolicy policy(JeorjeConfig config, GlobalOptions options, CliEnvironment env,
                                               Path cwd, String sessionId, SecretScrubber scrubber) {
-        var extra = config.permissions().extraDirectories().stream().map(Path::of).toList();
+        var extra = new java.util.ArrayList<>(config.permissions().extraDirectories().stream().map(Path::of).toList());
+        var temp = config.permissions().tempDirectory();
+        if (!temp.isBlank()) extra.add(Path.of(temp));
         return ToolPermissionPolicy.builder(cwd)
                 .flags(options.yes(), options.yolo())
                 .configRules(config.permissions().rules())

@@ -16,18 +16,29 @@ import org.github.lscoughlin.jeorje.core.model.Turn;
 
 /**
  * Builds the model request: the system prompt, the pinned items, the pruned chunks, the recent turns,
- * and the messages of the current turn. The estimate is the character count divided by four, scaled
+ * the messages of the current turn, and last of all the trailing state. The parts that change often (the todo list
+ * and the decisions of the user) are the trailing state, so that the start of the request stays the same from one
+ * model call to the next and the provider can read it from its prompt cache. The estimate is the character count divided by four, scaled
  * with the {@code Usage} values of the provider. The budget is a share of the window (default 60%),
  * and it always leaves room for the output.
  */
 public final class ContextBuilder {
     private static final double MIN_SCALE = 0.25;
     private static final double MAX_SCALE = 4.0;
+    /** When turns must leave the request, they leave until the request is this share of the budget. */
+    private static final int TRIM_TARGET_PERCENT = 90;
 
     /** The parts of one request. */
     public record Input(String system, List<String> pinned, List<ContextEntry> older, List<Turn> recentTurns,
-                        List<Message> current, List<ToolDefinition> tools) {
+                        List<Message> current, List<ToolDefinition> tools, List<String> trailing) {
+        /** An input with no trailing state. */
+        public Input(String system, List<String> pinned, List<ContextEntry> older, List<Turn> recentTurns,
+                     List<Message> current, List<ToolDefinition> tools) {
+            this(system, pinned, older, recentTurns, current, tools, List.of());
+        }
+
         public Input {
+            trailing = List.copyOf(trailing);
             pinned = List.copyOf(pinned);
             older = List.copyOf(older);
             recentTurns = List.copyOf(recentTurns);
@@ -77,7 +88,11 @@ public final class ContextBuilder {
         scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, (double) actualInput / rawEstimate));
     }
 
-    /** Builds the request. If the budget is exceeded, the oldest recent turns leave the request. */
+    /**
+     * Builds the request. If the budget is exceeded, the oldest recent turns leave the request. They leave until
+     * the request uses {@value #TRIM_TARGET_PERCENT}% of the budget, so that the next calls drop the same turns and
+     * the start of the request stays the same.
+     */
     public synchronized Built build(Input in) {
         var budget = budget();
         var turns = new ArrayList<>(in.recentTurns());
@@ -86,7 +101,8 @@ public final class ContextBuilder {
             var request = request(in, turns, dropped);
             var raw = rawEstimate(request);
             var scaled = (int) Math.ceil(raw * scale);
-            if (scaled <= budget || turns.isEmpty()) {
+            var fits = dropped.isEmpty() ? scaled <= budget : scaled <= (long) budget * TRIM_TARGET_PERCENT / 100;
+            if (fits || turns.isEmpty()) {
                 return new Built(request, raw, scaled, budget, dropped.size(), scaled > budget,
                     dropped.stream().map(Turn::number).toList());
             }
@@ -144,7 +160,15 @@ public final class ContextBuilder {
                 messages.addFirst(Message.user(preamble));
             }
         }
-        return new LlmRequest(in.system(), messages, in.tools(), maxOutputTokens);
+        var stable = messages.size();
+        if (!in.trailing().isEmpty()) messages.add(Message.user(trailing(in.trailing())));
+        return new LlmRequest(in.system(), messages, in.tools(), maxOutputTokens, stable);
+    }
+
+    private static String trailing(List<String> items) {
+        var sb = new StringBuilder("[Current state]\n");
+        for (var item : items) sb.append(item).append("\n\n");
+        return sb.toString().stripTrailing();
     }
 
     private static String preamble(Input in, List<Turn> dropped) {

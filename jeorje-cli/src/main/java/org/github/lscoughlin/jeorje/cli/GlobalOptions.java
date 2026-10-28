@@ -18,7 +18,11 @@ public final class GlobalOptions {
     @Option(names = "--base-url", scope = ScopeType.INHERIT, description = "Base URL of the OpenAI-compatible API.")
     private String baseUrl;
 
-    @Option(names = "--peer", scope = ScopeType.INHERIT, paramLabel = "host:port",
+    @Option(names = "--api-key", scope = ScopeType.INHERIT,
+            description = "API key for this run. It wins over the environment and the config files. Other users of the machine can see command-line arguments, so prefer the environment or the config file.")
+    private String apiKey;
+
+    @Option(names = "--peer",scope = ScopeType.INHERIT, paramLabel = "host:port",
             description = "Swarm peer. Repeat the option for more peers.")
     private final List<String> peers = new ArrayList<>();
 
@@ -61,6 +65,8 @@ public final class GlobalOptions {
     public String model() { return model; }
 
     public String baseUrl() { return baseUrl; }
+
+    public String apiKey() { return apiKey; }
 
     public List<String> peers() { return peers; }
 

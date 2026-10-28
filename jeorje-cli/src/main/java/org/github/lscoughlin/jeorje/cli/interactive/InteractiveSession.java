@@ -652,7 +652,9 @@ public final class InteractiveSession implements AutoCloseable {
         var llm = new LlmClient() {
             @Override
             public Flow.Publisher<LlmEvent> stream(LlmRequest request, CancellationToken cancel) {
-                return advisor.tap(clientFor(modelOverride)).stream(request, cancel);
+                var coordinating = ms.planMode().active() || orchestrator != null && orchestrator.active();
+                var model = coordinating && roles.advisorSet() ? roles.advisor() : modelOverride;
+                return advisor.tap(clientFor(model)).stream(request, cancel);
             }
         };
         var self = new AtomicReference<Agent>();

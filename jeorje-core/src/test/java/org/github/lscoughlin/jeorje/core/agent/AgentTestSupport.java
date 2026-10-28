@@ -90,6 +90,12 @@ final class AgentTestSupport {
         return new Step.Events(events);
     }
 
+    static Step withUsage(Step step, int in, int out, int cached, int written) {
+        var events = new ArrayList<>(((Step.Events) step).events());
+        events.add(events.size() - 1, new LlmEvent.Usage(in, out, cached, written));
+        return new Step.Events(events);
+    }
+
     static Step fail(int status) { return new Step.Fail(status, null); }
 
     /** Plays the steps in order and records the requests. */
