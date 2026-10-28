@@ -89,12 +89,35 @@ class RuleAndSandboxTest {
     }
 
     @Test
-    void pathOutsideWorkspaceIsDeniedUnlessRuleAllows() {
+    void readOutsideWorkspaceAsksAndWriteIsDenied() {
         var p = builder().build();
-        assertEquals(Decision.DENY, p.check(path("read", outside.resolve("secret.txt").toString())));
-        assertEquals(Decision.DENY, p.check(path("read", "../outside/secret.txt")));
+        assertEquals(Decision.ASK, p.check(path("read", outside.resolve("secret.txt").toString())));
+        assertEquals(Decision.ASK, p.check(path("grep", "../outside")));
+        assertEquals(Decision.DENY, p.check(path("write", outside.resolve("secret.txt").toString())));
         var q = builder().rules(List.of(new Rule("read", outside.toString(), Decision.ALLOW))).build();
         assertEquals(Decision.ALLOW, q.check(path("read", outside.resolve("secret.txt").toString())));
+    }
+
+    @Test
+    void approvedOutsideReadHoldsForTheSubtree() {
+        var p = builder().build();
+        var use = path("grep", outside.toString());
+        assertEquals(Decision.ASK, p.check(use));
+        p.recordUserDecision(use, Decision.ALLOW);
+        assertEquals(Decision.ALLOW, p.check(path("read", outside.resolve("secret.txt").toString())));
+        assertEquals(Decision.DENY, p.check(path("write", outside.resolve("secret.txt").toString())));
+    }
+
+    @Test
+    void yesModeKeepsOutsideReadsDenied() {
+        var p = builder().flags(true, false).build();
+        assertEquals(Decision.DENY, p.check(path("read", outside.resolve("secret.txt").toString())));
+    }
+
+    @Test
+    void tempDirectoryIsInsideWhenListed() {
+        var p = builder().extraDirectories(List.of(outside)).build();
+        assertEquals(Decision.ALLOW, p.check(path("grep", outside.toString())));
     }
 
     @Test
@@ -102,10 +125,10 @@ class RuleAndSandboxTest {
         Files.createSymbolicLink(ws.resolve("link"), outside);
         Files.createSymbolicLink(ws.resolve("filelink"), outside.resolve("secret.txt"));
         var p = builder().build();
-        assertEquals(Decision.DENY, p.check(path("read", "link/secret.txt")));
-        assertEquals(Decision.DENY, p.check(path("read", "filelink")));
+        assertEquals(Decision.ASK, p.check(path("read", "link/secret.txt")));
+        assertEquals(Decision.ASK, p.check(path("read", "filelink")));
         assertEquals(Decision.DENY, p.check(path("write", "link/new.txt")));
-        assertEquals(Decision.DENY, p.check(path("read", "link/../outside/secret.txt")));
+        assertEquals(Decision.ASK, p.check(path("read", "link/../outside/secret.txt")));
     }
 
     @Test

@@ -72,8 +72,12 @@ final class StreamAssembler {
         }
         var usage = chunk.get("usage");
         if (usage != null && usage.isObject()) {
+            // OpenAI and OpenRouter report cache numbers in prompt_tokens_details. DeepSeek reports prompt_cache_hit_tokens.
+            var details = usage.path("prompt_tokens_details");
+            var cached = Math.max(details.path("cached_tokens").asInt(0), usage.path("prompt_cache_hit_tokens").asInt(0));
+            var written = details.path("cache_write_tokens").asInt(0);
             events.add(new LlmEvent.Usage(usage.path("prompt_tokens").asInt(0),
-                    usage.path("completion_tokens").asInt(0)));
+                    usage.path("completion_tokens").asInt(0), cached, written));
         }
         return events;
     }

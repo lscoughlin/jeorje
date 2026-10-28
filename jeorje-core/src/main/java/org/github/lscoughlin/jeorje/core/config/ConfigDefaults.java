@@ -14,6 +14,7 @@ final class ConfigDefaults {
               provider: openai-compatible
               baseUrl: https://openrouter.ai/api/v1
               apiKeyEnv: [OPENROUTER_API_KEY]
+              apiKey: ""
               maxOutputTokens: 8192
               headers: {}
               extraBody: {}
@@ -43,6 +44,7 @@ final class ConfigDefaults {
             permissions:
               rules: []
               extraDirectories: []
+              tempDirectory: /tmp
               webfetch:
                 allow: []
                 deny: []
@@ -183,10 +185,11 @@ final class ConfigDefaults {
     /** Keys with path values. The loader expands them. */
     static final List<String> PATH_KEYS = List.of("index.modelCache", "logging.file", "editor.syntax.dirs",
             "skills.dirs", "skills.compat", "agents.dirs", "instructions.userFiles", "permissions.extraDirectories",
+            "permissions.tempDirectory",
             "prompts.system.file", "prompts.compaction.file", "plan.dir", "trust.projects");
 
     /** Keys that hold secrets. Output hides them. */
-    static final Set<String> SECRET_KEYS = Set.of("swarm.token");
+    static final Set<String> SECRET_KEYS = Set.of("swarm.token", "llm.apiKey");
 
     /** True for a value that holds a secret: a listed key, or an MCP server env or header value. */
     static boolean isSecret(String path) {

@@ -491,7 +491,7 @@ The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of li
 | `/files [list [filter]]` | Open the file browser, or print the file tree. `Ctrl-X f` opens the browser pane. |
 | `/edit <path>` | Open a file in the editor |
 | `/compact` | Run compaction now |
-| `/context` | Show how full the context of the foreground agent was at its last model call: the tokens of the system prompt, the tool definitions, the pinned items, the earlier context, the recent turns, and the current turn, the share of the budget, the results moved out of a running turn, and the turns that left the request |
+| `/context` | Show how full the context of the foreground agent was at its last model call: the tokens of the system prompt, the tool definitions, the pinned items, the earlier context, the recent turns, and the current turn, the share of the budget, the prompt cache numbers of the provider (the share of the prompt tokens read from the cache in the last call and in all calls), the results moved out of a running turn, and the turns that left the request |
 | `/compactor [slug\|off]` | Show or set the compactor model for this session |
 | `/advisor [slug\|none]` | Set the advisor model for this session. With no slug, it sets `~deepseek/deepseek-pro-latest`. `none` turns the advisor off |
 | `/plan [goal\|show\|edit\|done\|cancel]` | Enter, show, edit, or leave plan mode. See [planning.md](planning.md). |
@@ -532,7 +532,7 @@ picocli parses the command line. `JeorjeMain` is the entry point.
 | `jeorje index rebuild [--session <id>]` | Build the index again from the transcript of a session. The default is the latest session. |
 | `jeorje config [--format yaml\|json] [--init] [--show-prompts] [--keys]` | Print the effective config, write a new `config.yaml`, print the assembled prompts, or print the effective key bindings |
 
-Common options: `--dir`, `--no-mouse`, `--no-mcp`, `--model`, `--base-url`, `--peer host:port` (repeatable), `--swarm-token`, `--yes`, `--yolo`, `--trust`, and `--config`. They can stand before or after the command name. The option `--trust` trusts the project config of the directory for this run. See [configuration.md](configuration.md#precedence) for the config keys that the options set. `jeorje config --show-prompts` prints the assembled system prompt and compaction prompt. `--yes` approves all prompts. `--yolo` turns off all permission checks. See [permissions-and-safety.md](permissions-and-safety.md#unattended-modes).
+Common options: `--dir`, `--no-mouse`, `--no-mcp`, `--model`, `--base-url`, `--api-key`, `--peer host:port` (repeatable), `--swarm-token`, `--yes`, `--yolo`, `--trust`, and `--config`. They can stand before or after the command name. The option `--trust` trusts the project config of the directory for this run. See [configuration.md](configuration.md#precedence) for the config keys that the options set. `jeorje config --show-prompts` prints the assembled system prompt and compaction prompt. `--yes` approves all prompts. `--yolo` turns off all permission checks. See [permissions-and-safety.md](permissions-and-safety.md#unattended-modes).
 
 ## Terminal handling
 

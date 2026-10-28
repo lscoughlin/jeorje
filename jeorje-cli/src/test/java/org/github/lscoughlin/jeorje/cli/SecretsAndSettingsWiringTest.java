@@ -54,7 +54,7 @@ class SecretsAndSettingsWiringTest {
             var skillFile = home.root().resolve(".agents/skills/demo/SKILL.md").toString();
             assertEquals(PermissionPolicy.Decision.ALLOW, policy.check(use("read", "path", skillFile)));
             assertEquals(PermissionPolicy.Decision.DENY, policy.check(use("write", "path", skillFile)));
-            assertEquals(PermissionPolicy.Decision.DENY,
+            assertEquals(PermissionPolicy.Decision.ASK,
                     policy.check(use("read", "path", home.root().resolve("other.txt").toString())));
             // The read-only folders pass to the policy of a subagent in a worktree.
             var rooted = policy.rootedAt(new org.github.lscoughlin.jeorje.core.model.AgentId("sub-1"),

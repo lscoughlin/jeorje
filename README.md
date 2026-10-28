@@ -100,7 +100,7 @@ Jeorje uses the OpenAI-compatible API. The first target is OpenRouter, and the d
 
 - `/model` sets the default model.
 - `/compactor` sets the model that prunes the context.
-- `/context` shows how full the context is: the tokens of each part of the last request and the share of the budget.
+- `/context` shows how full the context is: the tokens of each part of the last request, the share of the budget, and the share of the prompt that the provider read from its cache.
 - `/advisor` sets the model that the `advisor` tool calls. The advisor is on by default with `~deepseek/deepseek-pro-latest`, and every agent has the tool. With no slug, the command sets the default again. `/advisor none` turns the advisor off.
 
 ## User Interface

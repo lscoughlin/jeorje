@@ -107,7 +107,7 @@ public final class ConfigLoader {
             }
         }
 
-        var env = envLayer();
+        var env = envLayer(tree);
         validateKeys(env, "", "environment");
         merge(tree, env, "", ConfigSource.of(ConfigSource.Kind.ENV));
 
@@ -230,13 +230,41 @@ public final class ConfigLoader {
         return new Layer(tree, source);
     }
 
-    private Map<String, Object> envLayer() {
+    /**
+     * The values of the environment. They win over the config files, and the flags win over them. The API key comes
+     * from the first variable that {@code llm.apiKeyEnv} names (in the merged files) and has a value.
+     */
+    private Map<String, Object> envLayer(Map<String, Object> merged) {
         var tree = new LinkedHashMap<String, Object>();
         var token = options.env().get("JEORJE_SWARM_TOKEN");
         if (token != null && !token.isBlank()) {
             setPath(tree, "swarm.token", token);
         }
+        var baseUrl = options.env().get("JEORJE_BASE_URL");
+        if (baseUrl != null && !baseUrl.isBlank()) {
+            setPath(tree, "llm.baseUrl", baseUrl.strip());
+        }
+        for (var name : apiKeyEnvNames(merged)) {
+            var value = options.env().get(name);
+            if (value != null && !value.isBlank()) {
+                setPath(tree, "llm.apiKey", value.strip());
+                break;
+            }
+        }
         return tree;
+    }
+
+    /** The variable names of {@code llm.apiKeyEnv}, or the default name. */
+    private static List<String> apiKeyEnvNames(Map<String, Object> merged) {
+        var names = new ArrayList<String>();
+        if (merged.get("llm") instanceof Map<?, ?> llm) {
+            switch (llm.get("apiKeyEnv")) {
+                case String one -> names.add(one);
+                case List<?> list -> list.forEach(n -> names.add(String.valueOf(n)));
+                case null, default -> { }
+            }
+        }
+        return names.isEmpty() ? List.of(ApiKeyResolver.DEFAULT_ENV) : names;
     }
 
     private Map<String, Object> flagLayer() {
@@ -539,6 +567,9 @@ public final class ConfigLoader {
         scrubber.register(options.env().get("JEORJE_SWARM_TOKEN"));
         if (tree.get("swarm") instanceof Map<?, ?> s && s.get("token") instanceof String t) {
             scrubber.register(t);
+        }
+        if (tree.get("llm") instanceof Map<?, ?> l && l.get("apiKey") instanceof String k) {
+            scrubber.register(k);
         }
     }
 

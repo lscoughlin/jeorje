@@ -12,10 +12,11 @@ import java.util.Map;
 final class RestrictedMode {
 
     /** A path ending in ".*" matches the whole subtree. */
-    static final List<String> IGNORED = List.of("permissions.extraDirectories", "permissions.webfetch.allow",
+    static final List<String> IGNORED = List.of("permissions.extraDirectories", "permissions.tempDirectory",
+            "permissions.webfetch.allow",
             "tools.extensions", "tools.bash.shell", "prompts.*", "skills.dirs", "skills.compat",
             "skills.honorAllowedTools", "agents.dirs", "editor.syntax.dirs", "swarm.*", "llm.baseUrl",
-            "llm.headers", "llm.extraBody", "models.*", "mcp.*");
+            "llm.apiKey", "llm.headers", "llm.extraBody", "models.*", "mcp.*");
 
     private RestrictedMode() {
     }

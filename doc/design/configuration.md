@@ -37,7 +37,7 @@ Environment variables and command-line flags override file values. See [Preceden
 
 Jeorje treats a project as trusted at startup when its real path is in `trust.projects` (from the user config or the `--config` file), or when the flag `--trust` is set. The `/trust` command stores the answer in `${HOME}/.jeorje/trust.yaml`. See [instructions-and-skills.md](instructions-and-skills.md#trust). A project config cannot set `trust.projects`. Jeorje ignores the key and logs a warning.
 
-**Path values.** These keys are path values: `index.modelCache`, `logging.file`, `editor.syntax.dirs`, `skills.dirs`, `skills.compat`, `agents.dirs`, `instructions.userFiles`, `permissions.extraDirectories`, `plan.dir`, `trust.projects`, and the `file` of a prompt. Jeorje expands `~`, `${HOME}`, and `${CWD}` at the start of the value. It does not expand other variables in path values. A relative `file` of a prompt starts at the directory of the config file that names it. Examples use `${HOME}` and `${CWD}`.
+**Path values.** These keys are path values: `index.modelCache`, `logging.file`, `editor.syntax.dirs`, `skills.dirs`, `skills.compat`, `agents.dirs`, `instructions.userFiles`, `permissions.extraDirectories`, `permissions.tempDirectory`, `plan.dir`, `trust.projects`, and the `file` of a prompt. Jeorje expands `~`, `${HOME}`, and `${CWD}` at the start of the value. It does not expand other variables in path values. A relative `file` of a prompt starts at the directory of the config file that names it. Examples use `${HOME}` and `${CWD}`.
 
 ## Precedence
 
@@ -49,6 +49,7 @@ Only a few flags and variables set config values:
 |--------|------------|
 | `--model` | `models.default` |
 | `--base-url` | `llm.baseUrl` |
+| `--api-key` | `llm.apiKey` |
 | `--peer host:port` (repeatable) | `swarm.wka`, and `swarm.enabled` is `true` |
 | `--swarm` | `swarm.enabled` is `true` (the default) |
 | `--no-swarm` | `swarm.enabled` is `false` |
@@ -58,6 +59,10 @@ Only a few flags and variables set config values:
 | `--no-mcp` | No key. The session starts no MCP server. |
 | `--no-mcp-file` | `mcp.projectFile: false`. Jeorje does not read the `.mcp.json` file of the working directory. |
 | `JEORJE_SWARM_TOKEN` | `swarm.token` |
+| `JEORJE_BASE_URL` | `llm.baseUrl` |
+| The first variable of `llm.apiKeyEnv` that has a value (default `OPENROUTER_API_KEY`) | `llm.apiKey` |
+
+**Endpoint and key.** The endpoint and the key follow the general order. The flags `--base-url` and `--api-key` win over the variables `JEORJE_BASE_URL` and `OPENROUTER_API_KEY`. The variables win over the files. The user config file `${HOME}/.jeorje/config.yaml` can therefore hold `llm.baseUrl` and `llm.apiKey` as the default for all projects. A variable or a flag replaces only its own value. If you set `JEORJE_BASE_URL` but not a key variable, Jeorje sends the key of the file to the new endpoint. Set both together when you change the provider. A blank variable has no effect. The loader reads the variables, so the loaded config has the key that Jeorje uses. The command `jeorje config` shows the source of `llm.apiKey` and hides the value. The `--api-key` flag is visible to other users of the machine in the list of processes, so prefer the environment or the config file.
 
 The flag `--swarm-token` wins over `JEORJE_SWARM_TOKEN`. An empty `swarm.token` is valid. Jeorje then reads or creates the token file `${HOME}/.jeorje/swarm-token` at start. A token that you set always wins. Other flags (`--dir`, `--config`, `--trust`, `--yes`, `--yolo`) and other variables do not set config keys. See [Environment variables](#environment-variables).
 
@@ -70,6 +75,7 @@ llm:
   provider: openai-compatible        # first implementation
   baseUrl: https://openrouter.ai/api/v1
   apiKeyEnv: OPENROUTER_API_KEY      # name of the environment variable (a list of names is also accepted; the first one with a value wins)
+  apiKey: ""                         # optional. Put it in the user config file only. A variable or --api-key wins over it.
   maxOutputTokens: 8192
   headers:                           # optional
     HTTP-Referer: https://example.org
@@ -108,6 +114,7 @@ permissions:
     - tool: write
       decision: ask
   extraDirectories: []
+  tempDirectory: /tmp
   webfetch:
     allow: []
     deny: []
@@ -243,7 +250,8 @@ mcp:
 
 Rules for the keys:
 
-- `llm.apiKeyEnv` names environment variables. It is one name or a list. Jeorje uses the first variable that has a value that is not blank. Jeorje does not store the key in the file. See [permissions-and-safety.md](permissions-and-safety.md).
+- `llm.apiKeyEnv` names environment variables. It is one name or a list. Jeorje uses the first variable that has a value that is not blank.
+- `llm.apiKey` is the API key as text. It is the lowest source: the flag `--api-key` and the variables win over it (see [Precedence](#precedence)). Jeorje ignores the key in the config file of an untrusted project, and the `jeorje config` command, the logs, the session manifest, and the index never show it. Keep a file that holds a key readable by you only (`chmod 600`). Jeorje never writes the key to a file. See [permissions-and-safety.md](permissions-and-safety.md).
 - `models` keys are described in [context-and-compaction.md](context-and-compaction.md#models). A slash command changes the value for the running session only. The command does not change the config file.
 - `context.window` and `context.windows` set the size of the context window. Each value is a positive whole number of tokens. A string such as `"128_000"` is also accepted. For a model, Jeorje uses the entry of `context.windows` for the slug of the model. If there is no entry, it uses `context.window`.
 - `ui.keys` and `editor.keys` are described in [Key bindings](#key-bindings).
@@ -458,7 +466,7 @@ ${CWD}/.jeorje/                   # project directory
   config.yaml                     # project config
   worktrees/<group>/<name>/       # git worktrees for subagents (group: plan slug or session id)
   sessions/<sessionId>/
-    manifest.json                 # agent tree, config snapshot, pinned items, pruning table, run state
+    manifest.json                 # agent tree, config snapshot (without the swarm token and the API key), pinned items, pruning table, run state
     transcript.jsonl              # every message, one JSON object per line
     audit.jsonl                   # tool decisions
     index/                        # Lucene index
@@ -486,7 +494,8 @@ ${HOME}/.cache/jeorje/syntax/     # syntax files of the editor, one directory fo
 
 | Variable | Use |
 |----------|-----|
-| `OPENROUTER_API_KEY` | API key for OpenRouter. This is the default name in `llm.apiKeyEnv`. |
+| `OPENROUTER_API_KEY` | API key for OpenRouter. This is the default name in `llm.apiKeyEnv`. It wins over `llm.apiKey` in a file. |
+| `JEORJE_BASE_URL` | Base URL of the API. It sets `llm.baseUrl` and wins over the files. The flag `--base-url` wins over it. |
 | `OPENAI_API_KEY` | API key for another OpenAI-compatible endpoint. Add its name to `llm.apiKeyEnv` to use it. Jeorje always removes its value from logs. |
 | `JEORJE_SWARM_TOKEN` | Shared swarm token. It sets `swarm.token`. |
 | `JEORJE_HOME` | Replaces the user directory `${HOME}/.jeorje` for the user config file |

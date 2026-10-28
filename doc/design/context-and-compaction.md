@@ -46,14 +46,44 @@ A user chunk is short, so the index finds it easily and the embedding covers all
 [ earlier context: the chunks of older turns, oldest first, pruned chunks with a keyword hint ]
 [ recent turns, verbatim ]
 [ messages of the current turn ]
+[ trailing state: the decisions of the user and the latest todo list ]
 ```
 
-- **Pinned items** are texts that the user pins with `/pin`, followed by the latest todo list. The agent reads the text of the latest successful `todo` result from the current turn or from the finished turns, and pins it in every request. Pruning never removes the list. An empty list is not pinned. The request puts the pinned items and the earlier context in front of the first user message, under the headings `[Pinned items]` and `[Earlier context]`.
-- **Decisions of the user** are a third pinned item. The agent builds the block `Decisions of the user:` again for each request from the finished turns. It has one line for each answer to `ask_user`: `- <question>: <answer>`. It handles the plain answer (`User answer: ...`), the structured answers of a form (`User answers:` with one line for each question), and a chat request (`(the user wanted to chat: <note>)`). A declined or failed question has no line. The block has at most 4,000 characters. When it is longer, the oldest lines are cut, and the second line says `(older decisions: use recall with the filter kind user)`. The turn that runs is not in the block, because the request always holds it. The block is never pruned. It stays visible when its turn is pruned or leaves the request. Other texts of the user are not in the block: compaction never changes them, and `recall` with the filter `kind` set to `user` finds them.
+- **Pinned items** are the texts that the user pins with `/pin`. The request puts the pinned items and the earlier context in front of the first user message, under the headings `[Pinned items]` and `[Earlier context]`.
+- **Trailing state** is the part of the context that changes often. It is the latest todo list and the decisions of the user. The request puts it in its own user message after all other messages, under the heading `[Current state]`. It is last so that a change in it does not change the start of the request. See [Prompt caching](#prompt-caching).
+- **The todo list.** The agent reads the text of the latest successful `todo` result from the current turn or from the finished turns, and adds it to the trailing state of every request. Pruning never removes the list. An empty list is not added.
+- **Decisions of the user** are the other part of the trailing state. The agent builds the block `Decisions of the user:` again for each request from the finished turns. It has one line for each answer to `ask_user`: `- <question>: <answer>`. It handles the plain answer (`User answer: ...`), the structured answers of a form (`User answers:` with one line for each question), and a chat request (`(the user wanted to chat: <note>)`). A declined or failed question has no line. The block has at most 4,000 characters. When it is longer, the oldest lines are cut, and the second line says `(older decisions: use recall with the filter kind user)`. The turn that runs is not in the block, because the request always holds it. The block is never pruned. It stays visible when its turn is pruned or leaves the request. Other texts of the user are not in the block: compaction never changes them, and `recall` with the filter `kind` set to `user` finds them.
 - **Recent turns** stay verbatim. These are the last N turns (default 6, `context.recentTurns`) that use at most `context.recentMaxPercent` of the budget (default 40). The last finished turn is always recent. A recent turn that is too big moves to the earlier context when the next turn ends. Compaction then prunes it at once, because it is big.
 - **Protected content** is never pruned. See [Protection classes](#protection-classes).
 - **Pruned chunks** are the chunks of older turns. A chunk that compaction has not touched shows its original text. A pruned chunk has fewer tokens than the original and ends with a keyword hint.
 - When a request is over the budget, the builder drops the oldest recent turns. See [agent-loop.md](agent-loop.md#token-budget).
+
+## Prompt caching
+
+Model providers keep the start of a request in a prompt cache. A later request that starts with the same tokens reads that part from the cache. This costs less and starts faster. The cache matches the start of the request only. The first token that differs ends the match. Jeorje therefore keeps the start of each request the same from one model call to the next.
+
+**Order of a request.** The provider reads the parts in this order: the tool definitions, the system prompt, and the messages. Jeorje builds each part to stay the same between two calls of one agent:
+
+- The tool definitions have a fixed order.
+- The system prompt changes only when the date changes, when the plan mode changes, or when the instructions change.
+- The messages only grow. A new step adds messages at the end. It does not change the earlier messages.
+- The state that changes often is not in the start of the request. The todo list and the decisions of the user are the trailing state. The request puts them in a user message at the end. The `Built` request records how many leading messages are the same in the next call (`LlmRequest.cachedPrefixMessages`). The trailing state is not in this count.
+
+**When the start changes.** The start of a request changes in these cases. Each case costs one cache miss.
+
+- A turn ends and compaction prunes chunks, or a recent turn moves to the earlier context.
+- The user changes the pinned items.
+- The request is over the budget, and the builder drops turns. The builder then drops turns until the request uses 90% of the budget. The next calls drop the same turns, so the start stays the same for several calls.
+- The user changes the plan mode, or the date changes.
+
+**Explicit breakpoints.** Most providers, such as DeepSeek, OpenAI, and Gemini, cache the start of a request by themselves. Anthropic models need markers. When the model name starts with `anthropic` (for example `anthropic/claude-sonnet-5-5` on OpenRouter), the client adds a `cache_control` marker of the type `ephemeral` at two places:
+
+1. The system prompt. This marker covers the tool definitions and the system prompt.
+2. The last message of the part that stays the same. This marker covers the whole conversation up to the trailing state.
+
+A marker needs text content. The client changes a text message into a content block with the marker. A message with no text, such as an assistant message that has only tool calls, gets no marker. The client adds no markers for other model names, and it adds none to a request that does not ask for the cache. The compactor, the advisor, and the summary writer do not ask for the cache.
+
+**Measure the result.** Providers report the cache numbers in the usage chunk of the stream. `LlmEvent.Usage` has the fields `cachedTokens` (read from the cache) and `cacheWriteTokens` (written to the cache). The client reads `prompt_tokens_details.cached_tokens` and `prompt_tokens_details.cache_write_tokens` (OpenAI and OpenRouter) and `prompt_cache_hit_tokens` (DeepSeek). A provider that reports no cache numbers gives 0. The command `/context` shows the share of the prompt tokens that came from the cache for the last call and for all calls of the agent. A low share after the first call shows that the start of the request changes. See [ui.md](ui.md).
 
 ## Protection classes
 

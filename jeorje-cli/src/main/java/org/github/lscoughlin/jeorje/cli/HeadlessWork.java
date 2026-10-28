@@ -251,7 +251,8 @@ public final class HeadlessWork implements AutoCloseable {
         tools.put(PlanSubmitTool.NAME, new PlanSubmitTool(config.plan().dir(), mode,
                 file -> env.err().println("Plan written: " + file)));
         tools.put(AskUserTool.NAME, new AskUserTool(broker));
-        agent = new Agent(MAIN, settings(), advisor.tap(clientFor(null)), List.copyOf(tools.values()), mainPolicy,
+        var planClient = advisor.tap(clientFor(roles.advisorSet() ? roles.advisor() : null));
+        agent = new Agent(MAIN, settings(), planClient, List.copyOf(tools.values()), mainPolicy,
                 store, transcript, this::onAgentEvent, Clock.systemUTC());
         mode.maxExploreCalls(config.plan().maxExploreCalls());
         agent.withToolFilter(mode::refuse).withStepBoundary(mode::notes);

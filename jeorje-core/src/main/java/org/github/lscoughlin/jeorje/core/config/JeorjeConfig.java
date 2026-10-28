@@ -56,12 +56,21 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
      *                  {@code provider} object. The names that Jeorje sets itself cannot be used. See
      *                  {@link #RESERVED_BODY_KEYS}.
      */
-    public record Llm(String provider, String baseUrl, List<String> apiKeyEnv, int maxOutputTokens,
+    public record Llm(String provider, String baseUrl, List<String> apiKeyEnv, String apiKey, int maxOutputTokens,
                       Map<String, String> headers, Map<String, Object> extraBody) {
         public Llm {
             apiKeyEnv = list(apiKeyEnv);
+            apiKey = apiKey == null ? "" : apiKey.strip();
             headers = headers == null ? Map.of() : Map.copyOf(headers);
             extraBody = extraBody == null ? Map.of() : freezeMap(extraBody);
+        }
+
+        /** The text hides the API key. */
+        @Override
+        public String toString() {
+            return "Llm[provider=" + provider + ", baseUrl=" + baseUrl + ", apiKeyEnv=" + apiKeyEnv + ", apiKey="
+                    + (apiKey.isEmpty() ? "" : SecretScrubber.MASK) + ", maxOutputTokens=" + maxOutputTokens
+                    + ", headers=" + headers.keySet() + ", extraBody=" + extraBody.keySet() + "]";
         }
     }
 
@@ -112,10 +121,13 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
         }
     }
 
-    public record Permissions(List<PermissionRule> rules, List<String> extraDirectories, Webfetch webfetch) {
+    /** The {@code tempDirectory} is inside the sandbox. It is {@code /tmp} by default. An empty value turns it off. */
+    public record Permissions(List<PermissionRule> rules, List<String> extraDirectories, String tempDirectory,
+                              Webfetch webfetch) {
         public Permissions {
             rules = list(rules);
             extraDirectories = list(extraDirectories);
+            tempDirectory = tempDirectory == null ? "/tmp" : tempDirectory;
         }
     }
 

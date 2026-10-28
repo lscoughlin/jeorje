@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CopyOnWriteArraySet;
 import org.github.lscoughlin.jeorje.core.config.JeorjeConfig;
 import org.github.lscoughlin.jeorje.core.config.SecretScrubber;
 import org.github.lscoughlin.jeorje.core.model.AgentId;
@@ -37,6 +38,9 @@ public final class ToolPermissionPolicy implements PermissionPolicy {
             "read", "ls", "glob", "grep", "diff", "recall", "agent_status", "ask_user", "advisor",
             "todo", "plan_submit", "bash");
 
+    /** Tools that read a path. A read outside the sandbox is ASK for them, not DENY. */
+    private static final Set<String> READ_TOOLS = Set.of("read", "ls", "glob", "grep", "diff");
+
     private static final List<String> PATH_FIELDS = List.of("path", "file_path", "filePath", "a", "b");
 
     private final Mode mode;
@@ -46,6 +50,7 @@ public final class ToolPermissionPolicy implements PermissionPolicy {
     private final NetworkPolicy network;
     private final List<Rule> rules;
     private final List<Rule> sessionRules = new CopyOnWriteArrayList<>();
+    private final Set<Path> approvedReadRoots = new CopyOnWriteArraySet<>();
     private final SecretScrubber scrubber;
     private final AuditLog audit;
     private final AgentId agent;
@@ -153,6 +158,27 @@ public final class ToolPermissionPolicy implements PermissionPolicy {
     /** Records the answer of the user to an ASK. */
     public void recordUserDecision(ToolUse action, Decision decision) {
         if (audit != null) audit.record(agent, action, decision, "user", "decided");
+        if (decision == Decision.ALLOW && READ_TOOLS.contains(action.tool())) approveOutsideReads(action.input());
+    }
+
+    /** Remembers the paths outside the sandbox that the user let a read tool use. The approval lasts for the session. */
+    private void approveOutsideReads(JsonNode input) {
+        for (var path : paths(input)) {
+            var result = sandbox.check(path);
+            if (result.area() == PathSandbox.Area.OUTSIDE && !result.sensitive()) {
+                for (var policy = this; policy != null; policy = policy.parent) {
+                    policy.approvedReadRoots.add(result.resolved());
+                }
+                if (ruleSource != null) ruleSource.approvedReadRoots.add(result.resolved());
+            }
+        }
+    }
+
+    private boolean readApproved(Path real) {
+        for (var root : approvedReadRoots) {
+            if (real.startsWith(root)) return true;
+        }
+        return ruleSource != null && ruleSource.readApproved(real);
     }
 
     /** Checks the target of a redirect of {@code webfetch}. */
@@ -256,7 +282,11 @@ public final class ToolPermissionPolicy implements PermissionPolicy {
                 case OUTSIDE -> {
                     var allowedByRule = all.stream()
                             .anyMatch(r -> r.pattern() != null && r.matches(tool, own));
-                    if (!allowedByRule) return Decision.DENY;
+                    if (!allowedByRule) {
+                        var readable = !write && READ_TOOLS.contains(tool) && !result.sensitive();
+                        if (!readable || mode == Mode.YES) return Decision.DENY;
+                        if (!readApproved(result.resolved())) floor = Rule.strictest(floor, Decision.ASK);
+                    }
                 }
             }
             if (result.sensitive()) floor = Rule.strictest(floor, Decision.ASK);
