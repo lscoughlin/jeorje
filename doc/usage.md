@@ -66,7 +66,7 @@ See [design/permissions-and-safety.md](design/permissions-and-safety.md).
 
 1. Type `/plan <goal>`. The agent explores the project. While plan mode is on, and while `/implement` runs, the main agent uses the advisor model (see `/advisor`). The workers of `/implement` use the regular model. If the advisor is off, it uses the normal model. It cannot write files in this mode. It writes a plan: a list of stories, each with tasks.
 2. Read the plan with `/plan show`. Change it with `/plan edit`.
-3. Type `/plan done` to keep the plan.
+3. Type `/plan done` to keep the plan. `/implement` also leaves plan mode when it starts.
 4. Type `/implement` to start a team of subagents. Each subagent builds one story in its own git worktree. The orchestrator checks each story with its verification command.
 
 Use `/implement status`, `/implement pause`, `/implement resume`, and `/implement stop` to control the run. See [design/planning.md](design/planning.md).

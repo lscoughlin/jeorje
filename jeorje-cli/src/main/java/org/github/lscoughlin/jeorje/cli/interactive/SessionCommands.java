@@ -190,6 +190,11 @@ final class SessionCommands {
         } catch (IllegalStateException e) {
             return CommandResult.fail(e.getMessage());
         }
+        if (session.planMode().active()) {
+            session.planMode().done();
+            session.agent().planMode(null);
+            session.refreshStatus();
+        }
         return CommandResult.ok("Implementing " + plan.get().getFileName() + ".");
     }
 

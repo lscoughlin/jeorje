@@ -58,13 +58,13 @@ class GatedPolicyTest {
     }
 
     @Test
-    void planModeDeniesMcpTools() {
+    void planModeLeavesMcpToolsToTheBasePolicy() {
         var plan = new PlanMode();
-        var policy = new GatedPolicy(u -> Decision.ALLOW, plan, null);
-        assertEquals(Decision.ALLOW, policy.check(use("mcp__git__status", null)), "plan mode is off");
+        var policy = new GatedPolicy(u -> u.tool().startsWith("mcp__") ? Decision.ASK : Decision.ALLOW, plan, null);
         plan.enter("goal");
-        assertEquals(Decision.DENY, policy.check(use("mcp__git__status", null)));
-        assertFalse(PlanMode.allows("mcp__git__status"));
+        assertEquals(Decision.ASK, policy.check(use("mcp__git__status", null)));
+        assertEquals(Decision.DENY, policy.check(use("write", null)));
+        assertTrue(PlanMode.allows("mcp__git__status"));
     }
 
     @Test

@@ -25,7 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
 class PlanModeToolsTest {
     static final JsonMapper JSON = JsonMapper.builder().build();
     static final List<String> NAMES = List.of("read", "ls", "glob", "grep", "recall", "webfetch", "skill", "ask_user",
-            "advisor", "todo", "plan_submit", "bash", "write", "edit", "patch", "spawn_agent", "diff", "worktree_merge");
+            "advisor", "todo", "plan_submit", "bash", "write", "edit", "patch", "spawn_agent", "diff", "agent_status", "worktree_merge");
 
     final List<String> ran = new ArrayList<>();
     final ToolContext context = new ToolContext(Path.of("."), new AgentId("root"), CancellationToken.none(), null,

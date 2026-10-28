@@ -15,12 +15,13 @@ class PlanModeTest {
 
     @Test
     void toolSetHasOnlyReadOnlyToolsAndPlanTools() {
-        assertEquals(Set.of("read", "ls", "glob", "grep", "recall", "webfetch", "skill", "ask_user", "advisor",
+        assertEquals(Set.of("read", "ls", "glob", "grep", "recall", "agent_status", "webfetch", "skill", "ask_user", "advisor",
                 "todo", "plan_submit", "bash"), PlanMode.TOOLS);
         for (var blocked : new String[] {"write", "edit", "patch", "spawn_agent", "worktree_merge"}) {
             assertFalse(PlanMode.allows(blocked), blocked);
         }
         assertTrue(PlanMode.allows("plan_submit"));
+        assertTrue(PlanMode.allows("mcp__codegraph__codegraph_explore"));
     }
 
     @Test

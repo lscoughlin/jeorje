@@ -27,8 +27,8 @@ public final class PlanMode {
 
     /** The tools of plan mode. */
     public static final Set<String> TOOLS = Set.of(
-            "read", "ls", "glob", "grep", "recall", "webfetch", "skill", "ask_user", "advisor", "todo",
-            PLAN_SUBMIT, "bash");
+            "read", "ls", "glob", "grep", "recall", "agent_status", "webfetch", "skill", "ask_user",
+            "advisor", "todo", PLAN_SUBMIT, "bash");
 
     /** The text on the status line while the mode is active. */
     public static final String STATUS_LABEL = "PLAN";
@@ -205,8 +205,8 @@ public final class PlanMode {
     /** The plan file that {@code plan_submit} wrote in this mode. */
     public Optional<Path> submittedPlan() { return Optional.ofNullable(submitted); }
 
-    /** True if the tool is in the tool set of plan mode. */
-    public static boolean allows(String tool) { return TOOLS.contains(tool); }
+    /** True if the tool is in the tool set of plan mode. Every MCP tool is, and the permission policy decides each call. */
+    public static boolean allows(String tool) { return TOOLS.contains(tool) || tool.startsWith("mcp__"); }
 
     /** The tools of plan mode in a stable order. */
     public static List<String> toolNames() { return TOOLS.stream().sorted().toList(); }
