@@ -189,6 +189,8 @@
           <version>3.5.3</version>
           <configuration>
             <argLine>${surefire.argLine}</argLine>
+            <!-- A filtered run with -Dtest may match no test in an upstream module of the reactor. That is not a failure. -->
+            <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
           </configuration>
         </plugin>
         <plugin>
