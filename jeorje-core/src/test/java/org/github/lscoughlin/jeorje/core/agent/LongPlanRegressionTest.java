@@ -26,7 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The failed planning session, in a test. Turn 1 reads 30 files of 12,000 characters and asks the user a question.
  * Turn 2 tries to read the first 10 files again, recalls, and submits the plan. The context window is 128,000
- * tokens, so the budget is 76,800 tokens.
+ * tokens, so the headroom is 119,808 tokens and the soft budget is 71,884 tokens.
  */
 class LongPlanRegressionTest {
     @TempDir Path dir;
@@ -90,8 +90,10 @@ class LongPlanRegressionTest {
         rig.agent.runTurn("make a plan for the key handling");
         rig.agent.runTurn("Add the text keys and the Cmd modifier");
 
-        var budget = new ContextBuilder(128_000, 60, 8192).budget();
-        assertEquals(76_800, budget);
+        var builder = new ContextBuilder(128_000, 60, 8192);
+        assertEquals(119_808, builder.headroom());
+        var budget = builder.softBudget();
+        assertEquals(71_884, budget);
         for (var request : llm.requests) {
             assertTrue(ContextBuilder.rawEstimate(request) <= budget, ContextBuilder.rawEstimate(request) + " > " + budget);
         }

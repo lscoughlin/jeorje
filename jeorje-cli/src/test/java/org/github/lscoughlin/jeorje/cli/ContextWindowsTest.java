@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.Map;
 import java.util.Optional;
+import org.github.lscoughlin.jeorje.core.agent.ContextBuilder;
 import org.github.lscoughlin.jeorje.testkit.ScriptedLlmClient;
 import org.github.lscoughlin.jeorje.testkit.StubEmbedder;
 import org.github.lscoughlin.jeorje.testkit.TempWorkspace;
@@ -43,14 +44,19 @@ class ContextWindowsTest {
     /** The window in the config file changes the budget of the agent that the wiring builds. */
     @Test
     void theWindowChangesTheBudgetOfTheAgent() throws Exception {
-        var normal = budgetWith(null, null);
-        var small = budgetWith("context:\n  window: 32000\n", null);
-        var perModel = budgetWith("context:\n  window: 32000\n  windows:\n    \"%s\": 256000\n", true);
-        var otherModel = budgetWith("context:\n  window: 32000\n  windows:\n    \"not/this-model\": 256000\n", null);
-        assertEquals(128_000 * 60 / 100, normal);
-        assertEquals(32_000 * 60 / 100, small);
-        assertEquals(256_000 * 60 / 100, perModel);
-        assertEquals(small, otherModel);
+        var normal = builderWith(null, null);
+        var small = builderWith("context:\n  window: 32000\n", null);
+        var perModel = builderWith("context:\n  window: 32000\n  windows:\n    \"%s\": 256000\n", true);
+        var otherModel = builderWith("context:\n  window: 32000\n  windows:\n    \"not/this-model\": 256000\n", null);
+        assertEquals(119_808, normal.headroom());
+        assertEquals(23_808, small.headroom());
+        assertEquals(247_808, perModel.headroom());
+        assertEquals(small.headroom(), otherModel.headroom());
+
+        assertEquals(119_808 * 60 / 100, normal.budget(), "the soft budget is a share of the headroom");
+        assertEquals(23_808 * 60 / 100, small.budget());
+        assertEquals(247_808 * 60 / 100, perModel.budget());
+        assertEquals(small.budget(), otherModel.budget());
     }
 
     @Test
@@ -72,7 +78,7 @@ class ContextWindowsTest {
                 config -> Optional.of(new StubEmbedder()), false);
     }
 
-    private static int budgetWith(String yaml, Object perModel) throws Exception {
+    private static ContextBuilder builderWith(String yaml, Object perModel) throws Exception {
         try (var home = new TempWorkspace(); var cwd = new TempWorkspace()) {
             var env = env(home, cwd);
             var options = CommandLine.populateCommand(new Holder(), "--dir", cwd.root().toString()).global;
@@ -82,7 +88,7 @@ class ContextWindowsTest {
             }
             var loaded = Wiring.loadConfig(options, env);
             try (var runtime = Wiring.open(loaded, options, env)) {
-                return runtime.agent().contextBuilder().budget();
+                return runtime.agent().contextBuilder();
             }
         }
     }
