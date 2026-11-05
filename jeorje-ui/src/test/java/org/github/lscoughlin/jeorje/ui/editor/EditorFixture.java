@@ -53,6 +53,10 @@ final class EditorFixture {
     static final String SHIFT_END = "\u001b[1;2F";
     static final String CTRL_LEFT = "\u001b[1;5D";
     static final String CTRL_RIGHT = "\u001b[1;5C";
+    static final String ALT_LEFT = "\u001b[1;3D";
+    static final String ALT_RIGHT = "\u001b[1;3C";
+    static final String CTRL_BACKSPACE = "\b";
+    static final String CTRL_DEL = "\u001b[3;5~";
     static final String CTRL_HOME = "\u001b[1;5H";
     static final String CTRL_END = "\u001b[1;5F";
     static final String ALT_X = "\u001bx";

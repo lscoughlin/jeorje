@@ -85,14 +85,39 @@ class EditingTest {
         var f = new EditorFixture(dir);
         f.type("alpha beta  gamma");
         f.type(HOME);
-        f.type(CTRL_RIGHT);
+        f.type(ALT_RIGHT);
         assertEquals(6, f.editor.cursor());
-        f.type(CTRL_RIGHT);
+        f.type(ALT_RIGHT);
         assertEquals(12, f.editor.cursor());
-        f.type(CTRL_LEFT);
+        f.type(ALT_LEFT);
         assertEquals(6, f.editor.cursor());
-        f.type(CTRL_LEFT);
+        f.type(ALT_LEFT);
         assertEquals(0, f.editor.cursor());
+    }
+
+    @Test
+    void ctrlArrowsGoToTheLineEnds() {
+        var f = new EditorFixture(dir);
+        f.type("alpha beta" + ENTER + "gamma delta");
+        // The cursor sits at the end of the second line.
+        f.type(CTRL_LEFT);
+        assertEquals(11, f.editor.cursor());
+        // Ctrl-Left stops at the start of the line, and does not continue to the line above.
+        f.type(CTRL_LEFT);
+        assertEquals(11, f.editor.cursor());
+        f.type(CTRL_RIGHT);
+        assertEquals(22, f.editor.cursor());
+    }
+
+    @Test
+    void ctrlBackspaceAndCtrlDeleteRemoveWords() {
+        var f = new EditorFixture(dir);
+        f.type("alpha beta gamma");
+        f.type(CTRL_BACKSPACE);
+        assertEquals("alpha beta ", f.editor.text());
+        f.type(HOME);
+        f.type(CTRL_DEL);
+        assertEquals("beta ", f.editor.text());
     }
 
     @Test
@@ -115,7 +140,7 @@ class EditingTest {
         var f = new EditorFixture(dir);
         f.type("one two three");
         f.type(HOME);
-        f.type("\u001b[1;6C");
+        f.type("\u001b[1;4C");
         assertEquals("one ", f.editor.selectedText());
     }
 

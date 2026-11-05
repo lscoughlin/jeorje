@@ -164,6 +164,10 @@ public record KeySpec(List<Key> keys) {
                         out.add("\177");
                     } else if (alt && !ctrl && !shift) {
                         out.add("\033\177");
+                    } else if (ctrl && !alt && !shift) {
+                        // Terminals send Ctrl-Backspace as the control character for Ctrl-H. A terminal with the
+                        // Kitty protocol sends the form ESC [ 127 ; 5 u instead, and kittySequences() covers that.
+                        out.add("\b");
                     }
                 }
                 default -> {
@@ -179,6 +183,10 @@ public record KeySpec(List<Key> keys) {
                             }
                         } else {
                             out.add("\033[1;" + m + letter);
+                            // Older xterm sends Ctrl-Left and Ctrl-Right without the modifier number.
+                            if (ctrl && !alt && !shift && (base.equals("Left") || base.equals("Right"))) {
+                                out.add("\033[5" + letter);
+                            }
                         }
                         return;
                     }

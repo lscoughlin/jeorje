@@ -39,6 +39,22 @@ public final class InputLine {
         });
         var main = reader.getKeyMaps().get(LineReader.MAIN);
         main.bind(new org.jline.reader.Reference("jeorje-newline"), KeyMap.alt('\r'), KeyMap.alt('\n'));
+        // The same keys as the editor. JLine already moves by word with Alt-Left and Alt-Right, and deletes a word
+        // with Ctrl-Delete. The binding here moves the Ctrl-Left and Ctrl-Right keys from word movement to the line
+        // ends, and covers the Ctrl-Backspace forms.
+        bind(main, LineReader.BEGINNING_OF_LINE, "\033[1;5D", "\033[5D");
+        bind(main, LineReader.END_OF_LINE, "\033[1;5C", "\033[5C");
+        // Terminal.app on macOS sends these for Alt-Left and Alt-Right. Without a binding they type literal text.
+        bind(main, LineReader.BACKWARD_WORD, "\033[1;3D");
+        bind(main, LineReader.FORWARD_WORD, "\033[1;3C");
+        // A terminal with the Kitty protocol sends Ctrl-Backspace as ESC [ 127 ; 5 u. Other terminals send the
+        // control code 0x08, which is also Ctrl-H. The editor makes the same choice.
+        bind(main, LineReader.BACKWARD_KILL_WORD, "\033[127;5u", "\b");
+        bind(main, LineReader.KILL_WORD, "\033[3;5~");
+    }
+
+    private static void bind(KeyMap<org.jline.reader.Binding> map, String widget, String... sequences) {
+        map.bind(new org.jline.reader.Reference(widget), sequences);
     }
 
     /**

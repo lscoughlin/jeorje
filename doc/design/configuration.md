@@ -436,10 +436,17 @@ Editor (`editor.keys`):
 | `switchWindow` | `F6` | Move the cursor to the other split window |
 | `toggleInsert` | `Ins` | Switch between insert and overwrite |
 | `indent`, `unindent` | `Tab`, `Shift-Tab` | Indent or unindent |
-| `wordLeft`, `wordRight` | `Ctrl-Left`, `Ctrl-Right` | Move by word |
+| `wordLeft`, `wordRight` | `Alt-Left`, `Alt-Right` | Move by word |
 | `fileStart`, `fileEnd` | `Ctrl-Home`, `Ctrl-End` | Go to the start or the end of the file |
+| `lineStart`, `lineEnd` | `Home` and `Ctrl-Left`, `End` and `Ctrl-Right` | Go to the start or the end of the line |
+| `backspace`, `delete` | `Backspace`, `Del` | Delete the character, or the selection |
+| `deleteWordLeft`, `deleteWordRight` | `Ctrl-Backspace`, `Ctrl-Del` | Delete the word before or after the cursor |
 
-Movement keys (arrows, `Home`, `End`, `PgUp`, `PgDn`), `Backspace`, and `Del` are also actions of the editor (`left`, `right`, `up`, `down`, `lineStart`, `lineEnd`, `pageUp`, `pageDown`, `backspace`, `delete`). Users can change these keys in the same way. The `Shift-` form of each movement key selects text. Jeorje derives it from the movement key and gives it the internal id `select:<id>`, for example `select:left`. The same holds for `wordLeft`, `wordRight`, `fileStart`, and `fileEnd`. Jeorje does not derive a Shift form when another action already uses that key. A derived key is not an action id, so the config cannot name it.
+Movement keys (arrows, `Home`, `End`, `PgUp`, `PgDn`), `Backspace`, `Del`, and the keys of `lineStart` and `lineEnd` are also actions of the editor (`left`, `right`, `up`, `down`, `lineStart`, `lineEnd`, `pageUp`, `pageDown`, `backspace`, `delete`, `deleteWordLeft`, `deleteWordRight`). Users can change these keys in the same way. The `Shift-` form of each movement key selects text. Jeorje derives it from the movement key and gives it the internal id `select:<id>`, for example `select:left`. The same holds for `wordLeft`, `wordRight`, `fileStart`, and `fileEnd`. Jeorje does not derive a Shift form when another action already uses that key. A derived key is not an action id, so the config cannot name it.
+
+Some terminals send `Ctrl-Left` and `Ctrl-Right` as `ESC [ 5 D` and `ESC [ 5 C`. Jeorje accepts both forms for the same action. Terminal.app on macOS sends `Alt-Left` and `Alt-Right` as `ESC [ 1 ; 3 D` and `ESC [ 1 ; 3 C`, and also as `Alt-B` and `Alt-F`. Jeorje binds all of these forms.
+
+A terminal with the Kitty keyboard protocol sends `Ctrl-Backspace` as `ESC [ 127 ; 5 u`. Other terminals send the control code `0x08`. That code is the same as `Ctrl-H`, so on those terminals `Ctrl-H` also deletes a word.
 
 Keys that the terminal needs to type text are not actions. A printable character with no modifier always enters the text in the editor and the input line.
 

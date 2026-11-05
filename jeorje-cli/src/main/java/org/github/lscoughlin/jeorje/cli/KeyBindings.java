@@ -24,8 +24,11 @@ final class KeyBindings {
                 "close", "Alt-X", "undo", "Ctrl-Z", "redo", "Ctrl-Y", "cut", "Shift-Del", "copy", "Ctrl-Ins",
                 "paste", "Shift-Ins", "selectAll", "Ctrl-A", "find", "Ctrl-Q f", "repeatFind", "F3",
                 "change", "Ctrl-Q a", "goToLine", "Ctrl-G", "help", "F1", "switchWindow", "F6",
-                "toggleInsert", "Ins", "indent", "Tab", "unindent", "Shift-Tab", "wordLeft", "Ctrl-Left",
-                "wordRight", "Ctrl-Right", "fileStart", "Ctrl-Home", "fileEnd", "Ctrl-End");
+                "toggleInsert", "Ins", "indent", "Tab", "unindent", "Shift-Tab", "wordLeft", "Alt-Left",
+                "wordRight", "Alt-Right", "fileStart", "Ctrl-Home", "fileEnd", "Ctrl-End",
+                "lineStart", "Home, Ctrl-Left", "lineEnd", "End, Ctrl-Right",
+                "backspace", "Backspace", "delete", "Del",
+                "deleteWordLeft", "Ctrl-Backspace", "deleteWordRight", "Ctrl-Del");
     }
 
     private KeyBindings() {}

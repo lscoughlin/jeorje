@@ -721,6 +721,8 @@ public final class QEditor {
                  "wordRight", "fileStart", "fileEnd" -> move(id, false);
             case "backspace" -> backspace();
             case "delete" -> delete();
+            case "deleteWordLeft" -> deleteWordLeft();
+            case "deleteWordRight" -> deleteWordRight();
             case "clear" -> {
                 if (win().hasSelection()) {
                     deleteSelection(UndoStack.Kind.NONE);
@@ -964,6 +966,32 @@ public final class QEditor {
             deleteSelection(UndoStack.Kind.NONE);
         } else if (w.cursor < w.doc.buffer.length()) {
             edit(w.cursor, nextOffset(w.cursor), "", w.cursor, UndoStack.Kind.DELETE);
+        }
+    }
+
+    /** Deletes the word before the cursor, and the spaces before that word. */
+    private void deleteWordLeft() {
+        var w = win();
+        if (w.hasSelection()) {
+            deleteSelection(UndoStack.Kind.NONE);
+            return;
+        }
+        var start = wordLeft(w.doc.buffer, w.cursor);
+        if (start < w.cursor) {
+            edit(start, w.cursor, "", start, UndoStack.Kind.BACKSPACE);
+        }
+    }
+
+    /** Deletes the word after the cursor, and the spaces after that word. */
+    private void deleteWordRight() {
+        var w = win();
+        if (w.hasSelection()) {
+            deleteSelection(UndoStack.Kind.NONE);
+            return;
+        }
+        var end = wordRight(w.doc.buffer, w.cursor);
+        if (end > w.cursor) {
+            edit(w.cursor, end, "", w.cursor, UndoStack.Kind.DELETE);
         }
     }
 

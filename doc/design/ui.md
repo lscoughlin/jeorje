@@ -431,11 +431,13 @@ The keys follow the QBasic editor. These are the default keys. The config can ch
 | Key | Action |
 |-----|--------|
 | Arrow keys, `Home`, `End`, `PgUp`, `PgDn` | Move the cursor |
-| `Ctrl-Left`, `Ctrl-Right` | Move by word |
+| `Ctrl-Left`, `Ctrl-Right` | Go to the start or the end of the line |
+| `Alt-Left`, `Alt-Right` | Move by word |
 | `Ctrl-Home`, `Ctrl-End` | Go to the start or the end of the file |
-| `Shift` with any movement key (including `Ctrl-Left`, `Ctrl-Right`, `Ctrl-Home`, and `Ctrl-End`) | Select text. Jeorje derives these keys from the movement keys. |
+| `Shift` with any movement key (including `Ctrl-Left`, `Ctrl-Right`, `Alt-Left`, `Alt-Right`, `Ctrl-Home`, and `Ctrl-End`) | Select text. Jeorje derives these keys from the movement keys. |
 | `Ins` | Switch between insert and overwrite for typed characters. The status bar shows `OVR` in overwrite mode. |
 | `Del`, `Backspace` | Delete the character, or the selection |
+| `Ctrl-Del`, `Ctrl-Backspace` | Delete the word after or before the cursor, or the selection |
 | `Tab`, `Shift-Tab` | Indent or unindent the line or the selected lines |
 | `Ctrl-Y` and `Ctrl-Z` | Redo and undo (the Edit menu shows the keys) |
 | `Shift-Del`, `Ctrl-Ins`, `Shift-Ins` | Cut, copy, paste |
@@ -479,6 +481,18 @@ Dialogs, such as Find, Save As, and Go To Line, are boxes in the middle of the s
 | `PgUp`, `PgDn` | Scroll the chat view by a page |
 
 The input line keeps the JLine emacs key bindings, such as `Ctrl-A` (start of line) and `Ctrl-F` (forward one character). Jeorje uses the `Ctrl-X` prefix for its own commands, so they do not replace the editing keys. Every key in this section is a default. The config can change all of them, except for the fixed keys. See [configuration.md](configuration.md#key-bindings) for the notation, the rules, and the action ids.
+
+The input line uses the same move and delete keys as the editor:
+
+| Key | Action |
+|-----|--------|
+| `Ctrl-Left`, `Ctrl-Right` | Go to the start or the end of the line |
+| `Alt-Left`, `Alt-Right` | Move by word |
+| `Ctrl-Backspace`, `Ctrl-Del` | Delete the word before or after the cursor |
+
+Some terminals send `Ctrl-Left` and `Ctrl-Right` in the older xterm form `ESC [ 5 D` and `ESC [ 5 C`. The input line accepts both forms. Terminal.app on macOS sends `Alt-Left` and `Alt-Right` as `ESC [ 1 ; 3 D` and `ESC [ 1 ; 3 C`. The input line binds these forms and also the `Alt-B` and `Alt-F` forms. See [configuration.md](configuration.md#key-bindings).
+
+A terminal with the Kitty keyboard protocol sends `Ctrl-Backspace` as `ESC [ 127 ; 5 u`. Other terminals send the control code `0x08`. That code is the same as `Ctrl-H`, so on those terminals `Ctrl-H` also deletes a word. The editor makes the same choice.
 
 ## Slash commands
 

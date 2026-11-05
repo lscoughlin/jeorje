@@ -71,20 +71,22 @@ public final class ActionRegistry {
         editor("toggleInsert", "Switch between insert and overwrite", false, "Ins");
         editor("indent", "Indent", false, "Tab");
         editor("unindent", "Unindent", false, "Shift-Tab");
-        editor("wordLeft", "Move one word left", false, "Ctrl-Left");
-        editor("wordRight", "Move one word right", false, "Ctrl-Right");
+        editor("wordLeft", "Move one word left", false, "Alt-Left");
+        editor("wordRight", "Move one word right", false, "Alt-Right");
         editor("fileStart", "Go to the start of the file", false, "Ctrl-Home");
         editor("fileEnd", "Go to the end of the file", false, "Ctrl-End");
         editor("left", "Move left", false, "Left");
         editor("right", "Move right", false, "Right");
         editor("up", "Move up", false, "Up");
         editor("down", "Move down", false, "Down");
-        editor("lineStart", "Go to the start of the line", false, "Home");
-        editor("lineEnd", "Go to the end of the line", false, "End");
+        editor("lineStart", "Go to the start of the line", false, "Home", "Ctrl-Left");
+        editor("lineEnd", "Go to the end of the line", false, "End", "Ctrl-Right");
         editor("pageUp", "Move one page up", false, "PgUp");
         editor("pageDown", "Move one page down", false, "PgDn");
         editor("backspace", "Delete the character before the cursor", false, "Backspace");
         editor("delete", "Delete the character at the cursor", false, "Del");
+        editor("deleteWordLeft", "Delete the word before the cursor", false, "Ctrl-Backspace");
+        editor("deleteWordRight", "Delete the word after the cursor", false, "Ctrl-Del");
     }
 
     /** The registry with the built-in actions. */

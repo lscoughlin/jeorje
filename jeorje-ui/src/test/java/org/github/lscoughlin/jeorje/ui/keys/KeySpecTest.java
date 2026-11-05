@@ -108,7 +108,12 @@ class KeySpecTest {
         assertEquals(List.of("\033[5~"), KeySpec.parse("PgUp").sequences(false));
         assertEquals(List.of("\033[2;5~"), KeySpec.parse("Ctrl-Ins").sequences(false));
         assertEquals(List.of("\033[3;2~"), KeySpec.parse("Shift-Del").sequences(false));
-        assertEquals(List.of("\033[1;5D"), KeySpec.parse("Ctrl-Left").sequences(false));
+        // Older xterm sent Ctrl-Left without the modifier number, so both forms bind to the same action.
+        assertEquals(List.of("\033[1;5D", "\033[5D"), KeySpec.parse("Ctrl-Left").sequences(false));
+        assertEquals(List.of("\033[1;5C", "\033[5C"), KeySpec.parse("Ctrl-Right").sequences(false));
+        // A terminal without the Kitty protocol sends Ctrl-Backspace as the control character for Ctrl-H.
+        assertEquals(List.of("\b"), KeySpec.parse("Ctrl-Backspace").sequences(false));
+        assertEquals(List.of("\033[3;5~"), KeySpec.parse("Ctrl-Del").sequences(false));
         assertEquals(List.of("\033[Z"), KeySpec.parse("Shift-Tab").sequences(false));
         assertEquals(List.of("\033OP"), KeySpec.parse("F1").sequences(false));
         assertEquals(List.of("\033[21~"), KeySpec.parse("F10").sequences(false));

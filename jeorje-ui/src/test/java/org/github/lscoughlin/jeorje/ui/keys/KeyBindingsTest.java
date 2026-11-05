@@ -240,7 +240,24 @@ class KeyBindingsTest {
         assertEquals("left", editor.getBound("\033[D"));
         assertEquals("select:left", editor.getBound("\033[1;2D"));
         assertEquals("select:pageDown", editor.getBound("\033[6;2~"));
-        assertEquals("wordLeft", editor.getBound("\033[1;5D"));
+        assertEquals("wordLeft", editor.getBound("\033[1;3D"));
+        // The word and file movements get their selection keys from the editor, not from the shared key map builder.
+    }
+
+    @Test
+    void lineEndsTakeCtrlLeftAndCtrlRight() {
+        var editor = new KeyMapBuilder(KeyBindings.defaults(), false).build(KeyContext.EDITOR);
+        assertEquals("lineStart", editor.getBound("\033[1;5D"));
+        assertEquals("lineStart", editor.getBound("\033[5D"));
+        assertEquals("lineEnd", editor.getBound("\033[1;5C"));
+        assertEquals("lineEnd", editor.getBound("\033[5C"));
+    }
+
+    @Test
+    void deleteWordKeysAreBound() {
+        var editor = new KeyMapBuilder(KeyBindings.defaults(), false).build(KeyContext.EDITOR);
+        assertEquals("deleteWordLeft", editor.getBound("\b"));
+        assertEquals("deleteWordRight", editor.getBound("\033[3;5~"));
     }
 
     @Test
