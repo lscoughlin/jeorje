@@ -19,7 +19,7 @@ class ContextReportTest {
         var rig = new Rig(new Scripted(text("a")), policy(Decision.ALLOW), Rig.settings(dir));
         var report = rig.agent.contextReport();
         assertEquals(0, report.request());
-        assertEquals(60_000, report.budget());
+        assertEquals(55_084, report.budget(), "60% of the 91,808-token headroom");
         assertEquals(0, report.percent());
         assertTrue(report.render().contains("request"));
     }
@@ -35,7 +35,7 @@ class ContextReportTest {
         var usage = rig.events(AgentEvent.ContextUsage.class);
         assertEquals(3, usage.size(), "one event for each model call");
         assertTrue(usage.get(1).tokens() > usage.get(0).tokens(), "the second call has the tool result");
-        assertEquals(60_000, usage.getLast().budget());
+        assertEquals(55_084, usage.getLast().budget());
 
         var report = rig.agent.contextReport();
         assertEquals(usage.getLast().tokens(), report.request());
@@ -52,6 +52,6 @@ class ContextReportTest {
         assertTrue(text.contains("1 turn)"), text);
         assertTrue(text.contains("Results moved out of a running turn: 0"), text);
         assertTrue(text.endsWith("Turns that left the last request: none"), text);
-        assertTrue(text.contains("of 60,000 tokens (" + report.percent() + "%)"), text);
+        assertTrue(text.contains("of 55,084 tokens (" + report.percent() + "%)"), text);
     }
 }

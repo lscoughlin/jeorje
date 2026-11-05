@@ -866,10 +866,11 @@ public final class Agent implements AutoCloseable {
     }
 
     /**
-     * Makes room when the request does not fit the budget, and a recent turn would leave it. The agent first moves
-     * the oldest recent turn to the older entries and prunes at the hard level, one turn at a time. A turn leaves
-     * the request only when pruning does not make enough room. The request then has a line that tells the model
-     * about it. The agent logs a warning and publishes {@link AgentEvent.ContextTrimmed} for the user.
+     * Makes room when the request does not fit the soft budget, and a recent turn would leave it. The agent first
+     * moves the oldest recent turn to the older entries and prunes at the hard level, one turn at a time. A turn
+     * leaves the request only when pruning does not make enough room. The request then has a line that tells the
+     * model about it. The agent logs a warning and publishes {@link AgentEvent.ContextTrimmed} for the user. A
+     * request is over budget only when it is still larger than the hard headroom after this work.
      */
     private ContextBuilder.Built fitRecent(ContextBuilder.Built first, List<Message> messages) {
         var built = first;
@@ -894,9 +895,10 @@ public final class Agent implements AutoCloseable {
         if (built.droppedTurns() > 0 || pruned > 0 || firstOverBudget) {
             var result = built;
             var prunedNow = pruned;
-            log.atWarn().log(() -> "The request of " + id + " did not fit the budget of " + result.budget()
-                + " tokens: " + prunedNow + " chunks pruned, turns " + result.droppedTurnNumbers() + " dropped, "
-                + (result.overBudget() ? "still over the budget" : "now inside the budget"));
+            log.atWarn().log(() -> "The request of " + id + " did not fit the soft budget of " + result.budget()
+                + " tokens (the hard headroom is " + result.headroom() + " tokens): " + prunedNow
+                + " chunks pruned, turns " + result.droppedTurnNumbers() + " dropped, "
+                + (result.overBudget() ? "still over the headroom" : "now inside the headroom"));
             publish(new AgentEvent.ContextTrimmed(id, result.droppedTurnNumbers(), prunedNow, result.overBudget()));
         }
         return built;

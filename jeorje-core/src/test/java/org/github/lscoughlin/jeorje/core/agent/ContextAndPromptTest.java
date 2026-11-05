@@ -26,9 +26,25 @@ class ContextAndPromptTest {
     }
 
     @Test
-    void budgetIsSixtyPercentOfTheWindowAndLeavesRoomForOutput() {
-        assertEquals(6_000, new ContextBuilder(10_000, 60, 1_000).budget());
-        assertEquals(1_000, new ContextBuilder(10_000, 60, 9_000).budget());
+    void budgetIsSixtyPercentOfTheRoomForTheOutput() {
+        var b = new ContextBuilder(10_000, 60, 1_000);
+        assertEquals(9_000, b.headroom(), "the hard ceiling is the window less the output");
+        assertEquals(5_400, b.budget(), "the soft budget is a share of the headroom");
+        assertEquals(b.budget(), b.softBudget());
+
+        var tight = new ContextBuilder(10_000, 60, 9_000);
+        assertEquals(1_000, tight.headroom());
+        assertEquals(600, tight.softBudget());
+    }
+
+    @Test
+    void overTheSoftBudgetButUnderTheHeadroomIsNotOverBudget() {
+        var b = new ContextBuilder(1_000, 60, 100);
+        // The soft budget is 540 tokens. This request is larger, but it fits the hard ceiling of 900 tokens.
+        var built = b.build(input(List.of(), List.of(Message.user("y".repeat(2_800)))));
+        assertFalse(built.overBudget(), built.toString());
+        assertTrue(built.estimate() > built.budget(), built.toString());
+        assertTrue(built.estimate() <= built.headroom(), built.toString());
     }
 
     @Test
@@ -39,6 +55,8 @@ class ContextAndPromptTest {
         assertFalse(built.overBudget());
         assertEquals(5, built.request().messages().size());
         assertEquals(1_000, built.request().maxOutputTokens());
+        assertEquals(9_000, built.headroom());
+        assertTrue(built.headroom() > built.budget());
     }
 
     @Test

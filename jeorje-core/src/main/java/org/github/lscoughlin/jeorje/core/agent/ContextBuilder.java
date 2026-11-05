@@ -19,8 +19,12 @@ import org.github.lscoughlin.jeorje.core.model.Turn;
  * the messages of the current turn, and last of all the trailing state. The parts that change often (the todo list
  * and the decisions of the user) are the trailing state, so that the start of the request stays the same from one
  * model call to the next and the provider can read it from its prompt cache. The estimate is the character count divided by four, scaled
- * with the {@code Usage} values of the provider. The budget is a share of the window (default 60%),
- * and it always leaves room for the output.
+ * with the {@code Usage} values of the provider.
+ * <p>
+ * The budget has two parts. The hard ceiling ({@link #headroom()}) is the window minus the room for the output. The
+ * soft working budget ({@link #budget()}) is a share of that ceiling (default 60%). The builder holds the request to
+ * the soft budget. A request is over budget only when it is over the hard ceiling, because only then the model
+ * cannot read it together with its output.
  */
 public final class ContextBuilder {
     private static final double MIN_SCALE = 0.25;
@@ -52,11 +56,13 @@ public final class ContextBuilder {
      *
      * @param rawEstimate the estimate before the scale
      * @param estimate the estimate with the scale
+     * @param budget the soft working budget, which the builder aims for
+     * @param headroom the hard ceiling: the window minus the room for the output
      * @param droppedTurns recent turns that left the request to meet the budget
-     * @param overBudget true if the request is still over the budget
+     * @param overBudget true if the request is over the hard ceiling
      * @param droppedTurnNumbers the numbers of the dropped turns, oldest first
      */
-    public record Built(LlmRequest request, int rawEstimate, int estimate, int budget, int droppedTurns,
+    public record Built(LlmRequest request, int rawEstimate, int estimate, int budget, int headroom, int droppedTurns,
                         boolean overBudget, List<Integer> droppedTurnNumbers) {
         public Built {
             droppedTurnNumbers = List.copyOf(droppedTurnNumbers);
@@ -74,10 +80,31 @@ public final class ContextBuilder {
         this.maxOutputTokens = maxOutputTokens;
     }
 
-    /** The working-context budget: the share of the window, less than the room for the output. */
+    /**
+     * The hard ceiling: the context window minus the room that the reply needs. A request above this value cannot
+     * be answered in full, because the request and the reply must both fit the window.
+     */
+    public int headroom() {
+        return Math.max(1, contextWindow - maxOutputTokens);
+    }
+
+    /**
+     * The soft working budget: {@code budgetPercent} of the {@link #headroom()}, at most the headroom. Pruning and
+     * compaction aim at this value, so that a request has room to grow before it reaches the hard ceiling.
+     */
+    public int softBudget() {
+        var headroom = headroom();
+        var share = (int) ((long) headroom * budgetPercent / 100);
+        return Math.max(1, Math.min(headroom, share));
+    }
+
+    /**
+     * The working-context budget: the soft share of the headroom that the builder aims for. It is not a hard limit.
+     * A request that is larger than this value loses its oldest recent turns, but it is over budget only when it is
+     * larger than {@link #headroom()}.
+     */
     public int budget() {
-        var share = (int) ((long) contextWindow * budgetPercent / 100);
-        return Math.max(1, Math.min(share, contextWindow - maxOutputTokens));
+        return softBudget();
     }
 
     public synchronized double scale() { return scale; }
@@ -89,12 +116,14 @@ public final class ContextBuilder {
     }
 
     /**
-     * Builds the request. If the budget is exceeded, the oldest recent turns leave the request. They leave until
-     * the request uses {@value #TRIM_TARGET_PERCENT}% of the budget, so that the next calls drop the same turns and
-     * the start of the request stays the same.
+     * Builds the request. If the soft budget is exceeded, the oldest recent turns leave the request. They leave until
+     * the request uses {@value #TRIM_TARGET_PERCENT}% of the soft budget, so that the next calls drop the same turns
+     * and the start of the request stays the same. The request is over budget only if it is still larger than the
+     * hard {@link #headroom()} after the oldest turns left.
      */
     public synchronized Built build(Input in) {
-        var budget = budget();
+        var budget = softBudget();
+        var headroom = headroom();
         var turns = new ArrayList<>(in.recentTurns());
         var dropped = new ArrayList<Turn>();
         while (true) {
@@ -103,7 +132,7 @@ public final class ContextBuilder {
             var scaled = (int) Math.ceil(raw * scale);
             var fits = dropped.isEmpty() ? scaled <= budget : scaled <= (long) budget * TRIM_TARGET_PERCENT / 100;
             if (fits || turns.isEmpty()) {
-                return new Built(request, raw, scaled, budget, dropped.size(), scaled > budget,
+                return new Built(request, raw, scaled, budget, headroom, dropped.size(), scaled > headroom,
                     dropped.stream().map(Turn::number).toList());
             }
             dropped.add(turns.removeFirst());
