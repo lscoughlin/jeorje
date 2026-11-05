@@ -17,6 +17,12 @@ Jeorje opens the interactive interface in the current directory. Use `--dir <pat
 
 To write a starting config file, run `jeorje config --init`. To see the effective config, run `jeorje config`. See [design/configuration.md](design/configuration.md).
 
+### Install the launcher
+
+In a source checkout, run `task install`. The task builds the jar, then it makes the symbolic link `~/.local/bin/jeorje` to `bin/jeorje`. When `~/.local/bin` is on your `PATH`, the command `jeorje` works in every directory. Set `PREFIX` to link into another directory: `task install PREFIX=/usr/local/bin`.
+
+The link points into the checkout. A later `task install` updates it when the checkout moves. The launcher reads `bin/jeorje.jar` in the checkout, and it builds that jar when the jar is missing.
+
 ## Talk to the agent
 
 Type a task in the input line and press `Enter`. The agent reads files, changes files, and runs tools. The chat view shows its work as it happens.

@@ -1,5 +1,9 @@
 version: '3'
 
+vars:
+  # Where "task install" puts the launcher. Set PREFIX to change it: task install PREFIX=/usr/local/bin
+  BIN_DIR: '{{.PREFIX | default (printf "%s/.local/bin" .HOME)}}'
+
 tasks:
   dist:
     desc: Build the jars and copy them into bin/ for the launcher
@@ -8,3 +12,20 @@ tasks:
       # Copy to a new file, then rename. A running Jeorje keeps its old jar open.
       - cp jeorje-cli/target/jeorje.jar bin/jeorje.jar.new
       - mv -f bin/jeorje.jar.new bin/jeorje.jar
+
+  install:
+    desc: Install the launcher into ~/.local/bin, so that jeorje is on the PATH
+    deps: [dist]
+    cmds:
+      - mkdir -p "{{.BIN_DIR}}"
+      # A symbolic link, because the launcher finds its jar through the link.
+      - ln -sfn "{{.ROOT_DIR}}/bin/jeorje" "{{.BIN_DIR}}/jeorje"
+      - |
+        bin_dir='{{.BIN_DIR}}'
+        case ":$PATH:" in
+          *":$bin_dir:"*) ;;
+          *)
+            echo "jeorje: {{.BIN_DIR}} is not on the PATH. Add this line to your shell profile:"
+            echo "  export PATH=\"$bin_dir:\$PATH\""
+            ;;
+        esac
