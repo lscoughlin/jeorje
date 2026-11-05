@@ -12,7 +12,6 @@ public final class StatusLine {
 
     private String agent = "";
     private String state = "idle";
-    private String model = "";
     private int contextPercent = -1;
     private int peers;
     private boolean swarmOff;
@@ -28,8 +27,6 @@ public final class StatusLine {
 
     public synchronized StatusLine state(String state) { this.state = state; return this; }
 
-    public synchronized StatusLine model(String model) { this.model = model; return this; }
-
     /** The context use as a percent of the budget. A negative value hides the field. */
     public synchronized StatusLine contextPercent(int percent) { this.contextPercent = percent; return this; }
 
@@ -44,7 +41,7 @@ public final class StatusLine {
 
     public synchronized StatusLine plan(boolean on) { this.plan = on; return this; }
 
-    /** Shows {@code IMPLEMENT n/m}. */
+    /** Shows {@code IMPLEMENT [bar] n/m}. */
     public synchronized StatusLine implement(int done, int total) {
         this.implementDone = done;
         this.implementTotal = total;
@@ -76,12 +73,19 @@ public final class StatusLine {
         if (!branch.isEmpty()) parts.add(branch);
         if (yolo) parts.add("YOLO");
         if (plan) parts.add("PLAN");
-        if (implementDone >= 0) parts.add("IMPLEMENT " + implementDone + "/" + implementTotal);
-        if (!model.isEmpty()) parts.add(model);
+        if (implementDone >= 0) parts.add("IMPLEMENT " + implementBar(implementDone, implementTotal) + " "
+                + implementDone + "/" + implementTotal);
         if (contextPercent >= 0) parts.add("ctx " + contextPercent + "%");
         parts.add(swarmOff ? "peers off" : "peers " + peers);
         if (!notices.isEmpty()) parts.add(String.join(" ; ", notices));
         return String.join(" | ", parts);
+    }
+
+    private static String implementBar(int done, int total) {
+        var filled = total == 0 || done >= total
+                ? 10
+                : (int) Math.clamp(Math.round((double) done / total * 10), 0L, 10L);
+        return "[" + "█".repeat(filled) + "░".repeat(10 - filled) + "]";
     }
 
     /** The styled line, cut or padded to the width. */

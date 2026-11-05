@@ -377,7 +377,7 @@ public final class InteractiveSession implements AutoCloseable {
                 this::onSubmit, this::onDecision, this::onInterrupt, keys, new Actions()), highlight);
         clipboard = new org.github.lscoughlin.jeorje.ui.mouse.Clipboard(realTerminal,
                 org.github.lscoughlin.jeorje.ui.mouse.Clipboard.osc52Likely(env.env()));
-        screen.status().model(roles.defaultModel()).yolo(options.yolo());
+        screen.status().yolo(options.yolo());
         gate = new PromptGate(screen::post);
         askTrustFirst();
 
@@ -887,7 +887,6 @@ public final class InteractiveSession implements AutoCloseable {
         clients.clear();
         policy = Wiring.policy(config, options, env, cwd, main.session().id(), scrubber);
         skillGrants = null;
-        screen.status().model(roles.defaultModel());
     }
 
     void trustProject() {
@@ -937,7 +936,7 @@ public final class InteractiveSession implements AutoCloseable {
     void refreshStatus() {
         if (screen == null || !uiStarted) return;
         var status = screen.status();
-        status.model(roles.defaultModel()).yolo(options.yolo()).plan(fg().planMode().active());
+        status.yolo(options.yolo()).plan(fg().planMode().active());
         status.branch(branchOf(screen.foreground()));
         status.swarmOff(swarm == null);
         status.peers(swarm == null ? 0 : swarm.peers(PeerState.ALIVE).size());
@@ -1720,7 +1719,6 @@ public final class InteractiveSession implements AutoCloseable {
         @Override
         public void applyRoles(ModelRoles value) {
             roles = value;
-            screen.status().model(value.defaultModel());
         }
 
         @Override

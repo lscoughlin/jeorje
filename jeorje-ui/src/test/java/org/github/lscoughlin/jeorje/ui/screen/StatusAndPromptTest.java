@@ -12,17 +12,34 @@ import tools.jackson.databind.json.JsonMapper;
 class StatusAndPromptTest {
     @Test
     void statusLineShowsAllFields() {
-        var s = new StatusLine().agent("main").state("working").model("m1").contextPercent(42).peers(2)
+        var s = new StatusLine().agent("main").state("working").contextPercent(42).peers(2)
                 .branch("feature/x").yolo(true).plan(true).implement(2, 5).notice("sub1 done");
         var t = s.text();
-        for (var part : new String[] {"main [working]", "m1", "ctx 42%", "peers 2", "feature/x", "YOLO", "PLAN",
-                "IMPLEMENT 2/5", "sub1 done"}) {
+        for (var part : new String[] {"main [working]", "ctx 42%", "peers 2", "feature/x", "YOLO", "PLAN",
+                "IMPLEMENT [████░░░░░░] 2/5", "sub1 done"}) {
             assertTrue(t.contains(part), part + " in " + t);
         }
         assertEquals(20, s.render(20).columnLength());
         s.yolo(false).plan(false).clearImplement().clearNotices();
         var t2 = s.text();
         assertTrue(!t2.contains("YOLO") && !t2.contains("PLAN") && !t2.contains("IMPLEMENT"));
+    }
+
+    @Test
+    void implementBarShowsEmptyAndFullProgress() {
+        assertTrue(new StatusLine().implement(0, 1).text().contains("IMPLEMENT [░░░░░░░░░░] 0/1"));
+        assertTrue(new StatusLine().implement(5, 5).text().contains("IMPLEMENT [██████████] 5/5"));
+    }
+
+    @Test
+    void implementBarRoundsProgressAndClampsValues() {
+        assertTrue(new StatusLine().implement(1, 4).text().contains("IMPLEMENT [███░░░░░░░] 1/4"));
+        assertTrue(new StatusLine().implement(7, 5).text().contains("IMPLEMENT [██████████] 7/5"));
+    }
+
+    @Test
+    void implementBarShowsFullProgressWhenTotalIsZero() {
+        assertTrue(new StatusLine().implement(0, 0).text().contains("IMPLEMENT [██████████] 0/0"));
     }
 
     @Test

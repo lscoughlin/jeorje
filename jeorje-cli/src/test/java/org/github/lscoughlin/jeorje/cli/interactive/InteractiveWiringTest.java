@@ -279,7 +279,7 @@ class InteractiveWiringTest {
             rig.start();
             ready(rig);
             rig.type("/implement one\r");
-            await("counter", () -> rig.session.screen().status().text().contains("IMPLEMENT 0/1"));
+            await("counter", () -> rig.session.screen().status().text().contains("IMPLEMENT [░░░░░░░░░░] 0/1"));
             await("run ended", () -> !rig.session.orchestrator().active());
         }
     }
