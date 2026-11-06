@@ -43,6 +43,16 @@ public final class ScriptedLlmClient implements LlmClient {
             return builder().toolUse(id, tool, json).stop("tool_use").build();
         }
 
+        /** A response with no text and no tool call, and a stop reason of end_turn. A real model sometimes does this. */
+        public static Response empty() {
+            return builder().stop("end_turn").build();
+        }
+
+        /** A response with no text and a stop reason of length: the model used its output limit before it answered. */
+        public static Response outputLimit() {
+            return builder().usage(100, 4096).stop("length").build();
+        }
+
         /** A response that fails with an HTTP status. */
         public static Response failure(int status) {
             return new Response(List.of(), status);

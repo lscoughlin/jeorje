@@ -50,6 +50,7 @@ public final class PlanWriter {
         s.tasks().forEach(t -> out.append(t.render()).append('\n'));
         if (s.handoff() != null) section(out, "Handoff", s.handoff());
         if (s.previousAttempt() != null) section(out, "Previous attempt", s.previousAttempt());
+        if (s.reviewFeedback() != null) section(out, "Review feedback", s.reviewFeedback());
         return out.toString().stripTrailing();
     }
 

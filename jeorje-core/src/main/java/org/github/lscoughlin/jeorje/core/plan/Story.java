@@ -18,12 +18,14 @@ import java.util.Objects;
  * @param tasks the tasks, in order
  * @param handoff the handoff section, or null
  * @param previousAttempt the previous-attempt section, or null
+ * @param reviewFeedback the review-feedback section (the problems of a failed review), or null
  * @param span the lines of the story in the source file, or null if it was not parsed
  * @param handoffSpan the lines of the handoff section in the source file, or null
  */
 public record Story(String id, String title, String goal, List<String> dependsOn, List<String> touches,
                     String model, String context, String acceptance, String verification, List<Task> tasks,
-                    String handoff, String previousAttempt, Span span, Span handoffSpan) {
+                    String handoff, String previousAttempt, String reviewFeedback, Span span,
+                    Span handoffSpan) {
     public Story {
         Objects.requireNonNull(id, "id");
         title = title == null ? "" : title;
@@ -39,22 +41,27 @@ public record Story(String id, String title, String goal, List<String> dependsOn
     public Story(String id, String title, String goal, List<String> dependsOn, List<String> touches,
                  String model, String context, String acceptance, String verification, List<Task> tasks) {
         this(id, title, goal, dependsOn, touches, model, context, acceptance, verification, tasks,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     public Story withHandoff(String text) {
         return new Story(id, title, goal, dependsOn, touches, model, context, acceptance, verification, tasks,
-                text, previousAttempt, span, handoffSpan);
+                text, previousAttempt, reviewFeedback, span, handoffSpan);
     }
 
     public Story withPreviousAttempt(String text) {
         return new Story(id, title, goal, dependsOn, touches, model, context, acceptance, verification, tasks,
-                handoff, text, span, handoffSpan);
+                handoff, text, reviewFeedback, span, handoffSpan);
+    }
+
+    public Story withReviewFeedback(String text) {
+        return new Story(id, title, goal, dependsOn, touches, model, context, acceptance, verification, tasks,
+                handoff, previousAttempt, text, span, handoffSpan);
     }
 
     public Story withTasks(List<Task> next) {
         return new Story(id, title, goal, dependsOn, touches, model, context, acceptance, verification, next,
-                handoff, previousAttempt, span, handoffSpan);
+                handoff, previousAttempt, reviewFeedback, span, handoffSpan);
     }
 
     /** The same story with one task in another state. An unknown task id changes nothing. */

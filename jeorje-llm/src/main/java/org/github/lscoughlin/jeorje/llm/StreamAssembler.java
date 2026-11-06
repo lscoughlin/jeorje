@@ -26,6 +26,9 @@ final class StreamAssembler {
     /** The name of a call whose name never arrived. */
     static final String LOST_NAME = "unknown";
 
+    /** The delta fields in which providers stream reasoning text. */
+    private static final List<String> REASONING_FIELDS = List.of("reasoning_content", "reasoning");
+
     private final ObjectMapper mapper;
     private final Map<Integer, String> ids = new HashMap<>();
     private final Map<String, Integer> idToKey = new HashMap<>();
@@ -38,6 +41,11 @@ final class StreamAssembler {
     private int lastKey = -1;
     private String finishReason;
     private boolean sawData;
+    private int textChars;
+    private int reasoningChars;
+    private int toolCalls;
+    private int completionTokens = -1;
+    private int reasoningTokens = -1;
 
     StreamAssembler(ObjectMapper mapper) { this.mapper = mapper; }
 
@@ -64,7 +72,14 @@ final class StreamAssembler {
             var delta = choice.path("delta");
             var content = delta.get("content");
             if (content != null && content.isString() && !content.asString().isEmpty()) {
+                textChars += content.asString().length();
                 events.add(new LlmEvent.TextDelta(content.asString()));
+            }
+            // Reasoning models stream their thoughts in one of these fields. The assembler counts them and
+            // does not send them to the chat.
+            for (var field : REASONING_FIELDS) {
+                var reasoning = delta.get(field);
+                if (reasoning != null && reasoning.isString()) reasoningChars += reasoning.asString().length();
             }
             for (var call : delta.path("tool_calls")) toolCall(call, events);
             var reason = choice.get("finish_reason");
@@ -76,6 +91,9 @@ final class StreamAssembler {
             var details = usage.path("prompt_tokens_details");
             var cached = Math.max(details.path("cached_tokens").asInt(0), usage.path("prompt_cache_hit_tokens").asInt(0));
             var written = details.path("cache_write_tokens").asInt(0);
+            completionTokens = usage.path("completion_tokens").asInt(0);
+            var reasoningDetails = usage.path("completion_tokens_details").path("reasoning_tokens");
+            if (reasoningDetails.isNumber()) reasoningTokens = reasoningDetails.asInt(0);
             events.add(new LlmEvent.Usage(usage.path("prompt_tokens").asInt(0),
                     usage.path("completion_tokens").asInt(0), cached, written));
         }
@@ -138,6 +156,7 @@ final class StreamAssembler {
                 return;
             }
             started.add(key);
+            toolCalls++;
             events.add(new LlmEvent.ToolUseStart(ids.get(key), names.get(key)));
             var buffered = pending.remove(key);
             if (buffered != null && !buffered.isEmpty()) {
@@ -162,6 +181,7 @@ final class StreamAssembler {
             if (!hasId && !hasName && (buffered == null || buffered.isEmpty())) continue;
             var id = hasId ? ids.get(key) : LOST_ID_PREFIX + key;
             started.add(key);
+            toolCalls++;
             events.add(new LlmEvent.ToolUseStart(id, hasName ? names.get(key) : LOST_NAME));
             if (buffered != null && !buffered.isEmpty()) events.add(new LlmEvent.ToolUseInput(id, buffered.toString()));
         }
@@ -170,6 +190,21 @@ final class StreamAssembler {
 
     /** The final event of the stream. */
     LlmEvent finish() {
-        return new LlmEvent.MessageStop(finishReason == null ? "stop" : finishReason);
+        return new LlmEvent.MessageStop(finishReason == null ? "stop" : finishReason, reasoningChars);
+    }
+
+    /** True when the stream gave no text and no tool call. Call this after {@link #flush()}. */
+    boolean empty() { return textChars == 0 && toolCalls == 0; }
+
+    /**
+     * One line that describes the end of the stream, for the log: the finish reason, the completion tokens, the
+     * reasoning tokens, and the reasoning characters. A number that the provider did not report shows as
+     * {@code unknown}.
+     */
+    String summary() {
+        return "finish_reason=" + (finishReason == null ? "stop" : finishReason)
+            + ", completion_tokens=" + (completionTokens < 0 ? "unknown" : completionTokens)
+            + ", reasoning_tokens=" + (reasoningTokens < 0 ? "unknown" : reasoningTokens)
+            + ", reasoning_chars=" + reasoningChars + ", text_chars=" + textChars + ", tool_calls=" + toolCalls;
     }
 }

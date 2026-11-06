@@ -163,7 +163,8 @@ A worker is a subagent. The orchestrator creates it with the rules of `spawn_age
   - `story_blocked(reason)` ends the attempt with a reason that the worker cannot fix.
   - `sync_done(notes)` and `sync_abort(reason)` end the conflict resolution after the sync. Only in the `RESOLVING` state.
 - **Permissions:** the same policy as the orchestrator, and never wider. The story tools and the sync tools change no workspace file, so they never ask the user. A prompt from a worker goes to the UI and has the story id of the worker. With `--yolo`, there are no prompts.
-- **Limits:** the limits of [subagents.md](subagents.md#limits) apply, and `implement.maxModelCalls` (default 200) for each story.
+- **Limits:** the limits of [subagents.md](subagents.md#limits) apply, and `implement.maxModelCalls` (default 200) for each story. A worker gets a new budget when it makes progress. See [Progress signals](#progress-signals).
+- **Work rules:** Jeorje adds a `### Work rules` section after the story text. It has two lines. The first line tells the worker to call `task_done` right after each task. The second line tells the worker to read files with the `read` and `grep` tools, and not with `sed` or `grep` in `bash`.
 
 A worker does the tasks of its story in order. It cannot start another story and cannot see other workers.
 
@@ -205,14 +206,16 @@ Workers can run at the same time, so they must not change the same files in a ha
 - In any other directory, workers share the working directory. The `touches` lists keep two overlapping stories apart, and the file-state check of `write` and `edit` stops stale writes.
 - **Start state.** The worktree of a story is created when the story starts. It starts from the current `HEAD` of the target branch, so it has the merged results of the finished stories. Uncommitted changes of the user are not in the worktrees. When the user starts `/implement` with uncommitted changes, Jeorje shows a notice. With `worktree.base: snapshot`, the workers see the uncommitted changes. See [Worktrees](subagents.md#layout-and-branches).
 - **Sync, then merge back.** When a worker completes its work, it merges the source branch into its own branch and resolves the conflicts and failures itself. See [Completion sequence](subagents.md#completion-sequence). The orchestrator merges the branch back into the source when the story passes review, in the order that stories finish. It uses `worktree.merge`. The orchestrator does not resolve conflicts. A worker that cannot resolve its conflicts ends with `sync_abort`, and the story is `blocked` with the conflicting files in the reason. The user can resolve them, or ask the orchestrator to start a **repair story** (`<story-id>-repair`): a new worker whose story text has the conflict, the text of the blocked story, and the text of finished stories that touch the same files. The repair worker merges the kept branch into its own worktree and resolves the conflict. When the repair story is done, the blocked story is done too. A repair story starts only when no run is active.
-- **Cleanup.** When a story completes with no issues, the orchestrator (the parent) deletes the worktree and the branch of the worker. See [Finish and cleanup](subagents.md#finish-and-cleanup). It keeps the worktree of a blocked story until the user runs `/implement stop`, `/discard`, or fixes the story. A retried attempt discards its worktree and its branch first. A story that completes but is not merged (for example because the parent tree has uncommitted changes) is `blocked` with the reason `completed (not merged)`.
+- **Cleanup.** When a story completes with no issues, the orchestrator (the parent) deletes the worktree and the branch of the worker. See [Finish and cleanup](subagents.md#finish-and-cleanup). It keeps the worktree of a blocked story until the user runs `/implement stop`, `/discard`, or fixes the story. A retried attempt starts from the branch of the failed attempt, and Jeorje removes the worktree and the branch of the failed attempt after the retried attempt ends. See [Failure](#failure). A story that completes but is not merged (for example because the parent tree has uncommitted changes) is `blocked` with the reason `completed (not merged)`.
 
 ### Review
 
 After a worker calls `story_done`:
 
 1. After the worker finishes the sync, Jeorje runs the verification command of the story in the worktree of the worker with a shell. A failing command returns the worker to the state `RESOLVING` with the output. After three failed runs, the attempt fails (see [Failure](#failure)). A worker with no worktree gets two fix rounds.
-2. If `implement.review` is `advisor` and the advisor is not `none`, the advisor model gets: the story text, the `story_done` summary, the list of changed files, and the diff against the source branch. It returns `approve` or a list of problems. A list of problems ends the attempt (see [Failure](#failure)). If the review cannot run, Jeorje shows a notice and continues without it. The review runs one time for each attempt.
+2. If `implement.review` is `advisor` and the advisor is not `none`, the advisor model gets: the story text, the `story_done` summary, the list of changed files, and the diff against the source branch. It returns `approve` or a list of problems. A list of problems ends the attempt (see [Failure](#failure)). The review runs one time for each attempt.
+
+   An answer that is blank, and a call that fails, are not a review. Jeorje asks again two times. It waits 2 seconds before the second call and 5 seconds before the third call. If the third call also gives no review, the review is **unavailable**. Jeorje shows a notice, adds the line "The review gave no answer." to the result of the story, and continues to the merge back. An unavailable review is not a failed attempt. Only an answer that lists problems is a failed review.
 3. If both steps pass, Jeorje merges back and the story is done.
 
 The setting `implement.review: none` skips step 2. Step 1 always runs when the story or the plan has a verification command.
@@ -220,9 +223,24 @@ The setting `implement.review: none` skips step 2. Step 1 always runs when the s
 ### Failure
 
 - A failed verification, a rejected review, a `story_blocked` call, or an error ends one **attempt**.
-- The orchestrator discards the worktree and the branch of the attempt, opens the checkboxes of the story, and starts a new worker for the next attempt. The new worker has a clean context. It has the story text and a `### Previous attempt` section with the reason for the failure and the last lines of the failing output. The story text stays the only input.
+- The orchestrator opens the checkboxes of the story and starts a new worker for the next attempt. The new worker has a clean context. It has the story text, a `### Previous attempt` section, and a `### Review feedback` section when the review failed. The story text stays the only input.
+- **Start point.** The setting `implement.retryFrom` chooses where the new worktree starts. With `previous` (the default), it starts from the branch of the failed attempt, so the new worker has the files of that attempt. Jeorje commits the files of the failed attempt first. If the failed attempt has no commit that the source branch does not have, the new worktree starts from the source branch. With `source`, the new worktree always starts from the source branch, as a first attempt does. This rule is the same for a rejected review, a failed verification, a `story_blocked` call, and an infrastructure error.
+- **Previous attempt.** The section has the reason for the failure. For a failed verification, it also names the failing check and has the last lines of its output. When the new worktree starts from the failed branch, the section tells the worker that the files of the previous attempt are in its worktree.
+- **Review feedback.** For a failed review, the section lists the problems of the reviewer word for word. It tells the worker to fix these problems and to keep the rest of the work.
+- **Cleanup.** Jeorje keeps the worktree and the branch of the failed attempt until the next attempt ends. Then it removes them. A failed review counts as one attempt.
 - The default limit is 2 attempts (`implement.maxAttempts`). After the last failed attempt, the story is `blocked`. The orchestrator marks its first open task `- [!]` and does not start stories that depend on it. A `sync_abort` of a worker blocks the story at once, with no new attempt, and Jeorje keeps the branch. It continues with independent stories.
 - The orchestrator reports blocked stories at the end and in the status. The user can fix the cause and run `/implement` again. Done tasks stay done.
+
+### Progress signals
+
+A worker gets a new budget of model calls when it makes real progress. These events are progress:
+
+- The worker calls `task_done` and the call succeeds.
+- The worker completes a task of its `todo` list.
+- A successful `edit`, `write`, or `patch` brings the files of the worker to a state that the worker did not have before. Jeorje compares the git diff of the workspace and the content of the new files. A change that goes back to an earlier state (edit and undo) is not progress.
+- A verification command that Jeorje runs for the worker passes.
+
+An edit gives a new budget at most one time in 10 model calls. A worker with none of these events ends with the step limit error. See [Turn watch for subagents](agent-loop.md#turn-watch-for-subagents).
 
 ### Orchestrator context
 
@@ -275,6 +293,7 @@ implement:
   maxAttempts: 2
   maxModelCalls: 200               # for each story
   handoff: true
+  retryFrom: previous              # previous or source
 ```
 
 Isolation is set with `worktree.isolation`. See [Worktrees](subagents.md#worktrees) and [configuration.md](configuration.md).

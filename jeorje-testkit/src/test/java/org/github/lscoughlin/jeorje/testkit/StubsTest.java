@@ -68,6 +68,18 @@ class StubsTest {
     }
 
     @Test
+    void scriptedClientPlaysAnEmptyResponseAndAnOutputLimitResponse() {
+        var client = new ScriptedLlmClient(ScriptedLlmClient.Response.empty(), ScriptedLlmClient.Response.outputLimit());
+        var empty = collect(client.stream(REQUEST, CancellationToken.none()));
+        assertTrue(empty.completed());
+        assertEquals(List.of(new LlmEvent.MessageStop("end_turn")), empty.events());
+        var limit = collect(client.stream(REQUEST, CancellationToken.none()));
+        assertTrue(limit.events().stream().noneMatch(e -> e instanceof LlmEvent.TextDelta));
+        var stop = (LlmEvent.MessageStop) limit.events().getLast();
+        assertTrue(stop.outputLimitReached());
+    }
+
+    @Test
     void scriptedClientFailsWithStatusAndWhenExhausted() {
         var client = new ScriptedLlmClient(ScriptedLlmClient.Response.failure(429));
         var failed = collect(client.stream(REQUEST, CancellationToken.none()));

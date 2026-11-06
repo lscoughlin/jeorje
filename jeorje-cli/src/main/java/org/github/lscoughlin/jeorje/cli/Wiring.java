@@ -634,6 +634,8 @@ public final class Wiring {
                     .events(swarm::onSubagentEvent).remote(swarm)
                     .limits(SubagentLimits.defaults().withMaxModelCalls(config.subagents().stepLimit()));
             subagents = builder.build();
+            // A completed todo is progress: the subagent gets a new budget of model calls.
+            todoTool.onProgress(subagents::noteProgress);
             tools.addAll(PeerSpawnTool.wrap(AgentTools.install(subagents, session.id(), swarm.messenger()), subagents));
         }
         var self = new java.util.concurrent.atomic.AtomicReference<Agent>();

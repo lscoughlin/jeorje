@@ -77,6 +77,11 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
 
     private static final Pattern LABEL = Pattern.compile("^(Outcome|Done|Files|Branch|Decisions|Verification|"
         + "Open issues|Keywords):\\s*(.*)$");
+    /** The lines that every worker gets after its story text. */
+    public static final String WORKER_RULES = """
+        ### Work rules
+        - Call task_done right after you finish each task.
+        - Read files with the read and grep tools. Do not use sed or grep in bash to read files.""";
     private static final int OUTPUT_TAIL = 4_000;
     private static final int MAX_NUDGES = 2;
     private static final int MAX_VERIFY_FIXES = 2;
@@ -587,7 +592,14 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
                 writePlanFile();
             }
         }
-        if (!run.previousAttempt.isBlank()) effective = effective.withPreviousAttempt(run.previousAttempt);
+        var from = startPoint(run);
+        var continuing = from != null
+            ? "\nThe files of the previous attempt are in your worktree. Keep the work that is correct." : "";
+        if (!run.previousAttempt.isBlank()) effective = effective.withPreviousAttempt(run.previousAttempt + continuing);
+        if (!run.reviewFeedback.isBlank()) {
+            effective = effective.withReviewFeedback("The review of your last attempt listed these problems:\n"
+                + run.reviewFeedback + "\nFix these problems. Keep the rest of the work." + continuing);
+        }
         var verify = PlanFiles.command(story.verification());
         if (verify.isBlank()) verify = PlanFiles.command(plan.verification());
         run.verify = verify;
@@ -606,14 +618,14 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
                 predicted = worktrees.projectRoot().resolve(".jeorje").resolve("worktrees").resolve(group)
                     .resolve(wtName);
             }
-            var request = new SpawnRequest(name, effective.render(), toolNames, null, model,
+            var request = new SpawnRequest(name, effective.render() + "\n\n" + WORKER_RULES, toolNames, null, model,
                 predicted == null ? "shared" : "worktree", SpawnMode.BACKGROUND, predicted, story.id());
             var id = runtime.spawn(ROOT, request);
             runtime.clearPending(story.id());
             run.worker = id.value();
             byWorker.put(id, run);
             byStory.put(story.id(), id);
-            if (predicted != null) attachWorktree(run, id, story, group, wtName, predicted);
+            if (predicted != null) attachWorktree(run, id, story, group, wtName, predicted, from);
         } catch (RuntimeException e) {
             log.atWarn().setCause(e).log(() -> "Cannot start the worker of " + story.id());
             run.startError = "Cannot start the worker: " + e.getMessage();
@@ -631,10 +643,27 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         persist("running");
     }
 
-    private void attachWorktree(StoryRun run, AgentId id, Story story, String group, String name, Path predicted) {
+    /**
+     * The worktree of the failed attempt that the next attempt starts from, or null for a start from the source
+     * branch. The setting {@code implement.retryFrom} chooses. Must hold the lock.
+     */
+    private Worktree startPoint(StoryRun run) {
+        var kept = run.kept;
+        if (kept == null || worktrees == null || !config.retryFrom().equals("previous")) return null;
+        var exists = worktrees.git().run(projectRoot, "show-ref", "--verify", "--quiet", "refs/heads/" + kept.branch);
+        return exists.ok() ? kept : null;
+    }
+
+    private void attachWorktree(StoryRun run, AgentId id, Story story, String group, String name, Path predicted,
+                                Worktree from) {
         try {
             var created = worktrees.create(new WorktreeManager.CreateRequest(id, ROOT, name, group,
-                story.id() + " " + story.title(), projectRoot, SpawnMode.BACKGROUND, "worktree", false, run.verify));
+                story.id() + " " + story.title(), projectRoot, SpawnMode.BACKGROUND, "worktree", false, run.verify,
+                from));
+            if (from != null) {
+                emit(new ImplementEvent.Notice("Attempt " + run.attempt + " of " + story.id()
+                    + " starts from the branch " + from.branch + " of the failed attempt."));
+            }
             if (created.isEmpty()) throw new IllegalStateException("The worktree was not made.");
             var w = created.get();
             if (!w.path.toAbsolutePath().normalize().equals(predicted.toAbsolutePath().normalize())) {
@@ -728,7 +757,8 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         var found = worktrees == null ? Optional.<Worktree>empty() : worktrees.byAgent(ctx.agent());
         if (found.isEmpty()) return sharedSequence(run, ctx);
         var w = found.get();
-        var completion = new WorktreeCompletion(worktrees, verifier, (parent, message) -> note(message))
+        var completion = new WorktreeCompletion(worktrees, trackedVerifier(ctx.agent()),
+                (parent, message) -> note(message))
             .retryInterval(mergeRetryInterval)
             .beforeMerge(round -> review(run, w.path, w.sourceBranch));
         CompletionSteps.Result result;
@@ -761,11 +791,24 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             + " is unchanged.";
     }
 
+    /** The verifier of a worker. A passing run is progress, so the worker gets a new budget of model calls. */
+    private Verifier trackedVerifier(AgentId worker) {
+        return (dir, command) -> {
+            var result = verifier.verify(dir, command);
+            if (result.ok()) runtime.noteProgress(worker);
+            return result;
+        };
+    }
+
     private CompletionSteps.Result failed(StoryRun run, StoryRun.Failure kind, String reason, String branch) {
+        Worktree tree;
         synchronized (lock) {
             run.failure = kind;
             run.failureText = reason;
+            tree = run.worktree;
         }
+        // Commit the work now, before the cleanup of the finished worker can remove the directory.
+        if (kind != StoryRun.Failure.SYNC_ABORT && tree != null) preserve(tree);
         return CompletionSteps.Result.failed(reason, branch);
     }
 
@@ -774,7 +817,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         var dir = ctx.workingDirectory();
         for (var attempt = 0; ; attempt++) {
             if (run.verify.isBlank()) break;
-            var check = verifier.verify(dir, run.verify);
+            var check = trackedVerifier(ctx.agent()).verify(dir, run.verify);
             if (check.ok()) break;
             if (attempt >= MAX_VERIFY_FIXES) {
                 return failed(run, StoryRun.Failure.VERIFY, "The verification failed: " + tail(check.output()), null);
@@ -817,14 +860,29 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             verdict = reviewer.review(new Reviewer.Request(run.id, text, run.draft, files, diff));
         } catch (RuntimeException e) {
             log.atWarn().setCause(e).log(() -> "The review of " + run.id + " failed");
-            emit(new ImplementEvent.Notice("The review of " + run.id + " is not available: " + e.getMessage()
-                + ". Jeorje continues without it."));
-            synchronized (lock) { run.reviewed = true; }
-            return;
+            verdict = Reviewer.Verdict.unavailable("The review call failed: " + e.getMessage());
         }
-        emit(new ImplementEvent.Reviewed(run.id, verdict.approved(), String.join("\n", verdict.problems())));
-        if (!verdict.approved()) throw new ReviewRejected(verdict.problems());
-        synchronized (lock) { run.reviewed = true; }
+        switch (verdict.kind()) {
+            case UNAVAILABLE -> {
+                // No answer is not a failed review. The story goes on to the merge back.
+                var reason = verdict.reason().isBlank() ? "The review gave no answer." : verdict.reason();
+                emit(new ImplementEvent.Notice("The review of " + run.id + " is not available: " + reason
+                    + " Jeorje continues without it."));
+                synchronized (lock) {
+                    run.reviewNote = reason;
+                    run.reviewed = true;
+                }
+            }
+            case APPROVED -> {
+                emit(new ImplementEvent.Reviewed(run.id, true, ""));
+                synchronized (lock) { run.reviewed = true; }
+            }
+            case REJECTED -> {
+                emit(new ImplementEvent.Reviewed(run.id, false, String.join("\n", verdict.problems())));
+                synchronized (lock) { run.reviewProblems = verdict.problems(); }
+                throw new ReviewRejected(verdict.problems());
+            }
+        }
     }
 
     /** Records the conflict files before the sync is aborted, because the abort clears them. */
@@ -902,6 +960,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
                 log.atError().setCause(e).log(() -> "Cannot handle the end of " + run.id);
                 run.state = StoryState.BLOCKED;
                 run.reason = "Internal error: " + e.getMessage();
+                releaseKept(run);
             }
             persist(stopping ? "stopped" : paused ? "paused" : "running");
             pump();
@@ -912,6 +971,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         if (stopping && completion.outcome() == Completion.Outcome.CANCELLED) {
             run.state = StoryState.PENDING;
             run.previousAttempt = "The previous attempt was stopped before it finished.";
+            releaseKept(run);
             discardWorktree(run);
             emit(new ImplementEvent.StoryChanged(run.id, StoryState.PENDING, "stopped"));
             return;
@@ -931,10 +991,12 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
     }
 
     private void succeed(StoryRun run, String summary) {
+        releaseKept(run);
         run.state = StoryState.DONE;
         run.summary = summary;
         var parts = parts(summary);
-        run.result = oneLine(parts.getOrDefault("Done", summary), 200);
+        run.result = oneLine(parts.getOrDefault("Done", summary), 200)
+            + (run.reviewNote.isBlank() ? "" : " (The review gave no answer.)");
         var files = parts.get("Files");
         if (files != null && !files.isBlank() && !files.strip().equalsIgnoreCase("none")) {
             var list = new ArrayList<String>();
@@ -943,6 +1005,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         }
         markTasks(run.id, TaskState.DONE);
         run.previousAttempt = "";
+        run.reviewFeedback = "";
         if (run.repairOf != null) {
             var parent = runs.get(run.repairOf);
             if (parent != null) {
@@ -964,11 +1027,15 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             return;
         }
         run.failures++;
-        var text = "Attempt " + run.attempt + " failed.\nReason: " + tail(reason);
+        var text = "Attempt " + run.attempt + " failed.\n"
+            + (kind == StoryRun.Failure.VERIFY && !run.verify.isBlank() ? "Failing check: " + run.verify + "\n" : "")
+            + "Reason: " + tail(reason);
         if (run.failures < config.maxAttempts()) {
-            discardWorktree(run);
+            retire(run);
             markTasks(run.id, TaskState.OPEN);
             run.previousAttempt = text;
+            run.reviewFeedback = kind == StoryRun.Failure.REVIEW
+                ? run.reviewProblems.stream().map(p -> "- " + p).collect(java.util.stream.Collectors.joining("\n")) : "";
             run.state = StoryState.PENDING;
             runtime.registerPending(run.id);
             emit(new ImplementEvent.StoryChanged(run.id, StoryState.PENDING, "retry after: " + oneLine(reason, 200)));
@@ -978,7 +1045,48 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         block(run, reason);
     }
 
+    /**
+     * Ends the worktree of a failed attempt that gets a retry. With {@code implement.retryFrom: previous}, the
+     * worktree stays when it has work, and the next attempt starts from its branch. Jeorje removes the worktree of
+     * the attempt before it, because the new branch has its commits. Otherwise the worktree goes away.
+     */
+    private void retire(StoryRun run) {
+        var current = run.worktree;
+        if (current == null) return;
+        run.worktree = null;
+        var keep = false;
+        if (worktrees != null && config.retryFrom().equals("previous")) {
+            preserve(current);
+            try {
+                keep = worktrees.aheadOfSource(current) > 0;
+            } catch (RuntimeException e) {
+                log.atWarn().log(() -> "Cannot check the work in " + current.path + ": " + e.getMessage());
+            }
+        }
+        releaseKept(run);
+        if (keep) run.kept = current;
+        else discardTree(current);
+    }
+
+    /** Commits the files of a failed attempt, so that the branch has the work. A sync with open conflicts stays. */
+    private void preserve(Worktree w) {
+        if (worktrees == null || !config.retryFrom().equals("previous") || !java.nio.file.Files.isDirectory(w.path)) return;
+        try {
+            if (worktrees.unmerged(w).isEmpty()) worktrees.commitRemaining(w);
+        } catch (RuntimeException e) {
+            log.atWarn().log(() -> "Cannot commit the work in " + w.path + ": " + e.getMessage());
+        }
+    }
+
+    /** Removes the worktree and the branch of the attempt before the last one. */
+    private void releaseKept(StoryRun run) {
+        var old = run.kept;
+        run.kept = null;
+        if (old != null) discardTree(old);
+    }
+
     private void block(StoryRun run, String reason) {
+        releaseKept(run);
         run.state = StoryState.BLOCKED;
         run.reason = reason;
         run.result = "";
@@ -997,6 +1105,10 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
     private void dropWorktree(StoryRun run) {
         var w = run.worktree;
         run.worktree = null;
+        discardTree(w);
+    }
+
+    private void discardTree(Worktree w) {
         if (w == null || worktrees == null) return;
         try {
             worktrees.discard(w);
@@ -1060,7 +1172,10 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
 
     /** After a stop: removes the worktrees that stay from blocked stories. */
     private void cleanupKept() {
-        for (var run : runs.values()) if (run.worktree != null) dropWorktree(run);
+        for (var run : runs.values()) {
+            releaseKept(run);
+            if (run.worktree != null) dropWorktree(run);
+        }
     }
 
     private ImplementReport.StoryResult resultOf(StoryRun run) {

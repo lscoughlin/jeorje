@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.github.lscoughlin.jeorje.core.agent.SystemPromptBuilder;
+import org.github.lscoughlin.jeorje.core.implement.ImplementOrchestrator;
 import org.github.lscoughlin.jeorje.core.implement.ImplementReport;
 import org.github.lscoughlin.jeorje.core.implement.ImplementRequest;
 import org.github.lscoughlin.jeorje.core.implement.StoryState;
@@ -68,11 +69,12 @@ class ImplementOrchestratorTest {
             // Part 2: one user message with the story text, and nothing else.
             assertEquals(1, first.messages().size());
             assertEquals(1, first.messages().get(0).content().size());
-            assertEquals(original.story("S1").orElseThrow().render(), text(first.messages().get(0)));
+            var task = original.story("S1").orElseThrow().render() + "\n\n" + ImplementOrchestrator.WORKER_RULES;
+            assertEquals(task, text(first.messages().get(0)));
             // Part 1: the normal system prompt. The runtime adds the name of the worker and the task to it.
             var worktree = rig.root.resolve(".jeorje/worktrees/demo/s1");
             var instructions = "You are the subagent \"S1 First thing\" of the agent \"orchestrator\".\nYour task:\n"
-                + original.story("S1").orElseThrow().render();
+                + task;
             var expected = SystemPromptBuilder.build(new SystemPromptBuilder.Parts(null,
                 first.tools(), worktree, System.getProperty("os.name", "unknown"), LocalDate.now(), instructions, null));
             assertEquals(expected, first.system());

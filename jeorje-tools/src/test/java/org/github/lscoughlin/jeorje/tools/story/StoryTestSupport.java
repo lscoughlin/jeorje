@@ -277,6 +277,8 @@ final class StoryTestSupport {
         final List<String> notices = new CopyOnWriteArrayList<>();
         final WorktreeManager manager;
         ImplementOrchestrator orchestrator;
+        /** The verifier of the next orchestrator that {@link #create} makes, or null for the shell. */
+        org.github.lscoughlin.jeorje.core.worktree.Verifier verifier;
 
         final int parallel;
         final Reviewer reviewer;
@@ -304,11 +306,16 @@ final class StoryTestSupport {
 
         /** A new orchestrator on the same repository, as after a restart of Jeorje. */
         ImplementOrchestrator create(Brain model, RunStateStore stateStore) {
+            return create(model, stateStore, "previous");
+        }
+
+        /** A new orchestrator with the setting {@code implement.retryFrom}. */
+        ImplementOrchestrator create(Brain model, RunStateStore stateStore, String retryFrom) {
             var settings = AgentSettings.defaults("s1", root, 100_000).withSleeper(d -> { });
             var implement = new JeorjeConfig.Implement(parallel, "", reviewer == null ? "none" : "advisor",
-                maxAttempts, 200, true);
+                maxAttempts, 200, true, retryFrom);
             return ImplementOrchestrator.builder("s1", settings, m -> model, implement)
-                .store(store).worktrees(manager).reviewer(reviewer).stateStore(stateStore)
+                .store(store).worktrees(manager).reviewer(reviewer).stateStore(stateStore).verifier(verifier)
                 .events(events::add).subagentEvents(subEvents::add)
                 .limits(SubagentLimits.defaults().withAskTimeout(Duration.ofSeconds(5)))
                 .mergeRetryInterval(Duration.ofMillis(50))

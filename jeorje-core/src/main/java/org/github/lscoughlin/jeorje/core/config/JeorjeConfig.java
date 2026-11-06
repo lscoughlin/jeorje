@@ -244,8 +244,22 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
         }
     }
 
+    /**
+     * The settings of {@code /implement}.
+     *
+     * @param retryFrom where a new attempt starts after a failed attempt: {@code previous} (the branch of the failed
+     *     attempt, the default) or {@code source} (the source branch)
+     */
     public record Implement(int parallel, String model, String review, int maxAttempts, int maxModelCalls,
-                            boolean handoff) {
+                            boolean handoff, String retryFrom) {
+        public Implement {
+            retryFrom = retryFrom == null || retryFrom.isBlank() ? "previous" : retryFrom;
+        }
+
+        public Implement(int parallel, String model, String review, int maxAttempts, int maxModelCalls,
+                         boolean handoff) {
+            this(parallel, model, review, maxAttempts, maxModelCalls, handoff, "previous");
+        }
     }
 
     /** One prompt. Use {@code text} or {@code file}. An empty string means not set. */

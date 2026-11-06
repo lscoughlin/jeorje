@@ -130,6 +130,7 @@ final class ConfigDefaults {
               maxAttempts: 2
               maxModelCalls: 200
               handoff: true
+              retryFrom: previous
             prompts:
               system:
                 mode: append

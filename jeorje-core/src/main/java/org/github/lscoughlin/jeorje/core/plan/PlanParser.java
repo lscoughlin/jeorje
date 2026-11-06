@@ -164,7 +164,7 @@ public final class PlanParser {
             var heading3 = clean(lines[i]);
             var name = heading3.substring(4).strip();
             if (!switch (name) {
-                case "Context", "Acceptance criteria", "Verification", "Tasks", "Handoff", "Previous attempt" -> true;
+                case "Context", "Acceptance criteria", "Verification", "Tasks", "Handoff", "Previous attempt", "Review feedback" -> true;
                 default -> false;
             }) {
                 throw new PlanException(i + 1, "Unknown section '" + name + "' in story " + id + ".");
@@ -192,7 +192,7 @@ public final class PlanParser {
         return new Story(id, title, labels.getOrDefault("Goal", ""), dependsOn, touches,
                 model == null || model.isBlank() ? null : model, sections.getOrDefault("Context", ""),
                 sections.getOrDefault("Acceptance criteria", ""), sections.get("Verification"), tasks,
-                sections.get("Handoff"), sections.get("Previous attempt"), new Span(start, end), handoffSpan);
+                sections.get("Handoff"), sections.get("Previous attempt"), sections.get("Review feedback"), new Span(start, end), handoffSpan);
     }
 
     private static void readTasks(String[] lines, int from, int to, String storyId, List<Task> out) {

@@ -641,6 +641,11 @@ public final class Agent implements AutoCloseable {
                 }
                 if (uses.isEmpty() && isBlank(assistant.content())) {
                     emptyReplies++;
+                    if (LlmEvent.LENGTH.equals(assistant.finishReason())) {
+                        log.atWarn().log(() -> "The model used its output limit and gave no answer in turn " + number);
+                        publish(new AgentEvent.Error(id, OUTPUT_LIMIT_ERROR));
+                        break;
+                    }
                     var count = emptyReplies;
                     log.atWarn().log(() -> "The model gave an empty reply (" + count + " in a row) in turn " + number);
                     if (emptyReplies > MAX_EMPTY_RETRIES) {
@@ -715,6 +720,9 @@ public final class Agent implements AutoCloseable {
         }
     }
 
+    /** The error for a reply that has no content because the model used its output limit. */
+    static final String OUTPUT_LIMIT_ERROR = "The model used its output limit before it answered. "
+        + "Raise llm.maxOutputTokens or use a model that reasons less. The turn ends.";
     /** The most empty replies in a row that the agent answers with a note before it ends the turn. */
     static final int MAX_EMPTY_RETRIES = 2;
     static final String EMPTY_REPLY_NOTE =
@@ -1064,11 +1072,12 @@ public final class Agent implements AutoCloseable {
      *
      * @param broken the tool calls whose arguments were cut off or are not valid JSON: the id of the call and the
      *               error text for the model
+     * @param finishReason the finish reason of the provider, or null when the stream gave none
      */
-    private record Assistant(List<Content> content, String error, Map<String, String> broken) {}
+    private record Assistant(List<Content> content, String error, Map<String, String> broken, String finishReason) {}
 
     private Assistant reply(Assembler assembler, String error) {
-        return new Assistant(assembler.content(), error, assembler.broken());
+        return new Assistant(assembler.content(), error, assembler.broken(), assembler.finishReason);
     }
 
     /** The fewest milliseconds between two {@code Working} events while the answer streams. */

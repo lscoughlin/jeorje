@@ -200,6 +200,7 @@ implement:
   maxAttempts: 2
   maxModelCalls: 200               # for each story
   handoff: true
+  retryFrom: previous              # previous or source: where a new attempt starts after a failed attempt
 prompts:
   system:
     mode: append                     # append (default) or replace

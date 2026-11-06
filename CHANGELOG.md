@@ -6,7 +6,13 @@ Release `0.3.0` is the first tagged release. The earlier `0.1.0-SNAPSHOT` and `0
 
 ## Unreleased
 
-This is the current development line. The version in the build is `0.4.0-SNAPSHOT`. No change is ready for the next release yet.
+This is the current development line. The version in the build is `0.4.0-SNAPSHOT`.
+
+### Changed
+
+- A review of `/implement` that gives no answer, or whose call fails, is not a failed review. Jeorje asks again two times. If the review is still unavailable, the story goes on to the merge back with a notice and a line in the report.
+- After a failed attempt, the next attempt of a story starts from the branch of the failed attempt. The worker gets the problems of the review in a `### Review feedback` section. The setting `implement.retryFrom: source` restores the start from the source branch.
+- A worker gets a new budget of model calls when it completes a todo, when an edit brings its workspace to a new state, and when its verification passes. The worker instructions tell it to call `task_done` after each task and to read files with the `read` and `grep` tools.
 
 ## 0.3.0 - 2026-11-06
 

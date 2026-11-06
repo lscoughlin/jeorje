@@ -41,6 +41,20 @@ class EmptyReplyTest {
     }
 
     @Test
+    void anEmptyReplyThatHitTheOutputLimitIsAnErrorWithNoRetry() {
+        var cut = new Step.Events(List.of(new org.github.lscoughlin.jeorje.core.model.LlmEvent.MessageStop("length", 9000)));
+        var llm = new Scripted(cut, text("never"));
+        var rig = rig(llm);
+        rig.agent.runTurn("hello");
+        assertEquals(1, llm.requests.size());
+        var errors = rig.events(AgentEvent.Error.class);
+        assertEquals(1, errors.size());
+        assertTrue(errors.getFirst().message().startsWith("The model used its output limit before it answered."),
+            errors.getFirst().message());
+        assertEquals(1, rig.events(AgentEvent.TurnFinished.class).size());
+    }
+
+    @Test
     void ABlankTextReplyCountsAsEmpty() {
         var llm = new Scripted(text("   \n"), text("Fine."));
         var rig = rig(llm);

@@ -464,6 +464,8 @@ public final class ConfigLoader {
                 "must be auto or manual");
         require(Set.of("advisor", "none").contains(c.implement().review()), "implement.review",
                 "must be advisor or none");
+        require(Set.of("previous", "source").contains(c.implement().retryFrom()), "implement.retryFrom",
+                "must be previous or source");
         require(Set.of("auto", "on", "off").contains(c.ui().keyboardProtocol()), "ui.keyboardProtocol",
                 "must be auto, on, or off");
         require(Set.of("quiet", "normal", "verbose").contains(c.ui().chat().verbosity()), "ui.chat.verbosity",

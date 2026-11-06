@@ -31,12 +31,23 @@ final class StoryRun {
     List<String> conflicts = new ArrayList<>();
     /** The text of the {@code Previous attempt} section for the next attempt, or an empty string. */
     String previousAttempt = "";
+    /** The problems of the last failed review for the next attempt, one per line, or an empty string. */
+    String reviewFeedback = "";
+    /**
+     * The worktree of the last failed attempt. The next attempt starts from its branch. Jeorje removes it when that
+     * next attempt ends.
+     */
+    Worktree kept;
     String verify = "";
     Signal signal = Signal.NONE;
     String signalText = "";
     Failure failure = Failure.NONE;
     String failureText = "";
     boolean reviewed;
+    /** Why the review did not happen, or an empty string. It goes in the report. */
+    String reviewNote = "";
+    /** The problems of the last rejected review, word for word. */
+    List<String> reviewProblems = List.of();
     boolean notMerged;
     String startError;
     /** The story that this story repairs, or null. */
@@ -54,6 +65,8 @@ final class StoryRun {
         failure = Failure.NONE;
         failureText = "";
         reviewed = false;
+        reviewNote = "";
+        reviewProblems = List.of();
         notMerged = false;
         startError = null;
         draft = "";

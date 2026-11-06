@@ -202,6 +202,8 @@ public final class HeadlessWork implements AutoCloseable {
     private final AdvisorSupport advisor;
     private WorktreeManager worktrees;
     private ImplementOrchestrator orchestrator;
+    private final org.github.lscoughlin.jeorje.tools.memory.TodoTool todoTool =
+            new org.github.lscoughlin.jeorje.tools.memory.TodoTool();
     private Agent agent;
     private volatile List<org.github.lscoughlin.jeorje.core.instructions.Skill> toolSkills = List.of();
     private volatile SkillTool skillTool;
@@ -447,6 +449,8 @@ public final class HeadlessWork implements AutoCloseable {
         }
         builder.compactor(roles.pruningModel().map(this::clientFor).orElse(null));
         orchestrator = builder.build();
+        // A completed todo of a worker is progress: the worker gets a new budget of model calls.
+        todoTool.onProgress(agent -> orchestrator.runtime().noteProgress(agent));
     }
 
     private PermissionPolicy.Decision askForWorker(AgentId who, ToolUse use) {
@@ -504,7 +508,7 @@ public final class HeadlessWork implements AutoCloseable {
     private List<Tool> baseTools() {
         var state = new AgentState();
         var registry = Wiring.registry(config, grants, policy.network(), state, session.id(), options.yolo(),
-                mcpManager());
+                mcpManager(), todoTool);
         var out = new ArrayList<Tool>();
         for (var name : registry.names()) {
             var tool = registry.find(name).orElseThrow();

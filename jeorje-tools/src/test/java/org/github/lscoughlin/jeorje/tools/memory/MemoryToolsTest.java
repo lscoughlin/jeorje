@@ -131,6 +131,22 @@ class MemoryToolsTest {
     }
 
     @Test
+    void completingATodoIsProgress() {
+        var progress = new java.util.ArrayList<String>();
+        todo.onProgress(agent -> progress.add(agent.value()));
+        call("todo", "{\"items\":[{\"content\":\"a\",\"status\":\"in_progress\"},{\"content\":\"b\",\"status\":\"pending\"}]}");
+        assertTrue(progress.isEmpty(), "a new list is no progress");
+        call("todo", "{\"items\":[{\"content\":\"a\",\"status\":\"completed\"},{\"content\":\"b\",\"status\":\"in_progress\"}]}");
+        assertEquals(List.of("root"), progress);
+        call("todo", "{\"items\":[{\"content\":\"a\",\"status\":\"completed\"},{\"content\":\"b\",\"status\":\"in_progress\"}]}");
+        assertEquals(1, progress.size(), "the same list is no new completion");
+        call("todo", "{\"items\":[{\"content\":\"a\",\"status\":\"bogus\"}]}");
+        assertEquals(1, progress.size(), "a failed call is no progress");
+        call("todo", "{\"items\":[{\"content\":\"a\",\"status\":\"completed\"},{\"content\":\"b\",\"status\":\"completed\"}]}");
+        assertEquals(2, progress.size());
+    }
+
+    @Test
     void todoKeepsAndPinsTheList() {
         var result = call("todo", "{\"items\":[{\"content\":\"write code\",\"status\":\"in_progress\"},"
                 + "{\"content\":\"test\",\"status\":\"pending\"}]}");
@@ -212,5 +228,39 @@ class MemoryToolsTest {
         assertEquals(3, request.messages().size());
         assertTrue(request.messages().getLast().toString().contains("Am I done?"));
         reg.execute(new ToolUse("id2", "advisor", JSON.readTree("{}")), context);
+    }
+
+    @Test
+    void advisorRetriesOnceWithALargerLimitWhenTheLimitCutTheAnswer() {
+        var cut = ScriptedLlmClient.Response.builder().stop("length").build();
+        var client = new ScriptedLlmClient(cut, ScriptedLlmClient.Response.text("Do X."));
+        var advisor = new AdvisorTool(client, a -> new AdvisorContext("s", List.of(Message.user("task"))));
+        var reg = ToolRegistry.builder().register(advisor).build();
+        var result = reg.execute(new ToolUse("id", "advisor", JSON.readTree("{}")), context);
+        assertFalse(result.error());
+        assertEquals("Do X.", result.output());
+        assertEquals(2, client.requests().size());
+        assertEquals(AdvisorTool.MAX_OUTPUT_TOKENS, client.requests().get(0).maxOutputTokens());
+        assertEquals(AdvisorTool.MAX_OUTPUT_TOKENS * 2, client.requests().get(1).maxOutputTokens());
+    }
+
+    @Test
+    void advisorSaysWhyTheAnswerIsEmpty() {
+        var cut = ScriptedLlmClient.Response.builder().stop("length").build();
+        var client = new ScriptedLlmClient(cut, cut);
+        var advisor = new AdvisorTool(client, a -> new AdvisorContext("s", List.of(Message.user("task"))));
+        var reg = ToolRegistry.builder().register(advisor).build();
+        var result = reg.execute(new ToolUse("id", "advisor", JSON.readTree("{}")), context);
+        assertTrue(result.error());
+        assertEquals(AdvisorTool.LENGTH_ERROR, result.output());
+        assertEquals(2, client.requests().size(), "one retry only");
+
+        var plain = new ScriptedLlmClient(ScriptedLlmClient.Response.builder().stop("stop").build());
+        var other = ToolRegistry.builder().register(
+            new AdvisorTool(plain, a -> new AdvisorContext("s", List.of(Message.user("task"))))).build();
+        var empty = other.execute(new ToolUse("id", "advisor", JSON.readTree("{}")), context);
+        assertTrue(empty.error());
+        assertEquals(AdvisorTool.EMPTY_ERROR, empty.output());
+        assertEquals(1, plain.requests().size(), "no retry for a real empty reply");
     }
 }

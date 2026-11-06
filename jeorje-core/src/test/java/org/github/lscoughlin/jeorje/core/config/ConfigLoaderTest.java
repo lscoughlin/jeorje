@@ -329,6 +329,16 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void retryFromDefaultsToPreviousAndAcceptsOnlyKnownValues() throws IOException {
+        assertEquals("previous", ConfigLoader.load(opts()).config().implement().retryFrom());
+        write(home.resolve(".jeorje"), "config.yaml", "implement:\n  retryFrom: source\n");
+        assertEquals("source", ConfigLoader.load(opts()).config().implement().retryFrom());
+        write(home.resolve(".jeorje"), "config.yaml", "implement:\n  retryFrom: main\n");
+        assertTrue(assertThrows(ConfigException.class, () -> ConfigLoader.load(opts())).getMessage()
+                .contains("implement.retryFrom"));
+    }
+
+    @Test
     void jeorjeHomeReplacesUserDirectory() throws IOException {
         var alt = tmp.resolve("alt");
         write(alt, "config.yaml", "context:\n  recentTurns: 4\n");

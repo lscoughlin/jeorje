@@ -78,6 +78,7 @@ public final class SubagentRuntime implements AutoCloseable {
     private final RemoteSpawner remote;
     private final WorkspacePolicies workspacePolicies;
     private final AdvisorLink advisorLink;
+    private final ProgressSignals.Fingerprint fingerprint;
 
     private final Object lock = new Object();
     private volatile ExternalDelivery externalDelivery;
@@ -111,6 +112,8 @@ public final class SubagentRuntime implements AutoCloseable {
         this.remote = b.remote;
         this.workspacePolicies = b.workspacePolicies;
         this.advisorLink = b.advisorLink;
+        this.fingerprint = b.fingerprint == null
+            ? ProgressSignals.git(org.github.lscoughlin.jeorje.core.worktree.GitRunner.process()) : b.fingerprint;
     }
 
     public static Builder builder(String sessionId, AgentSettings settings, LlmProvider llm) {
@@ -135,6 +138,7 @@ public final class SubagentRuntime implements AutoCloseable {
         private RemoteSpawner remote;
         private WorkspacePolicies workspacePolicies;
         private AdvisorLink advisorLink;
+        private ProgressSignals.Fingerprint fingerprint;
 
         private Builder(String sessionId, AgentSettings settings, LlmProvider llm) {
             this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
@@ -178,6 +182,12 @@ public final class SubagentRuntime implements AutoCloseable {
         /** The port to the swarm. Without it, a spawn with a peer fails. */
         /** Turns the turn watch on: a subagent at 80% of its limit without progress asks the advisor for help. */
         public Builder advisorLink(AdvisorLink value) { this.advisorLink = value; return this; }
+
+        /**
+         * Reads the state of a workspace, so that a file change counts as progress only when the state is new.
+         * The default reads the git diff of the workspace.
+         */
+        public Builder fingerprint(ProgressSignals.Fingerprint value) { this.fingerprint = value; return this; }
 
         public Builder remote(RemoteSpawner value) { this.remote = value; return this; }
 
@@ -546,6 +556,7 @@ public final class SubagentRuntime implements AutoCloseable {
                 agent.resetCallCount();
             };
             if (advisorLink != null) n.watch = new TurnWatch(maxCalls);
+            n.signals = new ProgressSignals(workdir, fingerprint);
             n.turn = () -> agent.turns().size() + 1;
             n.token.onCancel(agent::cancel);
             var maxDuration = n.timeCap != null && n.timeCap.compareTo(limits.maxDuration()) < 0 ? n.timeCap
@@ -595,9 +606,18 @@ public final class SubagentRuntime implements AutoCloseable {
             case AgentEvent.ConfirmationRequested c -> enterWait(n, AgentLifecycle.WAITING_INPUT, "user");
             case AgentEvent.ToolStarted s when s.tool().equals("ask_user") ->
                 enterWait(n, AgentLifecycle.WAITING_INPUT, "user");
-            case AgentEvent.ToolStarted s -> leaveWait(n, AgentLifecycle.WAITING_INPUT);
-            case AgentEvent.ToolFinished f -> leaveWait(n, AgentLifecycle.WAITING_INPUT);
-            case AgentEvent.ContextUsage u -> watchTurn(n);
+            case AgentEvent.ToolStarted s -> {
+                leaveWait(n, AgentLifecycle.WAITING_INPUT);
+                if (n.signals != null) n.signals.toolStarted(s.toolUseId(), s.tool());
+            }
+            case AgentEvent.ToolFinished f -> {
+                leaveWait(n, AgentLifecycle.WAITING_INPUT);
+                watchEdits(n, f);
+            }
+            case AgentEvent.ContextUsage u -> {
+                if (n.signals != null) n.signals.modelCall();
+                watchTurn(n);
+            }
             case AgentEvent.Error e when !e.message().startsWith("Cannot store turn") -> fail(n, e.message());
             default -> { }
         }
@@ -619,9 +639,28 @@ public final class SubagentRuntime implements AutoCloseable {
         AgentNode n;
         synchronized (lock) { n = nodes.get(id); }
         if (n == null) return;
+        var signals = n.signals;
+        if (signals != null) signals.budgetReset();
         var watch = n.watch;
         if (watch != null) watch.onTodosChanged();
         n.resetCalls.run();
+    }
+
+    /**
+     * A file change of a subagent is progress when it makes a new state of the workspace, at most once in 10 model
+     * calls. See {@link ProgressSignals}.
+     */
+    private void watchEdits(AgentNode n, AgentEvent.ToolFinished finished) {
+        var signals = n.signals;
+        if (signals == null) return;
+        try {
+            if (signals.toolFinished(finished.toolUseId(), finished.result())) {
+                log.atDebug().log(() -> "Subagent " + n.name + " changed its workspace. The turn count resets.");
+                noteProgress(n.id);
+            }
+        } catch (RuntimeException e) {
+            log.atWarn().log(() -> "The progress check of " + n.name + " failed: " + e.getMessage());
+        }
     }
 
     /**
@@ -913,7 +952,7 @@ public final class SubagentRuntime implements AutoCloseable {
     public Optional<ModelCalls> modelCalls(AgentId id) {
         synchronized (lock) {
             return Optional.ofNullable(nodes.get(id)).map(n -> n.limited == null ? null
-                : new ModelCalls(n.limited.calls(), n.maxCalls));
+                : new ModelCalls(Math.max(0, n.limited.calls()), n.maxCalls));
         }
     }
 

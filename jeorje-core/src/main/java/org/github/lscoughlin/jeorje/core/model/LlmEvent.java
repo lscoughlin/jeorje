@@ -11,8 +11,27 @@ public sealed interface LlmEvent {
     /** A fragment of the JSON input text of a tool call. */
     record ToolUseInput(String id, String jsonFragment) implements LlmEvent {}
 
-    /** The message ends. */
-    record MessageStop(String stopReason) implements LlmEvent {}
+    /**
+     * The message ends.
+     *
+     * @param stopReason the finish reason of the provider, for example {@code stop}, {@code tool_calls}, or
+     *     {@code length}. The value {@code length} means that the model used its output limit.
+     * @param reasoningChars the characters of the reasoning deltas of the stream. The agent does not show them.
+     */
+    record MessageStop(String stopReason, int reasoningChars) implements LlmEvent {
+        /** A stop with no reasoning text. */
+        public MessageStop(String stopReason) {
+            this(stopReason, 0);
+        }
+
+        /** True when the model used its whole output limit. */
+        public boolean outputLimitReached() {
+            return LENGTH.equals(stopReason);
+        }
+    }
+
+    /** The finish reason that means that the model used its output limit. */
+    String LENGTH = "length";
 
     /**
      * Token counts of the provider.

@@ -74,9 +74,18 @@ public final class WorktreeManager {
      * @param explicitWorkdir true if the spawn set {@code workdir}
      * @param sourceDir the working directory of the parent agent
      * @param verify the verification command of the story, or null
+     * @param startFrom the worktree of an earlier, failed attempt. The new worktree starts from the branch of it,
+     *     not from {@code HEAD} of the source. Null starts from the source.
      */
     public record CreateRequest(AgentId agent, AgentId parent, String name, String group, String task, Path sourceDir,
-                                SpawnMode mode, String isolation, boolean explicitWorkdir, String verify) {}
+                                SpawnMode mode, String isolation, boolean explicitWorkdir, String verify,
+                                Worktree startFrom) {
+        /** A request that starts from the source branch. */
+        public CreateRequest(AgentId agent, AgentId parent, String name, String group, String task, Path sourceDir,
+                             SpawnMode mode, String isolation, boolean explicitWorkdir, String verify) {
+            this(agent, parent, name, group, task, sourceDir, mode, isolation, explicitWorkdir, verify, null);
+        }
+    }
 
     /** The result of a sync. */
     public record SyncResult(Kind kind, List<String> conflicts, String status, List<String> incoming, String output) {
@@ -166,6 +175,11 @@ public final class WorktreeManager {
         }
     }
 
+    /**
+     * Makes the worktree and the branch of a new subagent. Callers: {@link #create}, which the story orchestrator
+     * ({@code ImplementOrchestrator#attachWorktree}) and the {@code spawn_agent} tool of the CLI call. The start
+     * point is {@code HEAD} of the source (or its snapshot), or the branch of {@link CreateRequest#startFrom()}.
+     */
     private Worktree createWorktree(CreateRequest r) {
         git.checkVersion();
         var source = r.sourceDir().toAbsolutePath().normalize();
@@ -196,8 +210,20 @@ public final class WorktreeManager {
             if (!branchTaken && !Files.exists(path)) break;
             suffix++;
         }
-        var snapshot = config.base().equals("snapshot");
-        var base = snapshot ? buildSnapshot(source, headCommit) : headCommit;
+        var from = r.startFrom();
+        boolean snapshot;
+        String base;
+        if (from != null) {
+            // Continue the work of a failed attempt. The snapshot commit of that attempt stays the base while the
+            // sync has not dropped it, so the merge back never includes it.
+            var tip = git.run(source, "rev-parse", "--verify", "-q", "refs/heads/" + from.branch);
+            if (!tip.ok()) throw new WorktreeException("the branch " + from.branch + " does not exist");
+            base = tip.trimmed();
+            snapshot = from.snapshot && !from.snapshotDropped();
+        } else {
+            snapshot = config.base().equals("snapshot");
+            base = snapshot ? buildSnapshot(source, headCommit) : headCommit;
+        }
         try {
             Files.createDirectories(path.getParent());
         } catch (IOException e) {
@@ -206,8 +232,8 @@ public final class WorktreeManager {
         var added = mutate(source, "worktree", "add", "-b", branch, path.toString(), base);
         if (!added.ok()) throw new WorktreeException("git worktree add failed: " + added.text());
         copyAndLink(sourcePath, path);
-        var w = new Worktree(r.agent(), r.parent(), name, group, path, branch, sourceBranch, sourcePath, base,
-            snapshot, r.task(), r.mode(), r.verify());
+        var w = new Worktree(r.agent(), r.parent(), name, group, path, branch, sourceBranch, sourcePath,
+            snapshot && from != null ? from.baseCommit : base, snapshot, r.task(), r.mode(), r.verify());
         synchronized (this) { registry.put(r.agent(), w); }
         log.atInfo().log(() -> "Worktree " + w.path + " on " + w.branch + " from " + sourceBranch);
         return w;

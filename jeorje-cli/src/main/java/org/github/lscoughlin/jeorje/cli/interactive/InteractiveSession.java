@@ -192,7 +192,9 @@ public final class InteractiveSession implements AutoCloseable {
     private AdvisorSupport advisor;
     /** The todo lists of all agents of the session. The turn watch reads and updates them. */
     private final org.github.lscoughlin.jeorje.tools.memory.TodoTool todoTool =
-            new org.github.lscoughlin.jeorje.tools.memory.TodoTool();
+            new org.github.lscoughlin.jeorje.tools.memory.TodoTool()
+                    // A completed todo is progress. Every runtime that knows the agent gives it a new call budget.
+                    .onProgress(agent -> allRuntimes().forEach(r -> r.noteProgress(agent)));
     private SessionDirectory directory;
 
     private LoadedConfig loaded;
