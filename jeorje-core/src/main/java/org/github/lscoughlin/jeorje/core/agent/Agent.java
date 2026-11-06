@@ -164,6 +164,7 @@ public final class Agent implements AutoCloseable {
     private volatile CancellationToken current = CancellationToken.none();
     private volatile Thread thread;
     private volatile StepBoundary stepBoundary = List::of;
+    private volatile java.util.function.Supplier<List<String>> extraTrailing = List::of;
     private volatile ToolFilter toolFilter = use -> java.util.Optional.empty();
     private final RepeatGuard repeatGuard;
     private volatile Consumer<List<Chunk>> pruneListener = chunks -> { };
@@ -229,6 +230,15 @@ public final class Agent implements AutoCloseable {
     /** Sets the hook that adds messages at step boundaries. Null removes the hook. */
     public Agent withStepBoundary(StepBoundary hook) {
         this.stepBoundary = hook == null ? List::of : hook;
+        return this;
+    }
+
+    /**
+     * Sets a source of extra trailing items. The request puts them after the messages, after the decisions of the
+     * user and the todo list. The source runs before each model call, outside the locks of the agent. Null removes it.
+     */
+    public Agent withTrailing(java.util.function.Supplier<List<String>> source) {
+        this.extraTrailing = source == null ? List::of : source;
         return this;
     }
 
@@ -816,7 +826,21 @@ public final class Agent implements AutoCloseable {
     /** The parts of the next request. */
     private ContextBuilder.Input input(List<Message> messages) {
         return new ContextBuilder.Input(systemPrompt(), pinnedItems(), olderEntries(), recentTurns(), messages,
-            definitions(), trailingItems(messages));
+            definitions(), withExtraTrailing(trailingItems(messages)));
+    }
+
+    private List<String> withExtraTrailing(List<String> items) {
+        List<String> extra;
+        try {
+            extra = extraTrailing.get();
+        } catch (RuntimeException e) {
+            log.atWarn().log(() -> "The trailing source failed: " + message(e));
+            return items;
+        }
+        if (extra == null || extra.isEmpty()) return items;
+        var all = new ArrayList<>(items);
+        for (var item : extra) if (item != null && !item.isBlank()) all.add(item);
+        return List.copyOf(all);
     }
 
     /**

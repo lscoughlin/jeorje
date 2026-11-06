@@ -15,7 +15,9 @@ public final class AgentAnswerTool extends RecordTool<AgentAnswerTool.Input> {
     /** The input of {@code agent_answer}. */
     public record Input(
             @Required @Describe("The id of the question, from the question message.") String questionId,
-            @Required @Describe("The answer text.") String text) {}
+            @Required @Describe("The answer text.") String text,
+            @Describe("Set to true when a person must decide and no person is present. The orchestrator "
+                    + "lists such a question in the report of the run.") Boolean needsPerson) {}
 
     private final SubagentRuntime runtime;
 

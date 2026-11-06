@@ -39,6 +39,28 @@ final class SessionHub {
         return sessions.get(id);
     }
 
+    /**
+     * The session that owns an agent, or null when no session owns it. The owner of a session id is that session. The
+     * owner of a subagent is the session whose runtime holds it. The owner of an orchestrator or of one of its workers
+     * is the session that started the {@code /implement} run. If two runtimes hold the same worker id, the first
+     * session in the order of start wins.
+     */
+    MainSession owningSession(AgentId id) {
+        if (id == null) return null;
+        var direct = get(id);
+        if (direct != null) return direct;
+        for (var session : sessions()) {
+            var runtime = session.runtime();
+            if (runtime != null && runtime.info(id).isPresent()) return session;
+            var orchestrator = session.orchestrator();
+            if (orchestrator != null && (orchestrator.agentId().equals(id)
+                    || orchestrator.runtime().info(id).isPresent())) {
+                return session;
+            }
+        }
+        return null;
+    }
+
     /** The id of the session that started this one, or null. */
     synchronized AgentId parent(AgentId id) {
         return parents.get(id);

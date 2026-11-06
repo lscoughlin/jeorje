@@ -23,6 +23,8 @@ A **turn** groups the messages between one input and the final answer of the mod
 
 An agent runs in one virtual thread. The thread reads an input queue (`AgentInput`). The user, peers, and subagents add inputs to the queue. Each input starts one turn. A turn runs under a lock, so two turns of one agent never run at the same time.
 
+The orchestrator of `/implement` is an agent with this loop. Its input callback only queues the input, because the asker of `agent_ask` calls the callback on its own thread. One thread of the orchestrator takes the queue and runs one turn at a time with `Agent.runTurn(text, maxCalls)`. A turn has a limit of model calls, 30 by default. A source of extra trailing items (`Agent.withTrailing`) adds the compact view of the stories to each request of the orchestrator, after the messages. The source runs before each model call, outside the locks of the agent. A text of the user joins a running turn with `Agent.steer`. A failed turn publishes an `Error` event, and the loop goes on with the next input. See [planning.md](planning.md#the-orchestrator-agent).
+
 ## LLM client port
 
 ```java

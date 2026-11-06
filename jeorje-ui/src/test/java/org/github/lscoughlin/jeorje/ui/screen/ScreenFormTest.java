@@ -61,6 +61,25 @@ class ScreenFormTest {
     }
 
     @Test
+    void aFormThatTheFilterRefusesWaitsInTheQueue() throws Exception {
+        try (var ft = new FakeTerminal(70, 20)) {
+            var got = new AtomicReference<FormAnswer>();
+            var screen = new Screen(ft.terminal, Screen.Options.defaults());
+            var other = new AgentId("other");
+            screen.formFilter(agent -> agent.equals(MAIN));
+            screen.showForm(prompt(other, single("a", "x", "y")), got::set);
+            assertNull(screen.pendingForm());
+            assertNull(screen.handleFormKey("enter"));
+            screen.formFilter(agent -> true);
+            assertNotNull(screen.pendingForm());
+            assertEquals(other, screen.pendingForm().agent());
+            assertNull(screen.handleFormKey("enter"));
+            assertNotNull(screen.handleFormKey("enter"));
+            assertNotNull(got.get());
+        }
+    }
+
+    @Test
     void typedKeysAndEscapeSequencesReachTheForm() throws Exception {
         try (var ft = new FakeTerminal(70, 20)) {
             var got = new AtomicReference<FormAnswer>();

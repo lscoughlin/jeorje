@@ -195,6 +195,7 @@ final class SessionCommands {
             session.agent().planMode(null);
             session.refreshStatus();
         }
+        session.showOrchestrator(orchestrator);
         return CommandResult.ok("Implementing " + plan.get().getFileName() + ".");
     }
 

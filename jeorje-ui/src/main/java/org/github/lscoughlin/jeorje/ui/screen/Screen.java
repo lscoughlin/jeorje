@@ -114,6 +114,7 @@ public final class Screen implements AutoCloseable {
     private final Deque<PermissionPrompt> prompts = new ArrayDeque<>();
     private volatile java.util.function.Predicate<AgentId> promptFilter = a -> true;
     private final Deque<PendingForm> forms = new ArrayDeque<>();
+    private volatile java.util.function.Predicate<AgentId> formFilter = a -> true;
     private volatile int formTop = -1;
     private volatile int formCursorRow = -1;
     private volatile int formCursorColumn;
@@ -405,7 +406,7 @@ public final class Screen implements AutoCloseable {
         status.agent(agent.value());
         // A prompt of this agent can wait in the queue. The input loop must see it now. Without a prompt, a wake
         // would look like a Ctrl-C to the input loop.
-        if (pendingPrompt() != null) wakeInput();
+        if (pendingPrompt() != null || pendingForm() != null) wakeInput();
         draw();
     }
 
@@ -639,9 +640,27 @@ public final class Screen implements AutoCloseable {
     /** The form that waits for the user, or null. */
     public FormPrompt pendingForm() {
         synchronized (forms) {
-            var first = forms.peekFirst();
+            var first = firstVisibleForm();
             return first == null ? null : first.prompt();
         }
+    }
+
+    /**
+     * Sets the rule that decides which forms the user can answer now. A form that the rule refuses stays in the queue.
+     * The user can answer it when the rule accepts it, for example after a switch to the agent of the form. The default
+     * rule accepts every form.
+     */
+    public void formFilter(java.util.function.Predicate<AgentId> filter) {
+        this.formFilter = filter == null ? a -> true : filter;
+        if (pendingForm() != null) wakeInput();
+    }
+
+    /** The first form that the filter accepts. The caller holds the lock of the queue. */
+    private PendingForm firstVisibleForm() {
+        for (var form : forms) {
+            if (formFilter.test(form.prompt().agent())) return form;
+        }
+        return null;
     }
 
     /** Removes the forms of an agent without an answer. Returns the number of removed forms. */
@@ -660,7 +679,7 @@ public final class Screen implements AutoCloseable {
     public FormAnswer handleFormKey(String key) {
         PendingForm pending;
         synchronized (forms) {
-            pending = forms.peekFirst();
+            pending = firstVisibleForm();
         }
         if (pending == null || key == null) return null;
         var prompt = pending.prompt();

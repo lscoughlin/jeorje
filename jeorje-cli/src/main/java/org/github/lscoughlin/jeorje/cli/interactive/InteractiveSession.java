@@ -272,8 +272,7 @@ public final class InteractiveSession implements AutoCloseable {
 
     /** The orchestrator of the foreground session, or null when that session has not started {@code /implement}. */
     public ImplementOrchestrator orchestrator() {
-        var session = hub.foregroundSession();
-        return session == null ? null : session.orchestrator();
+        return fg().orchestrator();
     }
 
     /** The orchestrator of the foreground session. It builds the orchestrator on the first call. */
@@ -416,7 +415,7 @@ public final class InteractiveSession implements AutoCloseable {
         buildAgents();
         if (resume != null) restoreAgent();
 
-        roster = new AgentRoster(hub, () -> orchestrators().stream().map(ImplementOrchestrator::runtime).toList(),
+        roster = new AgentRoster(hub, List::of,
                 () -> swarm == null ? List.of() : AgentRoster.alive(swarm.peers(PeerState.ALIVE)),
                 session -> branchOf(session.id()), this::historyOf, this::steerMain,
                 new RemoteRosters(peerId -> swarm == null
@@ -428,6 +427,9 @@ public final class InteractiveSession implements AutoCloseable {
             var owner = ownerOf(agent);
             return owner == null || owner == fg();
         });
+        // The form of an orchestrator waits until the user switches to the orchestrator, like the prompt of a
+        // background agent.
+        screen.formFilter(agent -> orchestratorOf(agent) == null || agent.equals(screen.foreground()));
         var size = realTerminal.getSize();
         switcher = new AgentSwitcher(roster, MAIN,
                 new org.github.lscoughlin.jeorje.ui.mouse.Rect(0, 0, Math.max(1, size.getColumns()),
@@ -752,10 +754,9 @@ public final class InteractiveSession implements AutoCloseable {
                 .store(ms.store()).transcript(ms.transcript()).worktrees(worktrees)
                 .stateStore(RunStateStore.file(ms.session().dir().resolve("implement.json")))
                 .events(event -> onImplementEvent(ms, event)).agentEvents(this::onEvent).subagentEvents(e -> refreshStatus())
-                .orchestratorInput(input -> notice(ms.id(), input.text()))
                 .limits(limits()).policy(workerPolicy).workspacePolicies(this::policyForWorkspace)
                 .approver(plan -> askApproval(plan.render()))
-                .baseTools(baseTools(workerPolicy, ms.session().id(), false))
+                .baseTools(orchestratorBaseTools(workerPolicy, ms.session().id()))
                 .workerTools(StoryTools.factory(List.of()))
                 .advisorLink(advisor.help(todoTool));
         if (hooks.mergeRetryInterval() != null) builder.mergeRetryInterval(hooks.mergeRetryInterval());
@@ -765,6 +766,13 @@ public final class InteractiveSession implements AutoCloseable {
         var compactorClient = roles.pruningModel().map(this::clientFor).orElse(null);
         builder.compactor(compactorClient);
         return builder.build();
+    }
+
+    /** The base tools of an orchestrator: the tools of a worker and {@code ask_user}. The orchestrator filters them. */
+    private List<Tool> orchestratorBaseTools(PermissionPolicy toolPolicy, String sessionId) {
+        var tools = new ArrayList<>(baseTools(toolPolicy, sessionId, false));
+        tools.add(new AskUserTool(broker));
+        return tools;
     }
 
     private LlmClient clientFor(String model) {
@@ -1052,8 +1060,13 @@ public final class InteractiveSession implements AutoCloseable {
             case ImplementEvent.RunFinished f -> f.report().render();
         };
         notice(owner.id(), line);
+        var orchestrator = owner.orchestrator();
+        if (orchestrator != null) notice(orchestrator.agentId(), line);
         refreshStatus();
-        if (event instanceof ImplementEvent.RunFinished) saveManifest(owner, "idle");
+        if (event instanceof ImplementEvent.RunFinished) {
+            saveManifest(owner, "idle");
+            if (orchestrator != null) leaveOrchestrator(owner, orchestrator);
+        }
     }
 
     /** Appends lines to the chat of an agent. */
@@ -1069,7 +1082,9 @@ public final class InteractiveSession implements AutoCloseable {
         var title = form.title() != null && !form.title().isBlank() ? form.title() : form.firstPrompt();
         var text = "Question from " + question.agent() + ": " + title;
         notice(question.agent(), text);
-        if (hub.get(question.agent()) == null) notice(fg().id(), text);
+        if (hub.get(question.agent()) == null && !question.agent().equals(screen.foreground())) {
+            notice(fg().id(), text);
+        }
         screen.status().state("waiting for you");
         screen.showForm(new FormPrompt(question.agent(), form), answer -> {
             broker.answer(question.id(), answer);
@@ -1268,6 +1283,13 @@ public final class InteractiveSession implements AutoCloseable {
             screen.cancelForms(target);
             return "Interrupted the main agent.";
         }
+        var orchestrator = orchestratorOf(target);
+        if (orchestrator != null) {
+            orchestrator.orchestratorAgent().cancel();
+            gate.denyAgent(target);
+            screen.cancelForms(target);
+            return "Interrupted the orchestrator.";
+        }
         var any = false;
         for (var r : allRuntimes()) any |= r.cancel(target.value());
         gate.denyAgent(target);
@@ -1292,13 +1314,17 @@ public final class InteractiveSession implements AutoCloseable {
         return list;
     }
 
-    /** The session that owns an agent: the session of a root agent, or of a subagent. Null when none owns it. */
+    /**
+     * The session that owns an agent: the session of a root agent, of a subagent, of an orchestrator, or of a worker of
+     * an orchestrator. Null when none owns it.
+     */
     private MainSession ownerOf(AgentId id) {
-        var root = hub.get(id);
-        if (root != null) return root;
-        for (var session : hub.sessions()) {
-            if (session.runtime() != null && session.runtime().info(id).isPresent()) return session;
-        }
+        return hub.owningSession(id);
+    }
+
+    /** The orchestrator with this agent id, or null. */
+    private ImplementOrchestrator orchestratorOf(AgentId id) {
+        for (var o : orchestrators()) if (o.agentId().equals(id)) return o;
         return null;
     }
 
@@ -1386,7 +1412,28 @@ public final class InteractiveSession implements AutoCloseable {
         screen.setForeground(id);
         var root = hub.get(id);
         if (root != null) screen.status().agent(root.name()).state(root.busy().get() ? "working" : "idle");
+        var orchestrator = orchestratorOf(id);
+        if (orchestrator != null) screen.status().agent(ImplementOrchestrator.NAME);
         refreshStatus();
+    }
+
+    /**
+     * Makes the orchestrator the foreground agent. The input thread calls it from {@code /implement}. Another
+     * session is not affected: the orchestrator belongs to the session of the command.
+     */
+    void showOrchestrator(ImplementOrchestrator orchestrator) {
+        switcher.switchTo(orchestrator.agentId());
+    }
+
+    /**
+     * Returns to the session of an orchestrator, but only when the orchestrator is the foreground agent at that
+     * time. A worker of the orchestrator, another session, or any other agent in the foreground stays there.
+     */
+    private void leaveOrchestrator(MainSession owner, ImplementOrchestrator orchestrator) {
+        if (screen == null) return;
+        screen.runOnInput(() -> {
+            if (screen.foreground().equals(orchestrator.agentId())) switcher.switchTo(owner.id());
+        });
     }
 
     /**

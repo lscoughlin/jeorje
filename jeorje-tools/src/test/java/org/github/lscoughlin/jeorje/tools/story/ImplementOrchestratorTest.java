@@ -49,7 +49,7 @@ class ImplementOrchestratorTest {
             assertEquals("", g(rig.root, "branch", "--list", "jeorje/*"), "the branch is deleted");
             assertFalse(Files.exists(rig.root.resolve(".jeorje/worktrees/demo/s1")), "the worktree is removed");
             assertTrue(rig.store.all().stream().anyMatch(c -> c.kind().equals(SubagentRuntime.SUMMARY_KIND)
-                && c.agentId().equals("orchestrator") && c.text().contains("Done: work")));
+                && c.agentId().equals(rig.orchestrator.agentId().value()) && c.text().contains("Done: work")));
             assertTrue(rig.notices.isEmpty(), rig.notices.toString());
             assertTrue(report.render().contains("S1 First thing: done"));
         }
@@ -704,7 +704,7 @@ class ImplementOrchestratorTest {
                     .workerTools(StoryTools.factory(List.of(org.github.lscoughlin.jeorje.testkit.FakeTool.returning("advisor", "ok"))))
                     .build()) {
                 assertTrue(other.workerToolNames().contains("advisor"));
-                var policy = other.runtime().policyOf(org.github.lscoughlin.jeorje.core.implement.ImplementOrchestrator.ROOT)
+                var policy = other.runtime().policyOf(other.agentId())
                     .orElseThrow();
                 var use = (java.util.function.Function<String, org.github.lscoughlin.jeorje.core.port.PermissionPolicy.Decision>) tool ->
                     policy.check(new org.github.lscoughlin.jeorje.core.model.ToolUse("u", tool, null));

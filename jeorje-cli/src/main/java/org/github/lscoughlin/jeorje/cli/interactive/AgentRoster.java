@@ -5,10 +5,12 @@ import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import org.github.lscoughlin.jeorje.core.agent.AgentInput;
 import org.github.lscoughlin.jeorje.core.directory.AgentDirectory;
 import org.github.lscoughlin.jeorje.core.directory.AgentEntry;
 import org.github.lscoughlin.jeorje.core.directory.RosterKind;
 import org.github.lscoughlin.jeorje.core.directory.RosterNode;
+import org.github.lscoughlin.jeorje.core.implement.ImplementOrchestrator;
 import org.github.lscoughlin.jeorje.core.model.AgentId;
 import org.github.lscoughlin.jeorje.core.subagent.AgentInfo;
 import org.github.lscoughlin.jeorje.core.subagent.SubagentRuntime;
@@ -18,7 +20,9 @@ import org.github.lscoughlin.jeorje.swarm.SwarmHandlers;
 
 /**
  * The agent directory of the interface. It lists the agent of each live session, the subagents of the runtime of
- * each session, the workers of the runtime of {@code /implement}, and the peers of the swarm.
+ * each session, the orchestrator of each session that started {@code /implement} with its workers, and the peers of
+ * the swarm. The orchestrator is a child of its session. A worker is a child of the orchestrator. Text for the
+ * orchestrator goes to its agent as a user input.
  */
 final class AgentRoster implements AgentDirectory {
     /** The prefix of the id of a remote peer in the list. */
@@ -37,8 +41,9 @@ final class AgentRoster implements AgentDirectory {
     private final Supplier<String> harnessName;
 
     /**
-     * @param extraRuntimes runtimes that no session owns, for example the runtime of {@code /implement}. Their
-     *                      workers show the first session as their parent.
+     * @param extraRuntimes runtimes that no session owns. Their workers show the first session as their
+     *                      parent. The runtime of an orchestrator is not one of them: the roster reads it from the
+     *                      session.
      * @param branchOf gives the branch of the working tree of a session
      * @param sessionSteer sends text to the main agent of a session
      */
@@ -75,6 +80,13 @@ final class AgentRoster implements AgentDirectory {
             out.add(new AgentEntry(session.id(), session.name(), hub.parent(session.id()), stateOf(session), null,
                     branchOf.apply(session), ""));
             if (session.runtime() != null) addSubagents(out, session.runtime(), session.id());
+            var orchestrator = session.orchestrator();
+            if (orchestrator != null) {
+                // The orchestrator is a child of its session. Its workers are children of the orchestrator.
+                out.add(new AgentEntry(orchestrator.agentId(), ImplementOrchestrator.NAME, session.id(),
+                        orchestrator.active() ? "RUNNING" : "IDLE", null, null, ""));
+                addSubagents(out, orchestrator.runtime(), orchestrator.agentId());
+            }
         }
         var first = sessions.isEmpty() ? MainSession.MAIN : sessions.getFirst().id();
         for (var runtime : extraRuntimes.get()) addSubagents(out, runtime, first);
@@ -180,7 +192,13 @@ final class AgentRoster implements AgentDirectory {
         }
         if (agent.value().startsWith(PEER_PREFIX)) return;
         for (var session : hub.sessions()) {
+            var orchestrator = session.orchestrator();
+            if (orchestrator != null && orchestrator.agentId().equals(agent)) {
+                orchestrator.submit(new AgentInput.UserInput(text));
+                return;
+            }
             if (session.runtime() != null && session.runtime().steer(agent, text)) return;
+            if (orchestrator != null && orchestrator.runtime().steer(agent, text)) return;
         }
         for (var runtime : extraRuntimes.get()) {
             if (runtime.steer(agent, text)) return;

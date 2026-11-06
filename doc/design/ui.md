@@ -26,7 +26,7 @@ The interface is in `jeorje-ui`. It uses JLine 4 (`org.jline:jline`). The parent
 - The **activity row** is the row above the input line. It shows only while a model call of the foreground agent runs. See [Activity row](#activity-row).
 - The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT [bar] n/m | turn t/l` (see below), `ctx n%` (the estimated size of the last request as a percent of the budget; the whole status line changes its color from 85%), `peers n` (the number of live peers, or `peers off` when the swarm is off), and notices. The fields have a ` | ` between them. The status line has no model field.
 
-  The `IMPLEMENT [bar] n/m` field shows only for the foreground session that runs `/implement`. The bar has 10 cells. A filled cell is `█` and an empty cell is `░`. The number `n` is the count of finished stories and `m` is the count of stories in the run. Each top-level session can run its own `/implement`. When the user switches to a session that does not run `/implement`, the field does not show. The `turn t/l` field follows the `IMPLEMENT` field. The number `t` is the count of model calls of the running worker. The number `l` is the limit of model calls for one worker. When the limit is not known, the field shows `turn t`. The `turn` field shows and hides together with the `IMPLEMENT` field. Notices come from background agents and from the interface. The line keeps the last three notices.
+  The `IMPLEMENT [bar] n/m` field shows only for the foreground session that runs `/implement`. The bar has 10 cells. A filled cell is `█` and an empty cell is `░`. The number `n` is the count of finished stories and `m` is the count of stories in the run. Each top-level session can run its own `/implement`. The field shows for the session that owns the foreground agent. That is also true when the foreground agent is the orchestrator of that session or one of its workers. When the user switches to a session that does not run `/implement`, the field does not show. The `turn t/l` field follows the `IMPLEMENT` field. The number `t` is the count of model calls of the running worker. The number `l` is the limit of model calls for one worker. When the limit is not known, the field shows `turn t`. The `turn` field shows and hides together with the `IMPLEMENT` field. Notices come from background agents and from the interface. The line keeps the last three notices.
 
 JLine `Display` draws the chat region. It writes only the lines that change. The status line is written directly to the last row after each draw. The input line belongs to the `LineReader`, which draws its own rows. A permission prompt interrupts the input read. While the prompt waits, the screen reads the answer keys itself. After the answer, the input read starts again and keeps the text that the user had typed.
 
@@ -231,7 +231,7 @@ In a text field the keys are `Left`, `Right`, `Home`, `End`, `Backspace`, `Delet
 
 **Terminal cursor.** The terminal cursor shows in the text field that has the keys. In every other state it stays on the input row.
 
-**Several forms.** Forms queue in the order they arrive, also when they come from different agents. The box names the agent. A permission prompt shows before a form, because a tool waits for it. When the user switches to another agent, the forms stay. After an answer, the chat view of the agent gets the line `form answered: <answers>`, `form: chat requested`, or `form declined`. The full answer is in the tool result.
+**Several forms.** Forms queue in the order they arrive, also when they come from different agents. The box names the agent. A form of an orchestrator shows only while the orchestrator is the foreground agent. If the user is in another agent, the form waits in the queue, and the user sees it after a switch to the orchestrator. A permission prompt shows before a form, because a tool waits for it. When the user switches to another agent, the forms stay. After an answer, the chat view of the agent gets the line `form answered: <answers>`, `form: chat requested`, or `form declined`. The full answer is in the tool result.
 
 **Size.** The form works in a terminal as small as 30 columns and 8 rows. It reduces the rows of the form and shows the key list in one line. A resize redraws the form and keeps the state.
 
@@ -243,7 +243,7 @@ In a text field the keys are `Left`, `Right`, `Home`, `End`, `Backspace`, `Delet
 
 - The first level is the **harness**: one instance of Jeorje. The first harness is this instance. Each live peer of the swarm is one more harness.
 - The second level is the **agent**: an agent of a harness. The main agent of an instance is an agent.
-- The third level is the **subagent**: a subagent of an agent. A subagent can have subagents of its own, and each level adds one indent.
+- The third level is the **subagent**: a subagent of an agent. A subagent can have subagents of its own, and each level adds one indent. After `/implement`, the session has the child `orchestrator`, and the workers of the run are the children of the orchestrator.
 - Each level has an indent of two spaces. A node with children shows `-` when it is open and `+` when it is collapsed. A row shows the name, and the state after a bar.
 - The up and down keys (and `k` and `j`) select a row. The left key (or `h`) collapses the selected node, and its children are hidden. The right key (or `l`) expands it.
 - `Enter` on an agent or a subagent makes it the foreground agent. `Enter` on a harness does nothing. `Esc` closes the pane. A click selects a row, and a double click runs `Enter` on it.
@@ -266,8 +266,19 @@ One process can hold more than one session. A session is one conversation. It ha
 - The user switches to the background session with `/agents <name or number>` or with `Ctrl-X a`. The user then steers it like any other agent. `/back` returns to the session that started the current one.
 - Typed text, the status line, and the permission prompts follow the foreground session. A permission prompt of a background session stays in the queue. The user sees the prompt after a switch to that session. The answer then goes to the blocked check of that session.
 - The main agent of one session can send `agent_message` and `agent_ask` to the main agent of another live session. It names the id or the name of the session. A message to a session that has ended fails with the reason `ended`. A message to an unknown name fails with the reason `unknown agent`. See [subagents.md](subagents.md).
-- The swarm bridge and the `/implement` run belong to the first session.
+- The swarm bridge belongs to the first session. The `/implement` run belongs to the session in which the user starts it.
 - After the process exits, `/resume` lists every session, because each session has its own directory.
+
+### The `/implement` run and the foreground
+
+The orchestrator of `/implement` is an agent with a model loop. See [planning.md](planning.md#the-orchestrator-agent). It is a child of the session that started the run.
+
+- `/implement` makes the orchestrator the foreground agent when the run starts. This is also true for a run that continues from a saved state. The status line shows the name `orchestrator`.
+- Text that the user types goes to the orchestrator agent as a user input. The chat of the orchestrator shows its turns, its answers to workers, the notices of the run, and its questions to the user. The messages for the orchestrator do not show as notices in the chat of the main agent.
+- The user can switch to a worker or to the main agent with the normal switch commands. A switch does not stop the run. The foreground session stays the session that owns the foreground agent. So `/implement status`, `pause`, `resume`, and `stop` act on the run of that session when the foreground agent is the orchestrator or a worker. `/back` goes from a worker to the orchestrator, and from the orchestrator to the session.
+- A permission prompt or a form of the orchestrator shows in the chat of the orchestrator. If the orchestrator is a background agent, it waits until the user switches to the orchestrator. This is the rule for all background agents.
+- When the run ends, the orchestrator is still in the agent list until the session closes, so the user can read its history. The notice of the report shows in the chat of the orchestrator and in the chat of the main agent. If the orchestrator is the foreground agent at that time, the foreground returns to the main agent of the session. If the user is in a worker, in another agent, or in another session, the foreground does not change.
+- A session that runs `/implement` in the background never takes the foreground. Only the command that the user types changes the foreground.
 
 ## File browser
 

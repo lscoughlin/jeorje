@@ -60,6 +60,11 @@ class HeadlessWorkTest {
         private static final Pattern AGENT = Pattern.compile("^Agent name: (\\S+)");
         final ScriptedLlmClient main;
         final Map<String, ScriptedLlmClient> workers = new ConcurrentHashMap<>();
+        /** When set, the requests of the orchestrator agent go here. */
+        volatile LlmClient orchestrator;
+        final java.util.List<LlmRequest> orchestratorRequests = new java.util.concurrent.CopyOnWriteArrayList<>();
+        /** The final summary that a story gets, by story id. Without an entry the summary has no decisions. */
+        final Map<String, String> decisions = new ConcurrentHashMap<>();
 
         Router(ScriptedLlmClient main) { this.main = main; }
 
@@ -71,6 +76,11 @@ class HeadlessWorkTest {
         @Override
         public Flow.Publisher<LlmEvent> stream(LlmRequest request, CancellationToken cancel) {
             var first = request.messages().isEmpty() ? "" : text(request.messages().get(0));
+            if (orchestrator != null && request.system() != null
+                    && request.system().contains("You are the orchestrator of an /implement run")) {
+                orchestratorRequests.add(request);
+                return orchestrator.stream(request, cancel);
+            }
             if (request.tools().isEmpty()) {
                 var m = AGENT.matcher(first);
                 var story = m.find() ? m.group(1) : "?";
@@ -79,10 +89,11 @@ class HeadlessWorkTest {
                         Done: work of %s
                         Files: %s.txt
                         Branch: merged
-                        Decisions: none
+                        Decisions: %s
                         Verification: ran the check, it passed.
                         Open issues: none
-                        Keywords: Story, Goal, Tasks""".formatted(story, story.toLowerCase()))).stream(request, cancel);
+                        Keywords: Story, Goal, Tasks""".formatted(story, story.toLowerCase(),
+                        decisions.getOrDefault(story, "none")))).stream(request, cancel);
             }
             var m = STORY.matcher(first);
             if (m.find()) {
@@ -315,6 +326,54 @@ class HeadlessWorkTest {
         assertTrue(stdout().contains("S1 File 1: done"), stdout());
         assertEquals("done", PlanParser.parse(repo.resolve("plan/one.md")).status());
         assertEquals("", git(repo, "branch", "--list", "jeorje/*"), "worker branches are gone");
+    }
+
+    /** The orchestrator model: it answers each question once. A conflict needs a person. */
+    private static LlmClient orchestratorMind() {
+        return (request, cancel) -> {
+            var last = request.messages().getLast();
+            var answered = last.content().stream().anyMatch(c -> c instanceof org.github.lscoughlin.jeorje.core.model.ToolResult);
+            var question = "";
+            for (var m : request.messages()) {
+                var t = text(m);
+                if (t.contains("[question from")) question = t;
+            }
+            var id = java.util.regex.Pattern.compile(", id (q\\d+)\\]").matcher(question);
+            if (answered || !id.find()) return new ScriptedLlmClient(Response.text("done")).stream(request, cancel);
+            var conflict = question.contains("conflict");
+            var json = "{\"questionId\":\"" + id.group(1) + "\",\"text\":\""
+                    + (conflict ? "Continue with your best choice. State the assumption." : "You work on S1.") + "\""
+                    + (conflict ? ",\"needsPerson\":true" : "") + "}";
+            return new ScriptedLlmClient(Response.toolCall("a-" + id.group(1), "agent_answer", json))
+                    .stream(request, cancel);
+        };
+    }
+
+    @Test
+    void theOrchestratorAnswersQuestionsAndTheReportListsTheQuestionThatNeededAPerson() throws Exception {
+        commitPlan("approved", 1);
+        var router = new Router(new ScriptedLlmClient());
+        router.orchestrator = orchestratorMind();
+        router.decisions.put("S1", "Chose the stricter criterion.");
+        var tail = worker("S1", "s1.txt");
+        router.story("S1",
+                Response.toolCall("ask1", "agent_ask", "{\"to\":\"orchestrator\",\"question\":\"what are you doing?\"}"),
+                Response.toolCall("ask2", "agent_ask",
+                        "{\"to\":\"orchestrator\",\"question\":\"two criteria conflict, which wins?\"}"),
+                tail[0], tail[1], tail[2], tail[3]);
+        var code = run(router, "run", "/implement one");
+        assertEquals(0, code, stderr());
+        assertEquals("S1", Files.readString(repo.resolve("s1.txt")));
+        assertTrue(router.orchestratorRequests.size() >= 2, "the orchestrator answered two questions");
+        assertTrue(router.orchestratorRequests.stream().allMatch(r -> r.tools().stream()
+                .noneMatch(t -> t.name().equals("ask_user"))), "the orchestrator has no ask_user tool");
+        assertTrue(router.orchestratorRequests.getFirst().system().contains("No user is present"));
+        var report = stdout();
+        assertTrue(report.contains("Questions that needed a person:"), report);
+        assertTrue(report.contains("two criteria conflict, which wins?"), report);
+        assertFalse(report.contains("what are you doing?"), report);
+        assertTrue(report.contains("Assumptions of the workers:"), report);
+        assertTrue(report.contains("S1: Chose the stricter criterion."), report);
     }
 
     @Test

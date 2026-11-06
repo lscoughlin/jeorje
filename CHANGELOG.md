@@ -8,8 +8,18 @@ Release `0.3.0` is the first tagged release. The earlier `0.1.0-SNAPSHOT` and `0
 
 This is the current development line. The version in the build is `0.4.0-SNAPSHOT`.
 
+### Added
+
+- The orchestrator of `/implement` is an agent with its own model loop, history, and system prompt. It answers the questions of the workers. Before, a question to the orchestrator got no answer and ended after the time limit.
+- When a person must decide, the orchestrator gives the worker a holding answer, asks the user with `ask_user`, and sends the decision to the worker as a message. A question that gets no answer ends with a fallback answer, so a worker never waits for the full time.
+- `/implement` makes the orchestrator the foreground agent. The user types to it and sees its turns. When the run ends, the foreground returns to the main agent if the orchestrator is the foreground agent at that time. The orchestrator stays in the agent list, and the workers are its children.
+- A form of a background orchestrator waits until the user switches to the orchestrator.
+- A run with no user (`jeorje run "/implement"`) has the orchestrator loop too, with no `ask_user` tool. The report lists the questions that needed a person and the assumptions of the workers.
+- The tool `agent_answer` has the optional field `needsPerson`.
+
 ### Changed
 
+- The foreground session is the session that owns the foreground agent. `/implement status`, `pause`, `resume`, and `stop` and the status line work when the foreground agent is an orchestrator or a worker of a run.
 - A review of `/implement` that gives no answer, or whose call fails, is not a failed review. Jeorje asks again two times. If the review is still unavailable, the story goes on to the merge back with a notice and a line in the report.
 - After a failed attempt, the next attempt of a story starts from the branch of the failed attempt. The worker gets the problems of the review in a `### Review feedback` section. The setting `implement.retryFrom: source` restores the start from the source branch.
 - A worker gets a new budget of model calls when it completes a todo, when an edit brings its workspace to a new state, and when its verification passes. The worker instructions tell it to call `task_done` after each task and to read files with the `read` and `grep` tools.

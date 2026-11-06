@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
+import org.github.lscoughlin.jeorje.core.agent.Agent;
 import org.github.lscoughlin.jeorje.core.agent.AgentInput;
 import org.github.lscoughlin.jeorje.core.agent.AgentSettings;
 import org.github.lscoughlin.jeorje.core.agent.TranscriptSink;
@@ -66,8 +67,15 @@ import org.slf4j.LoggerFactory;
 public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ImplementOrchestrator.class);
 
-    /** The agent id of the orchestrator. */
-    public static final AgentId ROOT = new AgentId("orchestrator");
+    /** The name of the orchestrator agent. The agent id is unique in the process, see {@link #agentId()}. */
+    public static final String NAME = "orchestrator";
+    /** The ids that live orchestrators of this process use. */
+    private static final Set<String> USED_IDS = ConcurrentHashMap.newKeySet();
+    /** The tools that the model of the orchestrator gets. It has no tool that changes a file. */
+    public static final Set<String> ORCHESTRATOR_TOOLS = Set.of("read", "ls", "glob", "grep", "recall", "story_read",
+        "agent_status", "agent_message", "agent_ask", "agent_answer", "advisor", "ask_user");
+    /** The default largest number of model calls in one turn of the orchestrator. */
+    public static final int DEFAULT_TURN_CALLS = 30;
     /** The tools that a worker never gets. */
     public static final Set<String> EXCLUDED_TOOLS = Set.of(SubagentRuntime.SPAWN_TOOL, "plan_submit", "ask_user");
 
@@ -103,6 +111,9 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
     private final SubagentRuntime runtime;
     private final WorktreeFinisher finisher;
     private final List<String> toolNames;
+    private final AgentId agentId;
+    private final OrchestratorLoop loop;
+    private final List<String> personQuestions = new CopyOnWriteArrayList<>();
     private final CancellationToken rootToken = new CancellationToken();
     private final ReentrantLock spawnGate = new ReentrantLock();
     private final List<AgentInput> rootMessages = new CopyOnWriteArrayList<>();
@@ -163,6 +174,18 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             }
         }
         this.toolNames = List.copyOf(tools.keySet());
+        this.agentId = new AgentId(reserveId(b.agentId != null ? b.agentId.value() : b.sessionId + "/" + NAME));
+        var own = new LinkedHashMap<String, Tool>();
+        for (var tool : b.baseTools) {
+            if (ORCHESTRATOR_TOOLS.contains(tool.definition().name())) own.put(tool.definition().name(), tool);
+        }
+        for (var tool : tools.values()) {
+            if (ORCHESTRATOR_TOOLS.contains(tool.definition().name())) own.put(tool.definition().name(), tool);
+        }
+        // With no user, the orchestrator cannot ask one. A question that needs a person goes to the report.
+        if (!b.interactive) own.remove("ask_user");
+        var answerTool = own.get("agent_answer");
+        if (answerTool != null) own.put("agent_answer", new AnswerRecorder(answerTool));
         var base = b.policy == null ? (PermissionPolicy) a -> PermissionPolicy.Decision.ALLOW : b.policy;
         // The story tools and the sync tools change no file of the workspace. They never ask the user.
         PermissionPolicy rootPolicy = action -> {
@@ -170,8 +193,20 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             return decision == PermissionPolicy.Decision.ASK && INTERNAL_TOOLS.contains(action.tool())
                 ? PermissionPolicy.Decision.ALLOW : decision;
         };
-        runtime.registerRoot(ROOT, "orchestrator", rootToken, List.copyOf(tools.values()), rootPolicy,
+        runtime.registerRoot(agentId, NAME, rootToken, List.copyOf(tools.values()), rootPolicy,
             this::onRootInput, () -> 1);
+        runtime.questionFallback(agentId, OrchestratorPrompt.NO_ANSWER);
+        var agentEvents = b.agentEvents;
+        this.loop = new OrchestratorLoop(agentId, runtime, b.settings, () -> llm.forModel(null),
+            List.copyOf(own.values()), rootPolicy, store, b.transcript,
+            agentEvents == null ? e -> { } : agentEvents, clock, this::orchestratorContext,
+            b.turnCalls > 0 ? b.turnCalls : DEFAULT_TURN_CALLS, b.interactive);
+    }
+
+    private static String reserveId(String wanted) {
+        var candidate = wanted;
+        for (var n = 2; !USED_IDS.add(candidate); n++) candidate = wanted + "-" + n;
+        return candidate;
     }
 
     public static Builder builder(String sessionId, AgentSettings settings, SubagentRuntime.LlmProvider llm,
@@ -205,6 +240,9 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         private List<Tool> baseTools = List.of();
         private WorkerToolsFactory workerTools;
         private org.github.lscoughlin.jeorje.core.subagent.AdvisorLink advisorLink;
+        private AgentId agentId;
+        private int turnCalls;
+        private boolean interactive = true;
 
         private Builder(String sessionId, AgentSettings settings, SubagentRuntime.LlmProvider llm,
                         JeorjeConfig.Implement config) {
@@ -267,6 +305,21 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             return this;
         }
 
+        /**
+         * The wanted agent id of the orchestrator. The default is {@code <session id>/orchestrator}. The id of a
+         * live orchestrator in the process is never used twice: a second orchestrator gets a numbered id.
+         */
+        public Builder agentId(AgentId value) { this.agentId = value; return this; }
+
+        /** The largest number of model calls in one turn of the orchestrator. The default is 30. */
+        public Builder turnCalls(int value) { this.turnCalls = value; return this; }
+
+        /**
+         * True when a user can answer (the default). When false, the orchestrator has no {@code ask_user} tool, its
+         * prompt says that no user is present, and the report lists the questions that needed a person.
+         */
+        public Builder interactive(boolean value) { this.interactive = value; return this; }
+
         public ImplementOrchestrator build() { return new ImplementOrchestrator(this); }
     }
 
@@ -284,12 +337,32 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         return Optional.ofNullable(run == null ? null : run.id);
     }
 
+    /**
+     * The agent id of the orchestrator. It is unique in the process. The root node of the runtime and the
+     * orchestrator {@link Agent} use it.
+     */
+    public AgentId agentId() { return agentId; }
+
+    /** The agent of the orchestrator. It has its own history. Its events go to the consumer of {@code agentEvents}. */
+    public Agent orchestratorAgent() { return loop.agent(); }
+
+    /** The number of turns that the model loop of the orchestrator started. */
+    public int orchestratorTurns() { return loop.turns(); }
+
+    /**
+     * Gives a text of the user to the orchestrator. The call only queues the text, or gives it to a running turn.
+     * It starts the thread of the orchestrator when needed.
+     */
+    public void submit(AgentInput input) {
+        loop.offer(input);
+    }
+
     /** The messages and results that the orchestrator got. */
     public List<AgentInput> orchestratorMessages() { return List.copyOf(rootMessages); }
 
     /** Answers a question from a worker that is for the orchestrator. */
     public String answer(String questionId, String text) {
-        var result = runtime.answer(ROOT, questionId, text);
+        var result = runtime.answer(agentId, questionId, text);
         return result.ok() ? result.answer() : String.valueOf(result.reason());
     }
 
@@ -305,6 +378,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             if (active || !future.isDone()) throw new IllegalStateException("A run is active. Stop it first.");
             future = result;
         }
+        loop.start();
         Thread.ofVirtual().name("implement").start(() -> {
             try {
                 begin(request, result);
@@ -458,6 +532,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             planFile = request.plan();
             selected = Scheduler.closure(plan, request.only());
             runs.clear();
+            personQuestions.clear();
             byStory.clear();
             byWorker.clear();
             stopping = false;
@@ -620,7 +695,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
             }
             var request = new SpawnRequest(name, effective.render() + "\n\n" + WORKER_RULES, toolNames, null, model,
                 predicted == null ? "shared" : "worktree", SpawnMode.BACKGROUND, predicted, story.id());
-            var id = runtime.spawn(ROOT, request);
+            var id = runtime.spawn(agentId, request);
             runtime.clearPending(story.id());
             run.worker = id.value();
             byWorker.put(id, run);
@@ -657,7 +732,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
     private void attachWorktree(StoryRun run, AgentId id, Story story, String group, String name, Path predicted,
                                 Worktree from) {
         try {
-            var created = worktrees.create(new WorktreeManager.CreateRequest(id, ROOT, name, group,
+            var created = worktrees.create(new WorktreeManager.CreateRequest(id, agentId, name, group,
                 story.id() + " " + story.title(), projectRoot, SpawnMode.BACKGROUND, "worktree", false, run.verify,
                 from));
             if (from != null) {
@@ -1134,6 +1209,8 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         var allDone = plan.stories().stream().allMatch(s -> runs.get(s.id()).state == StoryState.DONE);
         var fut = future;
         var file = planFile;
+        var questions = List.copyOf(personQuestions);
+        var assumptions = assumptionsOf();
         var command = PlanFiles.command(plan.verification());
         Thread.ofVirtual().name("implement-finish").start(() -> {
             String status;
@@ -1164,10 +1241,24 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
                 if (forced != null) cleanupKept();
                 persist(status);
             }
-            var report = new ImplementReport(file.toString(), status, snapshot, verification, output, null);
+            var report = new ImplementReport(file.toString(), status, snapshot, verification, output, null,
+                questions, assumptions);
             emit(new ImplementEvent.RunFinished(report));
             fut.complete(report);
         });
+    }
+
+    /** The decisions that workers stated in the line {@code Decisions} of their summaries. Must hold the lock. */
+    private List<String> assumptionsOf() {
+        var out = new ArrayList<String>();
+        for (var run : runs.values()) {
+            if (run.summary.isBlank()) continue;
+            var decisions = parts(run.summary).get("Decisions");
+            if (decisions == null || decisions.isBlank()) continue;
+            if (decisions.strip().toLowerCase(Locale.ROOT).startsWith("none")) continue;
+            out.add(run.id + ": " + oneLine(decisions, 300));
+        }
+        return out;
     }
 
     /** After a stop: removes the worktrees that stay from blocked stories. */
@@ -1393,6 +1484,40 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         }
     }
 
+    private static final Pattern QUESTION_HEAD =
+        Pattern.compile("^\\[question from [^\\n]*?\\((.*?)\\), id q\\d+\\]\\s*(.*)$", Pattern.DOTALL);
+
+    /**
+     * Wraps {@code agent_answer}. An answer with {@code needsPerson} set to true adds the question and the answer to
+     * the list that the report shows.
+     */
+    private final class AnswerRecorder implements Tool {
+        private final Tool inner;
+
+        AnswerRecorder(Tool inner) { this.inner = inner; }
+
+        @Override public org.github.lscoughlin.jeorje.core.model.ToolDefinition definition() { return inner.definition(); }
+
+        @Override public boolean readOnly() { return inner.readOnly(); }
+
+        @Override public Optional<String> check(tools.jackson.databind.JsonNode input) { return inner.check(input); }
+
+        @Override
+        public org.github.lscoughlin.jeorje.core.model.ToolResultData execute(tools.jackson.databind.JsonNode input,
+                org.github.lscoughlin.jeorje.core.port.ToolContext context) throws Exception {
+            var result = inner.execute(input, context);
+            if (!result.error() && input.path("needsPerson").asBoolean(false)) {
+                var text = loop.questionText(input.path("questionId").asString(""));
+                var head = text == null ? null : QUESTION_HEAD.matcher(text);
+                var who = head != null && head.matches() ? head.group(1) : "a worker";
+                var question = head != null && head.matches() ? head.group(2) : String.valueOf(text);
+                personQuestions.add(who + ": " + oneLine(question, 300) + " Answer: "
+                    + oneLine(input.path("text").asString(""), 300));
+            }
+            return result;
+        }
+    }
+
     private void onRootInput(AgentInput input) {
         rootMessages.add(input);
         if (orchestratorInput != null) {
@@ -1402,6 +1527,8 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
                 log.atWarn().log(() -> "Cannot deliver a message to the orchestrator: " + e.getMessage());
             }
         }
+        // Only the queue takes the input. The asker waits on this thread, so no turn can run here.
+        loop.offer(input);
     }
 
     /** Writes a note in the history of the orchestrator. */
@@ -1410,7 +1537,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         if (store == null) return;
         var part = 2000 + noteCounter.incrementAndGet();
         try {
-            store.append(List.of(new Chunk(ROOT + ":1." + part, sessionId, ROOT.value(), 1, part, clock.instant(),
+            store.append(List.of(new Chunk(agentId + ":1." + part, sessionId, agentId.value(), 1, part, clock.instant(),
                 "note", null, text)));
         } catch (RuntimeException e) {
             log.atWarn().log(() -> "Cannot store a note: " + e.getMessage());
@@ -1443,6 +1570,8 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
     @Override
     public void close() {
         rootToken.cancel();
+        loop.close();
         runtime.close();
+        USED_IDS.remove(agentId.value());
     }
 }

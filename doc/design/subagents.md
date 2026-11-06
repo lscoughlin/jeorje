@@ -68,7 +68,7 @@ The UI has one foreground agent. The user sees its chat and types to it. All oth
 - The user opens the agent list with `Ctrl-X a`, or runs `/agents`. The list shows each agent with its name, state, and the last output line.
 - The user selects a subagent. It becomes the foreground chat. The UI shows the full history of that subagent from `transcript.jsonl` and then streams new output.
 - Text that the user types goes to the foreground subagent as a user input. This is steering. The subagent handles it as the next input, or it interrupts the current step if the user presses `Ctrl-C` first. A text that reaches the running turn at a step boundary starts a new count of model calls, so the step limit of the turn gives it a new budget. See [agent-loop.md](agent-loop.md#the-loop).
-- `Ctrl-X a` or `/back` returns the user to the parent.
+- `Ctrl-X a` or `/back` returns the user to the parent. The parent of a worker of `/implement` is the orchestrator. The parent of the orchestrator is its session. While `/implement` runs, the orchestrator is the foreground agent. See [ui.md](ui.md#the-implement-run-and-the-foreground).
 - A background agent that needs input shows a notice in the status line. The user can switch to it.
 - A remote subagent behaves in the same way. The UI sends the steering text to the peer. See [swarm.md](swarm.md).
 - `/agents new [name]` starts a second session and keeps the first one in the background. Each session has its own subagent runtime. The main agent of one session can use `agent_message` and `agent_ask` with the id or the name of the main agent of the other session. The runtime of the sender passes the call to the session directory when it cannot find the target. See [ui.md](ui.md#sessions-in-the-switcher).
@@ -91,23 +91,39 @@ The `to` value is an agent name, an agent id, or a story id for the workers of `
 ### How a question works
 
 1. The asker calls `agent_ask`. Its state becomes `WAITING_AGENT`.
-2. The runtime puts the question in the inbox of the target agent. The target sees it at the next step boundary, which is the point between two model calls or between two tool calls. The runtime does not interrupt a running tool. The question appears as a message that starts with `[question from <agent> (<story id or agent id>), id <questionId>]`. If the target has finished its turn, the runtime starts a new turn for it with the text of its inbox. A root agent receives the question as a peer message.
+2. The runtime puts the question in the inbox of the target agent. The target sees it at the next step boundary, which is the point between two model calls or between two tool calls. The runtime does not interrupt a running tool. The question appears as a message that starts with `[question from <agent> (<story id or agent id>), id <questionId>]`. If the target has finished its turn, the runtime starts a new turn for it with the text of its inbox. A root agent receives the question as a peer message. The orchestrator of `/implement` is a root agent with its own model loop. It queues the question and answers it in a turn of its own thread. See [Questions to the orchestrator](#questions-to-the-orchestrator).
 3. The target answers with `agent_answer`. It can do other work first. The answer goes to the asker as the result of `agent_ask`.
 4. The asker continues with its state `RUNNING`.
 
 ### Rules
 
-- **Timeout.** If no answer comes in `subagents.askTimeoutSeconds` (default 120), `agent_ask` returns an error with the reason `timeout`. The asker continues without the answer.
+- **Timeout.** If no answer comes in `subagents.askTimeoutSeconds` (default 120), `agent_ask` returns an error with the reason `timeout`. The asker continues without the answer. A question to the orchestrator of `/implement` does not give this error. The asker gets the fallback answer. See [Questions to the orchestrator](#questions-to-the-orchestrator).
 - **Deadlock.** An agent cannot wait for an agent that waits for it, directly or through other agents. The runtime finds the cycle when the question is sent. `agent_ask` returns an error with the reason `deadlock`. The check counts internal waits as edges too: waits for an integration lock, merge waits, and a parent that waits in a `wait` mode `spawn_agent` for its child.
 - **Busy.** An agent that is in an internal wait does not reach a step boundary and cannot answer. `agent_ask` to such an agent returns an error with the reason `busy` at once. This also covers an agent in `SYNCING`, `RESOLVING`, or `MERGING` that waits for a lock.
 - **One at a time.** An agent has at most one open `agent_ask`. A second call returns an error with the reason `open ask`. An agent can have many unanswered questions in its inbox. It answers them in any order.
 - **Limit.** An agent can ask at most `subagents.maxAsks` questions in one task (default 10). This keeps agents from talking when they should work.
 - **Target not available.** If the target has not started (its story is `pending`), `agent_ask` returns an error with the reason `not started`. If the target has ended, `agent_ask` returns an error with the reason `ended` and the completion summary of the target, with its keywords. The asker can use the keywords with `recall`. See [Completion summary](#completion-summary).
-- **To the user.** Workers cannot ask the user. A question for the user goes to the orchestrator, which can call `ask_user`. The root agent and the orchestrator can use `ask_user`. The user sees the question as a form that names the agent that asked. Forms from several agents queue in the order they arrive. A form does not move the user to the agent that asked. See [Forms](ui.md#forms). A question from a remote peer goes through `agent_ask` and not through `ask_user`. See [swarm.md](swarm.md).
+- **To the user.** Workers cannot ask the user. A question for the user goes to the orchestrator, which can call `ask_user`. The root agent and the orchestrator can use `ask_user`. In a run with no user, the orchestrator has no `ask_user` tool. The user sees the question as a form that names the agent that asked. Forms from several agents queue in the order they arrive. A form does not move the user to the agent that asked. See [Forms](ui.md#forms). A question from a remote peer goes through `agent_ask` and not through `ask_user`. See [swarm.md](swarm.md).
 - **Ended target and messages.** `agent_message` to an ended agent returns the same `ended` error. A question that is open when its target ends gets the `ended` error with the summary of the target. A question that is open when its asker ends is cancelled.
 - **Content.** Questions and answers are plain text. They are tool calls and tool results in the histories of both agents, so the index stores them and `recall` finds them. See [context-and-compaction.md](context-and-compaction.md).
 - **Remote agents.** `agent_ask` to a running remote subagent returns an error with the reason `remote`. `agent_message` to a remote subagent sends the text to its peer as steering. A remote subagent can ask a question: the runtime shows it in the output of the agent with a question id. See [swarm.md](swarm.md).
 - **Permissions.** `agent_message`, `agent_ask`, and `agent_answer` are `ALLOW`. `agent_status` is a read-only tool and is `ALLOW`. An answer cannot approve a tool run or change a permission. See [permissions-and-safety.md](permissions-and-safety.md).
+
+### Questions to the orchestrator
+
+The orchestrator is an agent with a model loop. It answers a question to it with `agent_answer`, normally in one turn. A status question and a question about another story never reach the user. See [Questions to the orchestrator](planning.md#questions-to-the-orchestrator) for the full rules.
+
+When a person must decide, the orchestrator does this.
+
+1. It answers the worker at once with a **holding answer**. The answer says what to do meanwhile, or to call `story_blocked`. The asker continues with `RUNNING`.
+2. It calls `ask_user`. The user sees the form in the chat of the orchestrator.
+3. When the user answers, it sends the decision with `agent_message`. The text starts with `Decision of the user:`. The worker sees the message at its next step boundary.
+
+The orchestrator must not leave a question open. These cases close a question with a fallback answer:
+
+- A new question arrives while `ask_user` waits for the user. The answer is "The orchestrator waits for the user. Continue with your best choice."
+- A turn of the orchestrator ends with no answer. The answer tells the worker to continue with its best choice and to state the assumption in its summary.
+- No answer comes in `subagents.askTimeoutSeconds`. The asker gets the same fallback answer, and not the error `timeout`.
 
 ### Steering and questions
 

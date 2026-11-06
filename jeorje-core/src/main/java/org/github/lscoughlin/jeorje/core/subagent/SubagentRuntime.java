@@ -85,6 +85,7 @@ public final class SubagentRuntime implements AutoCloseable {
     private final Set<AgentId> externalSenders = new java.util.HashSet<>();
     private final Map<AgentId, AgentNode> nodes = new LinkedHashMap<>();
     private final Map<String, Question> questions = new LinkedHashMap<>();
+    private final Map<AgentId, String> fallbacks = new java.util.concurrent.ConcurrentHashMap<>();
     private final Set<String> pending = new LinkedHashSet<>();
     private final List<Tool> sharedTools = new ArrayList<>();
     private final AtomicInteger agentCounter = new AtomicInteger();
@@ -1204,6 +1205,11 @@ public final class SubagentRuntime implements AutoCloseable {
                 if (AskResult.ENDED.equals(result.reason()) && result.summary() == null) return endedResult(target);
                 return result;
             } catch (TimeoutException e) {
+                var fallback = fallbacks.get(target.id);
+                if (fallback != null) {
+                    question.reply.complete(AskResult.answer(fallback));
+                    return question.reply.getNow(AskResult.answer(fallback));
+                }
                 question.reply.complete(AskResult.failure(AskResult.TIMEOUT));
                 return AskResult.failure(AskResult.TIMEOUT);
             } catch (InterruptedException e) {
@@ -1289,6 +1295,23 @@ public final class SubagentRuntime implements AutoCloseable {
             if (q == null || !q.to.equals(from)) return false;
         }
         return q.reply.complete(AskResult.failure(reason));
+    }
+
+    /** True while a question with this id is open: asked, not answered, not timed out. */
+    public boolean questionOpen(String questionId) {
+        synchronized (lock) {
+            var q = questions.get(questionId);
+            return q != null && q.open();
+        }
+    }
+
+    /**
+     * Sets the answer that an asker gets when a question to an agent gets no answer in the time of the asker. Without
+     * a fallback, the asker gets the failure {@link AskResult#TIMEOUT}. Null removes the fallback.
+     */
+    public void questionFallback(AgentId target, String text) {
+        if (text == null) fallbacks.remove(target);
+        else fallbacks.put(target, text);
     }
 
     /** Answers a question that is in the inbox of the caller. */

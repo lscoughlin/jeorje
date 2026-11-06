@@ -18,7 +18,7 @@ The plan code is in `jeorje-core` (`PlanMode`, `PlanParser`, `PlanValidator`, `P
 - **Story**: one unit of work that a single subagent can finish alone. It has a goal, acceptance criteria, context, and tasks.
 - **Task**: one step in a story. A subagent does the tasks of its story in order.
 - **Worker**: the subagent that implements one story.
-- **Orchestrator**: the agent that runs `/implement`. It schedules the workers. Each top-level session has its own orchestrator. Sessions can run `/implement` at the same time. The orchestrator is built on the first `/implement` of its session.
+- **Orchestrator**: the agent that runs `/implement`. It schedules the workers, and it has its own model loop. It answers the questions of the workers. See [The orchestrator agent](#the-orchestrator-agent). Each top-level session has its own orchestrator. Sessions can run `/implement` at the same time. The orchestrator is built on the first `/implement` of its session.
 
 ## Plan mode
 
@@ -196,7 +196,7 @@ Workers can always see each other's stories. This does not change the working co
 - `story_read` does not give the plan title, the plan goal, or the history of any agent. For the history, a worker uses `recall` (see [Recall in a subagent](subagents.md#recall-in-a-subagent)).
 - `story_read` is read-only and is `ALLOW` in the permission policy.
 
-A worker uses the other stories to check the `touches` of its neighbors, to find the interface that another story builds, and to find the worker that it must ask. Workers can ask each other questions. See [Talking to other agents](subagents.md#talking-to-other-agents). The orchestrator answers questions that are for it, or asks the user.
+A worker uses the other stories to check the `touches` of its neighbors, to find the interface that another story builds, and to find the worker that it must ask. Workers can ask each other questions. See [Talking to other agents](subagents.md#talking-to-other-agents). The orchestrator agent answers the questions that are for it. A question that needs a person goes to the user through the orchestrator. See [Questions to the orchestrator](#questions-to-the-orchestrator).
 
 ### Isolation
 
@@ -242,9 +242,42 @@ A worker gets a new budget of model calls when it makes real progress. These eve
 
 An edit gives a new budget at most one time in 10 model calls. A worker with none of these events ends with the step limit error. See [Turn watch for subagents](agent-loop.md#turn-watch-for-subagents).
 
-### Orchestrator context
+### The orchestrator agent
 
-The orchestrator is the foreground agent. It keeps a compact view of the run in its own context: for each story, the id, title, state, attempt number, and a one-line result. It does not read the detailed output of workers. The orchestrator is the root agent of its own subagent runtime. The user can switch into any worker with `Ctrl-X a` and steer it. See [subagents.md](subagents.md#foreground-switching). A message that the user sends to a worker becomes part of that worker's history but not of the story text.
+The orchestrator is an agent with its own model loop, its own history, and its own system prompt. The class `OrchestratorLoop` owns the agent. The agent id is `<session id>/orchestrator`. If that id is in use in the process, Jeorje adds `-2`, `-3`, and so on. The name of the agent is `orchestrator`. The orchestrator is the root agent of its own subagent runtime.
+
+**Inputs.** The runtime gives the orchestrator three kinds of input.
+
+- A question from a worker, as a peer message with the question id.
+- A message from a worker or from another agent.
+- A text that the user types while the orchestrator is the foreground agent.
+
+The input callback of the orchestrator only puts the input in a queue. One thread of the orchestrator takes the queue and runs one turn at a time. The thread is named `subagent-<agent id>`. A turn never runs on the thread of a worker, on the thread of the run, or inside the run lock. A text of the user joins a running turn at its next step boundary. A result of a worker starts no turn. The state of the stories shows the result in the next request.
+
+**Context.** Each request of the orchestrator ends with the compact view of the run: for each story, the id, title, state, attempt number, and a one-line result. The orchestrator does not read the detailed output of workers. It can answer a status question with no tool call.
+
+**Tools.** The orchestrator has these tools: `read`, `ls`, `glob`, `grep`, `recall`, `story_read`, `agent_status`, `agent_message`, `agent_ask`, `agent_answer`, `advisor`, and `ask_user`. In a run with no user, it has no `ask_user` tool. See [Headless runs](#headless-runs).
+
+**Limits.** The orchestrator must not change files. It has no `bash`, `edit`, `write`, or `patch` tool. A turn has a limit of 30 model calls. A failed model call ends the turn and shows an error. It does not stop the run.
+
+**Foreground.** `/implement` makes the orchestrator the foreground agent of its session. The user types to the orchestrator and sees its turns. The user can switch to a worker with `Ctrl-X a` and steer it. See [subagents.md](subagents.md#foreground-switching). A message that the user sends to a worker becomes part of that worker's history but not of the story text. When the run ends, the foreground returns to the main agent of the session, but only if the orchestrator is the foreground agent at that time. The orchestrator stays in the agent list until the session closes. See [ui.md](ui.md#the-implement-run-and-the-foreground).
+
+### Questions to the orchestrator
+
+A worker asks the orchestrator with `agent_ask`. The question arrives as the message `[question from <name> (<story id>), id <questionId>]`. The orchestrator answers in the same turn with `agent_answer`. It follows these rules.
+
+1. It answers from the state of the stories first.
+2. If it needs a fact, it uses `story_read`, `recall`, `read`, `grep`, or `agent_ask` to another worker.
+3. If a person must decide, for example when two acceptance criteria conflict, it answers the worker at once with a **holding answer**. The holding answer tells the worker what to do meanwhile, or to call `story_blocked`. Then the orchestrator calls `ask_user`. When the user answers, the orchestrator sends the decision to the worker with `agent_message`. The text starts with `Decision of the user:`. The worker sees the message at its next step boundary.
+4. A status question between agents never reaches the user. The user sees a question only when the orchestrator calls `ask_user`.
+
+**Fallback answers.** The orchestrator must not leave a question open.
+
+- While a call of `ask_user` waits for the user, a new question gets the answer "The orchestrator waits for the user. Continue with your best choice." at once.
+- If a turn ends and the question has no answer, the runtime closes the question with a fallback answer. The answer tells the worker to continue with its best choice and to state the assumption in its summary.
+- If no answer comes in the time of the asker (`subagents.askTimeoutSeconds`), the asker gets the same fallback answer. The time is not for a decision of the user, because the holding answer comes first.
+
+**Form of the user.** The form of `ask_user` shows in the chat of the orchestrator. If the orchestrator is a background agent, the form waits until the user switches to the orchestrator. See [ui.md](ui.md#forms).
 
 ### Resume
 
@@ -267,6 +300,8 @@ The command `jeorje run` runs the plan commands with no UI. No user is present, 
 - `--ask` asks the questions of the form on standard input as plain text. See [Plain text](ui.md#forms).
 - A plan with the status `draft` needs `--yes` or `--yolo` for the approval. Without them, the run ends with the status `not approved`.
 - A tool call that needs a permission decision is denied, and the run prints a line that names the story. `--yes` or `--yolo` approves, as in the interactive UI.
+- The orchestrator has its own model loop in a headless run too. It answers the questions of the workers from its context. It has no `ask_user` tool, and its prompt says that no user is present. A question that needs a person gets the answer: continue with your best choice, state the assumption, or call `story_blocked`. The orchestrator marks such an answer with `needsPerson` in the call of `agent_answer`.
+- The report lists the questions that needed a person, each with the answer of the orchestrator, and the assumptions of the workers. An assumption is the text of the line `Decisions:` in the completion summary of a story. The lines "Questions that needed a person:" and "Assumptions of the workers:" show only when they have entries.
 - `/implement pause`, `resume`, and `stop` are not available, because the run ends with its report. `jeorje run` prints an error for them.
 - The exit code is 0 when the plan is `done` and 1 for any other result.
 - Progress lines start with `IMPLEMENT:` and go to the error stream. The report goes to the output stream.

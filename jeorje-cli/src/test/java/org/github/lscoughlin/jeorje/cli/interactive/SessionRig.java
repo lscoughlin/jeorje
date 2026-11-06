@@ -54,6 +54,10 @@ final class SessionRig implements AutoCloseable {
         final ScriptedLlmClient main;
         final Map<String, ScriptedLlmClient> workers = new ConcurrentHashMap<>();
         final List<LlmRequest> mainRequests = new CopyOnWriteArrayList<>();
+        /** The script of the orchestrator agent. A request with the orchestrator system prompt goes here. */
+        volatile ScriptedLlmClient orchestrator = new ScriptedLlmClient();
+        final List<LlmRequest> orchestratorRequests = new CopyOnWriteArrayList<>();
+        final List<LlmRequest> workerRequests = new CopyOnWriteArrayList<>();
         /** When set, each model call of a worker waits for a permit. */
         volatile java.util.concurrent.Semaphore workerGate;
 
@@ -68,6 +72,10 @@ final class SessionRig implements AutoCloseable {
 
         @Override
         public Flow.Publisher<LlmEvent> stream(LlmRequest request, CancellationToken cancel) {
+            if (request.system() != null && request.system().contains("You are the orchestrator of an /implement run")) {
+                orchestratorRequests.add(request);
+                return orchestrator.stream(request, cancel);
+            }
             var first = request.messages().isEmpty() ? "" : text(request.messages().get(0));
             if (request.tools().isEmpty()) {
                 var m = AGENT.matcher(first);
@@ -85,6 +93,7 @@ final class SessionRig implements AutoCloseable {
                         throw new IllegalStateException(e);
                     }
                 }
+                workerRequests.add(request);
                 var worker = workers.get(m.group(1));
                 if (worker == null) throw new IllegalStateException("No script for story " + m.group(1));
                 return worker.stream(request, cancel);

@@ -35,6 +35,19 @@ class AgentRosterTest {
     }
 
     @Test
+    void theOwningSessionOfAnAgentIsTheSessionItBelongsTo() {
+        var hub = new SessionHub();
+        var main = MainSession.first();
+        var fork = new MainSession(hub.nextForkId(), "build");
+        hub.add(main, null);
+        hub.add(fork, main.id());
+        assertSame(main, hub.owningSession(main.id()));
+        assertSame(fork, hub.owningSession(fork.id()));
+        assertNull(hub.owningSession(new AgentId("unknown")));
+        assertNull(hub.owningSession(null));
+    }
+
+    @Test
     void forkIdsCountUp() {
         var hub = new SessionHub();
         assertEquals(new AgentId("fork-1"), hub.nextForkId());

@@ -145,6 +145,10 @@ class InteractiveSessionTest {
             await("switch", () -> rig.session.screen().foreground().equals(worker.id()));
             assertTrue(rig.session.screen().chat(worker.id()).logicalLines().stream()
                     .anyMatch(l -> l.toString().contains("Finished S1.")));
+            // The parent of a worker is the orchestrator. The parent of the orchestrator is the session.
+            rig.type("/back\r");
+            await("back to the orchestrator", () -> rig.session.screen().foreground()
+                    .equals(rig.session.hub().get(new AgentId("main")).orchestrator().agentId()));
             rig.type("/back\r");
             await("back", () -> rig.session.screen().foreground().value().equals("main"));
 

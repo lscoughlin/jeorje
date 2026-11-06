@@ -439,7 +439,7 @@ public final class HeadlessWork implements AutoCloseable {
                 .store(store).transcript(transcript).worktrees(worktrees)
                 .stateStore(RunStateStore.file(session.dir().resolve("implement.json")))
                 .events(this::onImplementEvent).agentEvents(this::onAgentEvent)
-                .orchestratorInput(input -> log.atDebug().log(() -> "orchestrator input: " + input.text()))
+                .interactive(false)
                 .limits(limits()).policy(workerPolicy).workspacePolicies(this::policyForWorkspace)
                 .approver(plan -> false)
                 .baseTools(baseTools())

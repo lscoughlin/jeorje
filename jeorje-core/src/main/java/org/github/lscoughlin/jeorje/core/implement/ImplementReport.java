@@ -8,11 +8,23 @@ import java.util.List;
  * @param status {@code done}, {@code blocked}, {@code stopped}, {@code paused}, {@code not approved}, or
  *     {@code error}
  * @param verification the result of the plan-level verification: {@code passed}, {@code failed}, or {@code skipped}
+ * @param personQuestions the questions of workers that needed a person, each with the answer that the orchestrator
+ *     gave
+ * @param assumptions the decisions that workers stated in their summaries, one entry for each story
  */
 public record ImplementReport(String plan, String status, List<StoryResult> stories, String verification,
-                              String verificationOutput, String error) {
+                              String verificationOutput, String error, List<String> personQuestions,
+                              List<String> assumptions) {
     public ImplementReport {
         stories = stories == null ? List.of() : List.copyOf(stories);
+        personQuestions = personQuestions == null ? List.of() : List.copyOf(personQuestions);
+        assumptions = assumptions == null ? List.of() : List.copyOf(assumptions);
+    }
+
+    /** A report with no list of questions and no list of assumptions. */
+    public ImplementReport(String plan, String status, List<StoryResult> stories, String verification,
+                           String verificationOutput, String error) {
+        this(plan, status, stories, verification, verificationOutput, error, List.of(), List.of());
     }
 
     /** The result of one story. */
@@ -42,6 +54,14 @@ public record ImplementReport(String plan, String status, List<StoryResult> stor
             if (s.state() == StoryState.BLOCKED && s.reason() != null && !s.reason().isBlank()) {
                 sb.append("    reason: ").append(s.reason()).append('\n');
             }
+        }
+        if (!personQuestions.isEmpty()) {
+            sb.append("Questions that needed a person:\n");
+            personQuestions.forEach(q -> sb.append("- ").append(q).append('\n'));
+        }
+        if (!assumptions.isEmpty()) {
+            sb.append("Assumptions of the workers:\n");
+            assumptions.forEach(a -> sb.append("- ").append(a).append('\n'));
         }
         sb.append("Plan verification: ").append(verification).append('\n');
         if (verification.equals("failed") && verificationOutput != null && !verificationOutput.isBlank()) {
