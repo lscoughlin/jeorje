@@ -10,6 +10,8 @@ import org.github.lscoughlin.jeorje.ui.keys.KeyScope;
 import org.github.lscoughlin.jeorje.ui.mouse.Rect;
 import org.github.lscoughlin.jeorje.ui.mouse.RegionEvent;
 import org.github.lscoughlin.jeorje.ui.screen.Pane;
+import org.jline.utils.AttributedString;
+import org.jline.utils.AttributedStyle;
 
 /**
  * The file browser as a pane. Enter on a file, or a double click on a file, returns the path. Enter on a
@@ -78,6 +80,31 @@ public final class FileBrowserPane implements Pane<Path> {
         while (rows.size() < height - RESERVED_ROWS) rows.add("");
         rows.add(keysRow());
         return rows;
+    }
+
+    /**
+     * The tree rows and the keys row, with the selected visible tree row padded to the width of the pane and drawn
+     * with inverse attributes, so the whole line is highlighted. The keys row and the padding rows stay plain.
+     */
+    @Override
+    public List<AttributedString> renderStyled() {
+        var rows = render();
+        // The tree rows come first and the keys row is last, so the keys row never takes the highlight.
+        var treeRows = Math.max(0, rows.size() - RESERVED_ROWS);
+        var width = Math.max(0, browser.bounds().width());
+        // The selected index is a tree index, and the tree rows start at the scroll offset.
+        var selectedRow = browser.selectedIndex() - browser.scrollOffset();
+        var out = new ArrayList<AttributedString>(rows.size());
+        for (var i = 0; i < rows.size(); i++) {
+            var text = rows.get(i);
+            if (i == selectedRow && i < treeRows) {
+                var pad = Math.max(0, width - new AttributedString(text).columnLength());
+                out.add(new AttributedString(text + " ".repeat(pad), AttributedStyle.DEFAULT.inverse()));
+            } else {
+                out.add(new AttributedString(text));
+            }
+        }
+        return out;
     }
 
     private String keysRow() {

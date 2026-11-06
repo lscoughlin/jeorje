@@ -35,6 +35,7 @@ import org.jline.reader.UserInterruptException;
 import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 import org.jline.utils.AttributedString;
+import org.jline.utils.AttributedStringBuilder;
 import org.jline.utils.AttributedStyle;
 import org.jline.utils.Display;
 import org.jline.utils.InfoCmp;
@@ -1155,7 +1156,7 @@ public final class Screen implements AutoCloseable {
         pane.resize(area);
         var lines = new ArrayList<AttributedString>();
         lines.add(new AttributedString(fit(pane.title(), columns), AttributedStyle.DEFAULT.inverse()));
-        for (var row : pane.render()) lines.add(new AttributedString(fit(row, columns)));
+        for (var row : pane.renderStyled()) lines.add(fit(row, columns));
         while (lines.size() < regionRows) lines.add(AttributedString.EMPTY);
         return new ArrayList<>(lines.subList(0, regionRows));
     }
@@ -1163,6 +1164,26 @@ public final class Screen implements AutoCloseable {
     private static String fit(String text, int columns) {
         var clean = text.replace('\t', ' ').replace('\n', ' ');
         return clean.length() <= columns ? clean : clean.substring(0, columns);
+    }
+
+    /** Fits a styled row to the column count. The characters keep the style they had. */
+    private static AttributedString fit(AttributedString row, int columns) {
+        var clean = sanitize(row);
+        return clean.columnLength() <= columns ? clean : clean.columnSubSequence(0, columns);
+    }
+
+    /** Replaces a tab and a newline with a space and keeps the style of the character. */
+    private static AttributedString sanitize(AttributedString row) {
+        AttributedStringBuilder out = null;
+        var from = 0;
+        for (var i = 0; i < row.length(); i++) {
+            var c = row.charAt(i);
+            if (c != '\t' && c != '\n') continue;
+            if (out == null) out = new AttributedStringBuilder(row.length());
+            out.append(row, from, i).append(" ", row.styleAt(i));
+            from = i + 1;
+        }
+        return out == null ? row : out.append(row, from, row.length()).toAttributedString();
     }
 
     /** Whether a pane takes the keyboard now. */

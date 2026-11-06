@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import org.github.lscoughlin.jeorje.ui.mouse.Rect;
 import org.github.lscoughlin.jeorje.ui.mouse.RegionEvent;
+import org.jline.utils.AttributedString;
 
 /**
  * A pane that takes the chat region, the keyboard, and the mouse until it has a result or the user cancels it.
@@ -21,6 +22,14 @@ public interface Pane<T> {
 
     /** The text rows for the area of the pane. */
     List<String> render();
+
+    /**
+     * The styled rows for the area of the pane. The default wraps each row of {@link #render()} in an
+     * {@link AttributedString} with the default style. A pane that highlights a row overrides this method.
+     */
+    default List<AttributedString> renderStyled() {
+        return render().stream().map(AttributedString::new).toList();
+    }
 
     /** Handles a key. Key names are UP, DOWN, LEFT, RIGHT, ENTER, ESC, BACKSPACE, or a single character. */
     void key(String key);
