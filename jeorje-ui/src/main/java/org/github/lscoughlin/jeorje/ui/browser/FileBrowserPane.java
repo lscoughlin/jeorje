@@ -88,21 +88,22 @@ public final class FileBrowserPane implements Pane<Path> {
      */
     @Override
     public List<AttributedString> renderStyled() {
-        var tree = browser.render();
-        var height = Math.max(1, browser.bounds().height());
+        var rows = render();
+        // The tree rows come first and the keys row is last, so the keys row never takes the highlight.
+        var treeRows = Math.max(0, rows.size() - RESERVED_ROWS);
         var width = Math.max(0, browser.bounds().width());
+        // The selected index is a tree index, and the tree rows start at the scroll offset.
         var selectedRow = browser.selectedIndex() - browser.scrollOffset();
-        var out = new ArrayList<AttributedString>(height);
-        for (var i = 0; i < height - RESERVED_ROWS; i++) {
-            var text = i < tree.size() ? tree.get(i) : "";
-            if (i == selectedRow && i < tree.size()) {
+        var out = new ArrayList<AttributedString>(rows.size());
+        for (var i = 0; i < rows.size(); i++) {
+            var text = rows.get(i);
+            if (i == selectedRow && i < treeRows) {
                 var pad = Math.max(0, width - new AttributedString(text).columnLength());
                 out.add(new AttributedString(text + " ".repeat(pad), AttributedStyle.DEFAULT.inverse()));
             } else {
                 out.add(new AttributedString(text));
             }
         }
-        out.add(new AttributedString(keysRow()));
         return out;
     }
 

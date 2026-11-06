@@ -228,10 +228,12 @@ class FileBrowserPaneTest {
         var pane = new FileBrowserPane(browser);
         pane.resize(new Rect(0, 1, 60, 5));
         var row = pane.renderStyled().get(0);
+        var text = row.toString();
         assertEquals(60, row.columnLength(), "the row is padded to the pane width");
         assertEquals(60, row.length(), "the padding is spaces, one cell each");
-        assertTrue(row.toString().endsWith("src/" + " ".repeat(60 - row.toString().indexOf("src/") - 4)),
-                row.toString());
+        assertTrue(text.startsWith("*> src/"), text);
+        assertEquals(pane.render().getFirst() + " ".repeat(60 - pane.render().getFirst().length()), text,
+                "the padding follows the plain row text");
         for (var i = 0; i < row.length(); i++) {
             assertEquals(AttributedStyle.DEFAULT.inverse(), row.styleAt(i), "the padding is inverse too");
         }
