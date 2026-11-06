@@ -537,6 +537,7 @@ A terminal with the Kitty keyboard protocol sends `Ctrl-Backspace` as `ESC [ 127
 | `/agents new [name]` | Move this session to the background and start a new session in the foreground. The optional name names the new session. |
 | `/back` | Return to the parent agent |
 | `/cancel [name]` | Cancel the foreground agent or a named subagent |
+| `/resume [id]` | List the sessions of this project, newest first, with the time of the last update and the first text of the user. With an id, open that session in the foreground. |
 | `/files [list [filter]]` | Open the file browser, or print the file tree. `Ctrl-X f` opens the browser pane. |
 | `/edit <path>` | Open a file in the editor |
 | `/compact` | Run compaction now |

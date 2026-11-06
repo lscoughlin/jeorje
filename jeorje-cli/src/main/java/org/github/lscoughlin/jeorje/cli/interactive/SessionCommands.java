@@ -10,6 +10,9 @@ import java.util.List;
 import java.util.regex.Pattern;
 import org.github.lscoughlin.jeorje.core.implement.ImplementRequest;
 import org.github.lscoughlin.jeorje.core.implement.PlanFiles;
+import org.github.lscoughlin.jeorje.core.model.Role;
+import org.github.lscoughlin.jeorje.core.model.Text;
+import org.github.lscoughlin.jeorje.core.session.TranscriptReader;
 import org.github.lscoughlin.jeorje.swarm.PeerState;
 import org.github.lscoughlin.jeorje.ui.browser.FileBrowser;
 import org.github.lscoughlin.jeorje.ui.commands.CommandResult;
@@ -22,6 +25,9 @@ import org.github.lscoughlin.jeorje.ui.mouse.Rect;
  */
 final class SessionCommands {
     private static final Pattern STORY_ID = Pattern.compile("[A-Za-z]{1,4}\\d+");
+
+    /** The most characters of one line of the session list. */
+    private static final int LINE_WIDTH = 120;
 
     private final InteractiveSession session;
 
@@ -42,6 +48,7 @@ final class SessionCommands {
         slash.register("edit", "/edit <path>", "Open a file in the editor", this::edit);
         slash.register("peers", "/peers", "List the peers of the swarm", a -> peers());
         slash.register("mcp", "/mcp", "List the MCP servers and their tools", a -> CommandResult.ok(session.mcpReport()));
+        slash.register("resume", "/resume [id]", "List previous sessions, or resume one by id", this::resume);
     }
 
     // ---- plan ----
@@ -226,6 +233,61 @@ final class SessionCommands {
 
     private static CommandResult result(org.github.lscoughlin.jeorje.tools.worktree.WorktreeCommands.Outcome outcome) {
         return outcome.ok() ? CommandResult.ok(outcome.message()) : CommandResult.fail(outcome.message());
+    }
+
+    // ---- sessions ----
+
+    private CommandResult resume(String args) {
+        if (!args.isBlank()) {
+            var id = args.strip();
+            try {
+                session.resume(id);
+                return CommandResult.ok("Resumed session " + id + ".");
+            } catch (IllegalArgumentException e) {
+                return CommandResult.fail(e.getMessage());
+            }
+        }
+        var lines = sessionLines();
+        if (lines.isEmpty()) lines = List.of("There are no earlier sessions in this project.");
+        return CommandResult.ok(String.join("\n", lines) + "\nUse /resume <id> to resume one.");
+    }
+
+    /** One line for each conversation on disk, newest first. A line holds the id, the time, and the first prompt. */
+    private List<String> sessionLines() {
+        var lines = new ArrayList<String>();
+        for (var s : session.previousSessions()) {
+            var turns = TranscriptReader.read(s.transcriptPath());
+            var count = s.manifest().lastTurn() > 0 ? s.manifest().lastTurn() : turns.size();
+            var head = s.id() + " " + s.manifest().updatedAt() + " " + count + " turns";
+            var summary = firstUserText(turns);
+            var room = LINE_WIDTH - head.length() - 1;
+            lines.add(summary.isEmpty() || room < 8 ? head : head + " " + clip(summary, room));
+        }
+        return lines;
+    }
+
+    /** The text of the first message of the user, as one line. It is empty when the conversation has none. */
+    private static String firstUserText(List<TranscriptReader.TimedTurn> turns) {
+        for (var turn : turns) {
+            for (var message : turn.turn().messages()) {
+                if (message.role() != Role.USER) continue;
+                var sb = new StringBuilder();
+                for (var part : message.content()) {
+                    if (part instanceof Text t) {
+                        if (!sb.isEmpty()) sb.append(' ');
+                        sb.append(t.text());
+                    }
+                }
+                var text = sb.toString().strip().replaceAll("\\s+", " ");
+                if (!text.isEmpty()) return text;
+            }
+        }
+        return "";
+    }
+
+    private static String clip(String text, int room) {
+        if (text.length() <= room) return text;
+        return room <= 3 ? text.substring(0, room) : text.substring(0, room - 3) + "...";
     }
 
     // ---- agents, files, editor, peers ----

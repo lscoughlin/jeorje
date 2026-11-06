@@ -634,6 +634,53 @@ public final class InteractiveSession implements AutoCloseable {
         return id;
     }
 
+    /**
+     * Brings an existing conversation on disk into the foreground. When a live session already has this conversation,
+     * the method only moves the foreground to that session. Otherwise it builds a new session for the conversation and
+     * restores the agent from the manifest and the transcript.
+     *
+     * @param id the id of the session directory on disk
+     * @return the id of the session agent that holds the conversation
+     * @throws IllegalArgumentException when no session on disk has this id
+     */
+    AgentId resume(String id) {
+        var conversation = sessions.resume(id).orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
+        for (var other : hub.sessions()) {
+            if (other.session() != null && other.session().id().equals(conversation.id())) {
+                switcher.switchTo(other.id());
+                return other.id();
+            }
+        }
+        var ms = new MainSession(hub.nextForkId(), conversation.id());
+        ms.session(conversation);
+        var counting = openStore(conversation);
+        ms.store(counting);
+        ms.transcript(new TranscriptWriter(conversation.transcriptPath(), scrubber));
+        List<String> restored;
+        try {
+            buildSession(ms, counting);
+            restored = restoreAgent(ms);
+        } catch (RuntimeException e) {
+            closeQuietly(ms.transcript());
+            closeQuietly(ms.store());
+            throw e;
+        }
+        hub.add(ms, fg().id());
+        switcher.switchTo(ms.id());
+        var text = String.join("\n", restored);
+        if (uiStarted) {
+            notice(ms.id(), text);
+        } else {
+            startupNotices.add(text);
+        }
+        return ms.id();
+    }
+
+    /** The conversations on disk, newest first. */
+    List<Session> previousSessions() {
+        return sessions.list();
+    }
+
     /** Opens the context store of a conversation. */
     private ScrubbingContextStore openStore(Session conversation) {
         return new ScrubbingContextStore(
@@ -713,24 +760,31 @@ public final class InteractiveSession implements AutoCloseable {
         agent.start();
     }
 
-    /**
-     * Restores the main agent from the manifest and the transcript of the resumed session. It also shows the end of
-     * the earlier conversation in the chat.
-     */
     private void releaseSkills(String agentId, List<org.github.lscoughlin.jeorje.core.model.Chunk> chunks) {
         for (var skills : skillTools) skills.releasePruned(agentId, chunks);
     }
 
+    /** Restores the main agent of this session from its manifest and transcript, and queues its notice. */
     private void restoreAgent() {
-        var conversation = main.session();
-        var agent = main.agent();
+        startupNotices.add(String.join("\n", restoreAgent(main)));
+    }
+
+    /**
+     * Restores the agent of a session from its manifest and the transcript of its conversation.
+     *
+     * @return the lines that show the end of the earlier conversation in the chat
+     */
+    private List<String> restoreAgent(MainSession ms) {
+        var conversation = ms.session();
+        var agent = ms.agent();
         var transcriptTurns = TranscriptReader.read(conversation.transcriptPath());
         var source = Wiring.rootAgentOf(conversation.manifest());
         agent.restore(conversation.manifest(), transcriptTurns, source);
-        resumedTurns = agent.turns().size();
-        var recent = agent.turns().subList(Math.max(0, resumedTurns - 3), resumedTurns);
+        var turns = agent.turns().size();
+        resumedTurns = turns;
+        var recent = agent.turns().subList(Math.max(0, turns - 3), turns);
         var lines = new ArrayList<String>();
-        lines.add("Resumed session " + conversation.id() + " with " + resumedTurns + " turns. Last turns:");
+        lines.add("Resumed session " + conversation.id() + " with " + turns + " turns. Last turns:");
         for (var turn : recent) {
             for (var message : turn.messages()) {
                 var sb = new StringBuilder();
@@ -743,7 +797,7 @@ public final class InteractiveSession implements AutoCloseable {
                         + (text.length() > 160 ? text.substring(0, 160) + "..." : text));
             }
         }
-        startupNotices.add(String.join("\n", lines));
+        return lines;
     }
 
     private ImplementOrchestrator buildOrchestrator(MainSession ms) {
