@@ -9,7 +9,7 @@ import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
 
 /** The entry point. picocli parses the command line. */
-@Command(name = "jeorje", mixinStandardHelpOptions = true, version = "jeorje 0.2.0",
+@Command(name = "jeorje", mixinStandardHelpOptions = true, version = "jeorje 0.3.0",
         description = "A Java coding agent with a queryable context index.")
 public final class JeorjeMain implements Callable<Integer> {
 
