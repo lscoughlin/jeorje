@@ -144,7 +144,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         this.runtime = SubagentRuntime.builder(sessionId, b.settings, gated)
             .store(store).transcript(b.transcript).agentEvents(b.agentEvents).events(this::onSubagentEvent)
             .limits(limits).compactor(b.compactor).clock(clock).steps(this::runSteps)
-            .workspacePolicies(b.workspacePolicies).build();
+            .workspacePolicies(b.workspacePolicies).advisorLink(b.advisorLink).build();
         this.finisher = worktrees == null ? null : new WorktreeFinisher(worktrees, (parent, note) -> note(note));
         var tools = new LinkedHashMap<String, Tool>();
         for (var tool : b.baseTools) {
@@ -199,6 +199,7 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         private org.github.lscoughlin.jeorje.core.subagent.WorkspacePolicies workspacePolicies;
         private List<Tool> baseTools = List.of();
         private WorkerToolsFactory workerTools;
+        private org.github.lscoughlin.jeorje.core.subagent.AdvisorLink advisorLink;
 
         private Builder(String sessionId, AgentSettings settings, SubagentRuntime.LlmProvider llm,
                         JeorjeConfig.Implement config) {
@@ -254,6 +255,12 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         public Builder baseTools(List<Tool> value) { this.baseTools = List.copyOf(value); return this; }
 
         public Builder workerTools(WorkerToolsFactory value) { this.workerTools = value; return this; }
+
+        /** Turns the turn watch on for the workers: a worker without progress asks the advisor for help. */
+        public Builder advisorLink(org.github.lscoughlin.jeorje.core.subagent.AdvisorLink value) {
+            this.advisorLink = value;
+            return this;
+        }
 
         public ImplementOrchestrator build() { return new ImplementOrchestrator(this); }
     }
@@ -1138,6 +1145,13 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
 
     @Override
     public Reply taskDone(AgentId worker, String taskId, String note) {
+        var reply = markTaskDone(worker, taskId, note);
+        // A finished task is progress. The worker gets a new budget of model calls.
+        if (reply.ok()) runtime.noteProgress(worker);
+        return reply;
+    }
+
+    private Reply markTaskDone(AgentId worker, String taskId, String note) {
         synchronized (lock) {
             var run = runOf(worker);
             if (run == null) return Reply.error("You have no running story.");

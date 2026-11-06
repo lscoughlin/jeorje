@@ -191,4 +191,48 @@ class TurnWatchTest {
         assertTrue(run.completion().reason().startsWith("Step limit reached"), run.completion().reason());
         assertEquals(1, run.link().requests.size());
     }
+
+    @Test
+    void noteProgressGivesANewBudgetEvenWithoutAnAdvisorLink() throws Exception {
+        // 12 model calls are more than the limit of 10. The runtime has no advisor link. Progress that the
+        // runtime learns through noteProgress (for example a finished task of a story) still resets the count.
+        var steps = new ArrayList<Step>();
+        for (var i = 0; i < 6; i++) steps.add(call("w" + i, "work", "{\"n\":" + i + "}"));
+        steps.add(call("p", "task", "{}"));
+        for (var i = 0; i < 5; i++) steps.add(call("v" + i, "work", "{\"n\":" + (100 + i) + "}"));
+        steps.add(text(WORK_TEXT));
+        steps.add(text(VALID));
+        var model = new Scripted(steps.toArray(new Step[0]));
+        var holder = new AtomicReference<SubagentRuntime>();
+        var tools = List.of(simple("work"), tool("task", false, (in, ctx) -> {
+            holder.get().noteProgress(ctx.agent());
+            return ToolResultData.ok("marked");
+        }));
+        var settings = AgentSettings.defaults("s1", dir, 100_000).withSleeper(d -> { });
+        var runtime = SubagentRuntime.builder("s1", settings, m -> model)
+            .store(new ListStore())
+            .limits(SubagentLimits.defaults().withMaxModelCalls(LIMIT)).build();
+        holder.set(runtime);
+        try {
+            var root = new AgentId("root");
+            runtime.registerRoot(root, "root", new CancellationToken(), tools,
+                a -> PermissionPolicy.Decision.ALLOW, in -> { }, () -> 1);
+            var id = runtime.spawn(root, SpawnRequest.of("worker", "Finish the task list."));
+            var done = runtime.await(id, CancellationToken.none());
+            assertEquals(Completion.Outcome.COMPLETED, done.outcome(), done.reason());
+        } finally {
+            runtime.close();
+        }
+    }
+
+    @Test
+    void noteProgressIgnoresAnUnknownSubagent() throws Exception {
+        var settings = AgentSettings.defaults("s1", dir, 100_000);
+        var runtime = SubagentRuntime.builder("s1", settings, m -> new Scripted()).store(new ListStore()).build();
+        try {
+            runtime.noteProgress(new AgentId("nobody"));
+        } finally {
+            runtime.close();
+        }
+    }
 }

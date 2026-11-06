@@ -541,13 +541,11 @@ public final class SubagentRuntime implements AutoCloseable {
             });
             if (pruneListener != null) agent.withPruneListener(chunks -> pruneListener.accept(n.id, chunks));
             n.agent = agent;
-            if (advisorLink != null) {
-                n.watch = new TurnWatch(maxCalls);
-                n.resetCalls = () -> {
-                    limited.reset();
-                    agent.resetCallCount();
-                };
-            }
+            n.resetCalls = () -> {
+                limited.reset();
+                agent.resetCallCount();
+            };
+            if (advisorLink != null) n.watch = new TurnWatch(maxCalls);
             n.turn = () -> agent.turns().size() + 1;
             n.token.onCancel(agent::cancel);
             var maxDuration = n.timeCap != null && n.timeCap.compareTo(limits.maxDuration()) < 0 ? n.timeCap
@@ -611,6 +609,20 @@ public final class SubagentRuntime implements AutoCloseable {
     }
 
     // ---- the turn watch ----
+
+    /**
+     * Tells the runtime that a subagent made progress that the todo list does not show, for example a finished
+     * task of a story. The subagent gets a new budget of model calls, and the turn watch starts again. An unknown
+     * subagent is ignored. Do not call this while you hold a lock that a subagent event needs.
+     */
+    public void noteProgress(AgentId id) {
+        AgentNode n;
+        synchronized (lock) { n = nodes.get(id); }
+        if (n == null) return;
+        var watch = n.watch;
+        if (watch != null) watch.onTodosChanged();
+        n.resetCalls.run();
+    }
 
     /**
      * Runs on each model call of a subagent. Progress resets the count. Without progress, the subagent asks the

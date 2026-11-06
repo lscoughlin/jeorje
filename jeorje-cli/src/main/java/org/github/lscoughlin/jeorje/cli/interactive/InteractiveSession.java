@@ -754,7 +754,8 @@ public final class InteractiveSession implements AutoCloseable {
                 .limits(limits()).policy(workerPolicy).workspacePolicies(this::policyForWorkspace)
                 .approver(plan -> askApproval(plan.render()))
                 .baseTools(baseTools(workerPolicy, ms.session().id(), false))
-                .workerTools(StoryTools.factory(List.of()));
+                .workerTools(StoryTools.factory(List.of()))
+                .advisorLink(advisor.help(todoTool));
         if (hooks.mergeRetryInterval() != null) builder.mergeRetryInterval(hooks.mergeRetryInterval());
         if (roles.advisorSet() && "advisor".equals(config.implement().review())) {
             builder.reviewer(new AdvisorReviewer(clientFor(roles.advisor())));

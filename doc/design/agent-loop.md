@@ -108,6 +108,7 @@ A subagent makes progress when its todo list changes. These changes are progress
 - A task is added.
 - A task is removed.
 - A task gets a new text or a new state.
+- A worker of `/implement` finishes a task of its story with `task_done`. The runtime does not wait for the next todo check: the worker gets a new budget of model calls at once. This reset works also when the runtime has no advisor link.
 
 These events are not progress: repeated tool calls, new tool results, and new assistant text.
 
@@ -122,7 +123,7 @@ The watch works in this way:
 
 A subagent with no progress continues to count after the help request. At 100 percent of the turn limit, the turn ends with the step limit error, as before.
 
-The watch is on only when the runtime has an advisor link. The advisor link uses the same advisor path as the `advisor` tool and the same todo store as the `todo` tool. When no advisor model is set, the help request gets no advice, and the count continues.
+The help request is on only when the runtime has an advisor link. The interactive session gives an advisor link to the runtime of the main agent and to the runtime of the `/implement` workers. The headless `/implement` run has none, so a worker there gets the reset of `task_done` but no help request. The advisor link uses the same advisor path as the `advisor` tool and the same todo store as the `todo` tool. When no advisor model is set, the help request gets no advice, and the count continues.
 
 ## Retries and errors
 
