@@ -17,6 +17,7 @@ import org.github.lscoughlin.jeorje.core.implement.ImplementRequest;
 import org.github.lscoughlin.jeorje.core.implement.Reviewer;
 import org.github.lscoughlin.jeorje.core.implement.RunStateStore;
 import org.github.lscoughlin.jeorje.core.implement.StoryState;
+import org.github.lscoughlin.jeorje.core.model.LlmRequest;
 import org.github.lscoughlin.jeorje.testkit.ScriptedLlmClient;
 import org.github.lscoughlin.jeorje.testkit.ScriptedLlmClient.Response;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,11 @@ class ReviewAndRetryTest {
         return g(rig.root, "branch", "--list", "jeorje/*").lines().map(String::strip).filter(l -> !l.isEmpty()).toList();
     }
 
+    /** The output limit of each request that the client got. */
+    private static List<Integer> limits(ScriptedLlmClient client) {
+        return client.requests().stream().map(LlmRequest::maxOutputTokens).toList();
+    }
+
     // ---- the reviewer ----
 
     @Test
@@ -83,6 +89,48 @@ class ReviewAndRetryTest {
         assertEquals("The review gave no answer.", verdict.reason());
         assertEquals(3, client.callCount());
         assertEquals(List.of(Duration.ofSeconds(2), Duration.ofSeconds(5)), waits);
+    }
+
+    @Test
+    void aBlankAnswerThatIsNotAtTheOutputLimitKeepsTheBaseLimit() {
+        var client = new ScriptedLlmClient(Response.text(""), Response.text("  \n"), Response.text(""));
+        var waits = new ArrayList<Duration>();
+        var verdict = new AdvisorReviewer(client, waits::add).review(REQUEST);
+        assertTrue(verdict.unavailable());
+        assertEquals(3, client.callCount());
+        assertEquals(List.of(2048, 2048, 2048), limits(client));
+        assertEquals(List.of(Duration.ofSeconds(2), Duration.ofSeconds(5)), waits);
+    }
+
+    @Test
+    void aBlankAnswerAtTheOutputLimitIsAskedAgainWithALargerLimit() {
+        var client = new ScriptedLlmClient(Response.outputLimit(), Response.text("approve"));
+        var waits = new ArrayList<Duration>();
+        var verdict = new AdvisorReviewer(client, waits::add).review(REQUEST);
+        assertTrue(verdict.approved(), verdict.reason());
+        assertEquals(2, client.callCount());
+        assertEquals(List.of(2048, 8192), limits(client));
+        assertEquals(List.of(Duration.ofSeconds(2)), waits);
+    }
+
+    @Test
+    void threeBlankAnswersAtTheOutputLimitGiveNoReviewAndKeepTheLargerLimit() {
+        var client = new ScriptedLlmClient(Response.outputLimit(), Response.outputLimit(), Response.outputLimit());
+        var waits = new ArrayList<Duration>();
+        var verdict = new AdvisorReviewer(client, waits::add).review(REQUEST);
+        assertTrue(verdict.unavailable());
+        assertEquals("The review gave no answer.", verdict.reason());
+        assertEquals(3, client.callCount());
+        assertEquals(List.of(2048, 8192, 8192), limits(client));
+        assertEquals(List.of(Duration.ofSeconds(2), Duration.ofSeconds(5)), waits);
+    }
+
+    @Test
+    void theReviewUsesTheGivenOutputLimits() {
+        var client = new ScriptedLlmClient(Response.outputLimit(), Response.text("approve"));
+        var verdict = new AdvisorReviewer(client, d -> { }, 1000, 4000).review(REQUEST);
+        assertTrue(verdict.approved(), verdict.reason());
+        assertEquals(List.of(1000, 4000), limits(client));
     }
 
     @Test
