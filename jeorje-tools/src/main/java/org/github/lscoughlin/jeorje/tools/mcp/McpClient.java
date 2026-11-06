@@ -59,7 +59,7 @@ public final class McpClient implements AutoCloseable {
         var params = JSON.createObjectNode();
         params.put("protocolVersion", PROTOCOL_VERSION);
         params.putObject("capabilities");
-        params.putObject("clientInfo").put("name", "jeorje").put("version", "0.3.0");
+        params.putObject("clientInfo").put("name", "jeorje").put("version", "0.4.0");
         var result = request("initialize", params, timeout);
         var version = result.path("protocolVersion").asString(PROTOCOL_VERSION);
         transport.protocolVersion(version);
