@@ -16,6 +16,7 @@ This is the current development line. The version in the build is `0.4.0-SNAPSHO
 - A form of a background orchestrator waits until the user switches to the orchestrator.
 - A run with no user (`jeorje run "/implement"`) has the orchestrator loop too, with no `ask_user` tool. The report lists the questions that needed a person and the assumptions of the workers.
 - The tool `agent_answer` has the optional field `needsPerson`.
+- The command `/resume` lists the sessions of the project, newest first, with the time of the last update, the turn count, and the first text of the user. `/resume <id>` opens one of them in the foreground.
 
 ### Changed
 
