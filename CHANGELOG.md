@@ -4,6 +4,16 @@ This file records the notable changes to Jeorje. The format follows [Keep a Chan
 
 Release `0.3.0` is the first tagged release. The earlier `0.1.0-SNAPSHOT` and `0.2.0-SNAPSHOT` lines were development lines. Jeorje never released them. Release `0.3.0` contains their work.
 
+## Unreleased
+
+This is the current development line. The version in the build is `0.5.0-SNAPSHOT`.
+
+### Added
+
+### Changed
+
+### Fixed
+
 ## 0.4.0 - 2026-11-06
 
 ### Added
