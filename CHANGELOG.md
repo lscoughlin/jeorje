@@ -17,11 +17,13 @@ This is the current development line. The version in the build is `0.4.0-SNAPSHO
 - A run with no user (`jeorje run "/implement"`) has the orchestrator loop too, with no `ask_user` tool. The report lists the questions that needed a person and the assumptions of the workers.
 - The tool `agent_answer` has the optional field `needsPerson`.
 - The command `/resume` lists the sessions of the project, newest first, with the time of the last update, the turn count, and the first text of the user. `/resume <id>` opens one of them in the foreground.
+- The key `implement.reviewOutputTokens` (default 2048) sets the output limit of the first review call. The key `implement.reviewRetryOutputTokens` (default 8192) sets the output limit of the later review calls after a blank answer at the output limit.
 
 ### Changed
 
 - The foreground session is the session that owns the foreground agent. `/implement status`, `pause`, `resume`, and `stop` and the status line work when the foreground agent is an orchestrator or a worker of a run.
 - A review of `/implement` that gives no answer, or whose call fails, is not a failed review. Jeorje asks again two times. If the review is still unavailable, the story goes on to the merge back with a notice and a line in the report.
+- A review that ends blank at its output limit now asks again with a larger output limit. The limit of the first call is `implement.reviewOutputTokens` (default 2048) tokens. The limit of the later calls is `implement.reviewRetryOutputTokens` (default 8192) tokens. A reasoning advisor model can need a larger `implement.reviewRetryOutputTokens`. Both values must stay within the capability of the model.
 - After a failed attempt, the next attempt of a story starts from the branch of the failed attempt. The worker gets the problems of the review in a `### Review feedback` section. The setting `implement.retryFrom: source` restores the start from the source branch.
 - A worker gets a new budget of model calls when it completes a todo, when an edit brings its workspace to a new state, and when its verification passes. The worker instructions tell it to call `task_done` after each task and to read files with the `read` and `grep` tools.
 

@@ -216,6 +216,8 @@ After a worker calls `story_done`:
 2. If `implement.review` is `advisor` and the advisor is not `none`, the advisor model gets: the story text, the `story_done` summary, the list of changed files, and the diff against the source branch. It returns `approve` or a list of problems. A list of problems ends the attempt (see [Failure](#failure)). The review runs one time for each attempt.
 
    An answer that is blank, and a call that fails, are not a review. Jeorje asks again two times. It waits 2 seconds before the second call and 5 seconds before the third call. If the third call also gives no review, the review is **unavailable**. Jeorje shows a notice, adds the line "The review gave no answer." to the result of the story, and continues to the merge back. An unavailable review is not a failed attempt. Only an answer that lists problems is a failed review.
+
+   The key `implement.reviewOutputTokens` (default 2048) sets the output limit of the first call. The key `implement.reviewRetryOutputTokens` (default 8192) sets the output limit of the later calls. Jeorje uses the later limit when the first call stopped with the stop reason `length` and gave no text. A reasoning advisor model can need a larger `implement.reviewRetryOutputTokens`, because its reasoning text uses the output limit. Both values must stay within the capability of the advisor model. See [Configuration](configuration.md).
 3. If both steps pass, Jeorje merges back and the story is done.
 
 The setting `implement.review: none` skips step 2. Step 1 always runs when the story or the plan has a verification command.
@@ -329,6 +331,8 @@ implement:
   maxModelCalls: 200               # for each story
   handoff: true
   retryFrom: previous              # previous or source
+  reviewOutputTokens: 2048         # output limit of the first review call
+  reviewRetryOutputTokens: 8192    # output limit of the later calls after a blank answer at the output limit
 ```
 
 Isolation is set with `worktree.isolation`. See [Worktrees](subagents.md#worktrees) and [configuration.md](configuration.md).
