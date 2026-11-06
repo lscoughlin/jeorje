@@ -54,6 +54,12 @@ class InteractiveSessionTest {
         };
     }
 
+    /** Whether the chat view of an agent holds a line with the text. The event loop applies the text later. */
+    private static boolean chatHas(SessionRig rig, String agentId, String text) {
+        return rig.session.screen().chat(new AgentId(agentId)).logicalLines().stream()
+                .anyMatch(l -> l.toString().contains(text));
+    }
+
     /** Answers permission prompts with "y" until the condition holds. */
     private static void answering(SessionRig rig, String what, java.util.function.BooleanSupplier condition)
             throws InterruptedException {
@@ -95,11 +101,10 @@ class InteractiveSessionTest {
             assertTrue(rig.terminal.hasMouseSupport(), "the fake xterm terminal reports mouse support");
             await("mouse on", () -> rig.terminal.getCurrentMouseTracking() != Terminal.MouseTracking.Off);
 
-            // A chat turn.
+            // A chat turn. The turn count changes before the event loop applies the reply to the chat view,
+            // so the wait also checks the text.
             rig.type("hello\r");
-            await("first turn", () -> rig.session.agent().turns().size() == 1);
-            assertTrue(rig.session.screen().chat(new AgentId("main")).logicalLines().stream()
-                    .anyMatch(l -> l.toString().contains("Hi there.")));
+            await("first turn", () -> rig.session.agent().turns().size() == 1 && chatHas(rig, "main", "Hi there."));
 
             // A tool call with a permission prompt.
             rig.type("run the shell\r");
@@ -138,13 +143,14 @@ class InteractiveSessionTest {
             assertEquals("S2", Files.readString(rig.repo.resolve("s2.txt")));
             assertTrue(Files.readString(plan).contains("- [x] S1.T1"));
 
-            // Switch into a worker and back.
+            // Switch into a worker and back. The switch changes the foreground before the chat view of the worker
+            // has the last text of the worker, so the wait also checks the text.
             var worker = rig.session.roster().agents().stream().filter(e -> e.name().startsWith("S1")).findFirst()
                     .orElseThrow();
+            var workerId = worker.id().value();
             rig.type("/agents " + (rig.session.roster().agents().indexOf(worker) + 1) + "\r");
-            await("switch", () -> rig.session.screen().foreground().equals(worker.id()));
-            assertTrue(rig.session.screen().chat(worker.id()).logicalLines().stream()
-                    .anyMatch(l -> l.toString().contains("Finished S1.")));
+            await("switch", () -> rig.session.screen().foreground().equals(worker.id())
+                    && chatHas(rig, workerId, "Finished S1."));
             // The parent of a worker is the orchestrator. The parent of the orchestrator is the session.
             rig.type("/back\r");
             await("back to the orchestrator", () -> rig.session.screen().foreground()
