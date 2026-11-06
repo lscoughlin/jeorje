@@ -131,6 +131,8 @@ final class ConfigDefaults {
               maxModelCalls: 200
               handoff: true
               retryFrom: previous
+              reviewOutputTokens: 2048
+              reviewRetryOutputTokens: 8192
             prompts:
               system:
                 mode: append

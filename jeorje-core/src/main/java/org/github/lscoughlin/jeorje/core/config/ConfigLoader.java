@@ -466,6 +466,10 @@ public final class ConfigLoader {
                 "must be advisor or none");
         require(Set.of("previous", "source").contains(c.implement().retryFrom()), "implement.retryFrom",
                 "must be previous or source");
+        require(c.implement().reviewOutputTokens() > 0, "implement.reviewOutputTokens",
+                "must be a positive integer");
+        require(c.implement().reviewRetryOutputTokens() > 0, "implement.reviewRetryOutputTokens",
+                "must be a positive integer");
         require(Set.of("auto", "on", "off").contains(c.ui().keyboardProtocol()), "ui.keyboardProtocol",
                 "must be auto, on, or off");
         require(Set.of("quiet", "normal", "verbose").contains(c.ui().chat().verbosity()), "ui.chat.verbosity",

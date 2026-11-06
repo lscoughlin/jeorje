@@ -339,6 +339,37 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void reviewOutputTokensDefaultsLoadAndRejectNonPositiveValues() throws IOException {
+        var defaults = ConfigLoader.load(opts()).config().implement();
+        assertEquals(2048, defaults.reviewOutputTokens());
+        assertEquals(8192, defaults.reviewRetryOutputTokens());
+
+        var sixArgs = new JeorjeConfig.Implement(3, "", "advisor", 2, 200, true);
+        assertEquals(2048, sixArgs.reviewOutputTokens());
+        assertEquals(8192, sixArgs.reviewRetryOutputTokens());
+        assertEquals("previous", sixArgs.retryFrom());
+
+        var sevenArgs = new JeorjeConfig.Implement(3, "", "advisor", 2, 200, true, "source");
+        assertEquals(2048, sevenArgs.reviewOutputTokens());
+        assertEquals(8192, sevenArgs.reviewRetryOutputTokens());
+        assertEquals("source", sevenArgs.retryFrom());
+
+        write(home.resolve(".jeorje"), "config.yaml",
+                "implement:\n  reviewOutputTokens: 4096\n  reviewRetryOutputTokens: 16384\n");
+        var configured = ConfigLoader.load(opts()).config().implement();
+        assertEquals(4096, configured.reviewOutputTokens());
+        assertEquals(16384, configured.reviewRetryOutputTokens());
+
+        write(home.resolve(".jeorje"), "config.yaml", "implement:\n  reviewOutputTokens: 0\n");
+        assertTrue(assertThrows(ConfigException.class, () -> ConfigLoader.load(opts())).getMessage()
+                .contains("implement.reviewOutputTokens"));
+
+        write(home.resolve(".jeorje"), "config.yaml", "implement:\n  reviewRetryOutputTokens: 0\n");
+        assertTrue(assertThrows(ConfigException.class, () -> ConfigLoader.load(opts())).getMessage()
+                .contains("implement.reviewRetryOutputTokens"));
+    }
+
+    @Test
     void jeorjeHomeReplacesUserDirectory() throws IOException {
         var alt = tmp.resolve("alt");
         write(alt, "config.yaml", "context:\n  recentTurns: 4\n");
