@@ -285,6 +285,7 @@ The orchestrator of `/implement` is an agent with a model loop. See [planning.md
 The file browser is a small file app in the chat region. It shows the tree of the working directory and one keys row at the bottom. `Ctrl-X f` opens it as a pane. `/files` opens it too.
 
 - The up and down keys select a row.
+- The selected row has a marker `*` and inverse video to the end of the row. The other rows have plain video.
 - The right key opens a directory and moves into it. On an open directory, the right key moves into it and keeps it open. On a file, the right key does nothing.
 - The left key closes an open directory and keeps the selection. On a file or on a closed directory, the left key moves to the parent row. With no parent row, the left key does nothing.
 - `Enter` on a directory expands or collapses it, and the pane stays open. `Enter` on a file opens the file in the editor. A double click on a file does the same.

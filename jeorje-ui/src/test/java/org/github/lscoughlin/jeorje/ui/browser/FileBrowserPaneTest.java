@@ -12,6 +12,7 @@ import org.github.lscoughlin.jeorje.ui.screen.FakeTerminal;
 import org.github.lscoughlin.jeorje.ui.screen.Screen;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.jline.utils.AttributedStyle;
 
 class FileBrowserPaneTest {
 
@@ -189,6 +190,80 @@ class FileBrowserPaneTest {
         pane.resize(new Rect(0, 1, 60, 1));
         assertEquals(1, pane.render().size());
         assertTrue(pane.render().getFirst().contains("Up/Down move"));
+    }
+
+    @Test
+    void theSelectedRowIsDrawnWithInverseAttributes(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var pane = new FileBrowserPane(browser);
+        pane.resize(new Rect(0, 1, 60, 5));
+        var rows = pane.renderStyled();
+        assertEquals(5, rows.size());
+        // Row 0 is src/ and it is selected. Row 1 is README.md. Row 4 is the keys row.
+        assertTrue(rows.get(0).toString().contains("src/"), rows.get(0).toString());
+        assertEquals(AttributedStyle.DEFAULT.inverse(), rows.get(0).styleAt(0));
+        assertTrue(rows.get(1).toString().contains("README.md"), rows.get(1).toString());
+        for (var i = 0; i < rows.get(1).length(); i++) {
+            assertEquals(AttributedStyle.DEFAULT, rows.get(1).styleAt(i), "row 1 is plain");
+        }
+        for (var i = 0; i < rows.get(4).length(); i++) {
+            assertEquals(AttributedStyle.DEFAULT, rows.get(4).styleAt(i), "the keys row is plain");
+        }
+    }
+
+    @Test
+    void theHighlightFollowsTheSelection(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var pane = new FileBrowserPane(browser);
+        pane.resize(new Rect(0, 1, 60, 5));
+        browser.down();
+        var rows = pane.renderStyled();
+        assertEquals(AttributedStyle.DEFAULT, rows.get(0).styleAt(0), "row 0 is plain now");
+        assertEquals(AttributedStyle.DEFAULT.inverse(), rows.get(1).styleAt(0), "row 1 is the selection");
+    }
+
+    @Test
+    void theHighlightedRowSpansTheFullPaneWidth(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var pane = new FileBrowserPane(browser);
+        pane.resize(new Rect(0, 1, 60, 5));
+        var row = pane.renderStyled().get(0);
+        assertEquals(60, row.columnLength(), "the row is padded to the pane width");
+        assertEquals(60, row.length(), "the padding is spaces, one cell each");
+        assertTrue(row.toString().endsWith("src/" + " ".repeat(60 - row.toString().indexOf("src/") - 4)),
+                row.toString());
+        for (var i = 0; i < row.length(); i++) {
+            assertEquals(AttributedStyle.DEFAULT.inverse(), row.styleAt(i), "the padding is inverse too");
+        }
+    }
+
+    @Test
+    void thePaneRowsKeepThePlainText(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        var pane = new FileBrowserPane(browser);
+        pane.resize(new Rect(0, 1, 60, 5));
+        var plain = pane.render();
+        var styled = pane.renderStyled();
+        assertEquals(plain.size(), styled.size());
+        for (var i = 0; i < plain.size(); i++) {
+            assertEquals(plain.get(i), styled.get(i).toString().stripTrailing(), "row " + i);
+        }
+    }
+
+    @Test
+    void theScreenDrawsTheSelectedRowInInverseVideo(@TempDir Path root) throws Exception {
+        var browser = browser(root);
+        try (var ft = new FakeTerminal(60, 12)) {
+            var screen = new Screen(ft.terminal, Screen.Options.defaults());
+            screen.draw(); // the first draw probes the terminal modes and reads the reply
+            ft.type("\u001b[B\u001b");
+            screen.runPane(new FileBrowserPane(browser));
+            // The pane row is 60 columns wide. Display writes the marker, the name, and the padding in inverse video.
+            var expected = "*  README.md" + " ".repeat(60 - "*  README.md".length());
+            var out = ft.output();
+            var at = out.indexOf("\u001b[7m" + expected);
+            assertTrue(at >= 0, "the highlighted row is inverse to the end of the pane width: " + out);
+        }
     }
 
     @Test
