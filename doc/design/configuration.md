@@ -201,6 +201,8 @@ implement:
   maxModelCalls: 200               # for each story
   handoff: true
   retryFrom: previous              # previous or source: where a new attempt starts after a failed attempt
+  reviewOutputTokens: 2048         # output limit of the first review call
+  reviewRetryOutputTokens: 8192    # output limit of the later calls after a blank answer at the output limit
 prompts:
   system:
     mode: append                     # append (default) or replace
@@ -260,6 +262,7 @@ Rules for the keys:
 - `worktree` keys are described in [subagents.md](subagents.md#worktrees).
 - `instructions`, `skills`, and `agents` keys are described in [instructions-and-skills.md](instructions-and-skills.md#configuration). The key `agents.stepLimit` sets the step limit of a turn. See [agent-loop.md](agent-loop.md#the-loop).
 - `plan` and `implement` keys are described in [planning.md](planning.md#configuration).
+- `implement.reviewOutputTokens` and `implement.reviewRetryOutputTokens` are positive whole numbers of tokens. Each value must be inside the capability of the advisor model. A reasoning model can need a larger `implement.reviewRetryOutputTokens`, because its reasoning uses the output limit. See [Review](planning.md#review).
 - `prompts` keys are described in [Prompts](#prompts).
 - `swarm` keys are described in [swarm.md](swarm.md).
 - `permissions` keys are described in [permissions-and-safety.md](permissions-and-safety.md).
