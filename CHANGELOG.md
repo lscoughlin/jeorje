@@ -4,9 +4,7 @@ This file records the notable changes to Jeorje. The format follows [Keep a Chan
 
 Release `0.3.0` is the first tagged release. The earlier `0.1.0-SNAPSHOT` and `0.2.0-SNAPSHOT` lines were development lines. Jeorje never released them. Release `0.3.0` contains their work.
 
-## Unreleased
-
-This is the current development line. The version in the build is `0.4.0-SNAPSHOT`.
+## 0.4.0 - 2026-11-06
 
 ### Added
 
@@ -103,5 +101,6 @@ This is the current development line. The version in the build is `0.4.0-SNAPSHO
 - Jeorje measures only the earlier context in the compaction triggers.
 - The compaction keeps the words of the user in every pruned chunk.
 
-[Unreleased]: https://github.com/lscoughlin/jeorje/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/lscoughlin/jeorje/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/lscoughlin/jeorje/releases/tag/v0.4.0
 [0.3.0]: https://github.com/lscoughlin/jeorje/releases/tag/v0.3.0
