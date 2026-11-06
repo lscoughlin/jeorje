@@ -43,8 +43,13 @@ class InteractiveWiringTest {
             await("mouse tracking", () -> rig.terminal.getCurrentMouseTracking() != Terminal.MouseTracking.Off);
             rig.type(CTRL_X_F);
             await("browser pane", () -> rig.session.screen().paneActive());
-            // The rows are .jeorje/ (the directory of the session), .gitignore, and README.md.
-            rig.type(DOWN + DOWN + "\r");
+            // Keys that arrive before the pane has drawn its rows act on a list that is not there yet. Wait for
+            // the row, and then choose the file with the filter and not with a count of rows. The rows of the
+            // directory (the session directory, .gitignore) can change between runs.
+            await("browser rows", () -> rig.terminalText().contains("README.md"));
+            rig.type("/README");
+            rig.type("\r");
+            rig.type("\r");
             await("editor", () -> rig.session.activeEditor() != null);
             assertEquals(rig.repo.resolve("README.md").toRealPath(), rig.session.activeEditor().path().toRealPath());
             assertFalse(rig.session.screen().paneActive());
