@@ -632,6 +632,46 @@ public final class InteractiveSession implements AutoCloseable {
         return id;
     }
 
+    /**
+     * Brings an existing conversation on disk into the foreground. When a live session already has this conversation,
+     * the method only moves the foreground to that session. Otherwise it builds a new session for the conversation and
+     * restores the agent from the manifest and the transcript.
+     *
+     * @param id the id of the session directory on disk
+     * @return the id of the session agent that holds the conversation
+     * @throws IllegalArgumentException when no session on disk has this id
+     */
+    AgentId resume(String id) {
+        var conversation = sessions.resume(id).orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
+        for (var other : hub.sessions()) {
+            if (other.session() != null && other.session().id().equals(conversation.id())) {
+                switcher.switchTo(other.id());
+                return other.id();
+            }
+        }
+        var ms = new MainSession(hub.nextForkId(), conversation.id());
+        ms.session(conversation);
+        var counting = openStore(conversation);
+        ms.store(counting);
+        ms.transcript(new TranscriptWriter(conversation.transcriptPath(), scrubber));
+        try {
+            buildSession(ms, counting);
+            restoreAgent(ms);
+        } catch (RuntimeException e) {
+            closeQuietly(ms.transcript());
+            closeQuietly(ms.store());
+            throw e;
+        }
+        hub.add(ms, fg().id());
+        switcher.switchTo(ms.id());
+        return ms.id();
+    }
+
+    /** The conversations on disk, newest first. */
+    List<Session> previousSessions() {
+        return sessions.list();
+    }
+
     /** Opens the context store of a conversation. */
     private ScrubbingContextStore openStore(Session conversation) {
         return new ScrubbingContextStore(
@@ -720,8 +760,12 @@ public final class InteractiveSession implements AutoCloseable {
     }
 
     private void restoreAgent() {
-        var conversation = main.session();
-        var agent = main.agent();
+        restoreAgent(main);
+    }
+
+    private void restoreAgent(MainSession ms) {
+        var conversation = ms.session();
+        var agent = ms.agent();
         var transcriptTurns = TranscriptReader.read(conversation.transcriptPath());
         var source = Wiring.rootAgentOf(conversation.manifest());
         agent.restore(conversation.manifest(), transcriptTurns, source);
