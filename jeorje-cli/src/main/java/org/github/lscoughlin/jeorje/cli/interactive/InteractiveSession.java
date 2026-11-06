@@ -654,9 +654,10 @@ public final class InteractiveSession implements AutoCloseable {
         var counting = openStore(conversation);
         ms.store(counting);
         ms.transcript(new TranscriptWriter(conversation.transcriptPath(), scrubber));
+        List<String> restored;
         try {
             buildSession(ms, counting);
-            restoreAgent(ms);
+            restored = restoreAgent(ms);
         } catch (RuntimeException e) {
             closeQuietly(ms.transcript());
             closeQuietly(ms.store());
@@ -664,6 +665,12 @@ public final class InteractiveSession implements AutoCloseable {
         }
         hub.add(ms, fg().id());
         switcher.switchTo(ms.id());
+        var text = String.join("\n", restored);
+        if (uiStarted) {
+            notice(ms.id(), text);
+        } else {
+            startupNotices.add(text);
+        }
         return ms.id();
     }
 
@@ -751,28 +758,31 @@ public final class InteractiveSession implements AutoCloseable {
         agent.start();
     }
 
-    /**
-     * Restores the main agent from the manifest and the transcript of the resumed session. It also shows the end of
-     * the earlier conversation in the chat.
-     */
     private void releaseSkills(String agentId, List<org.github.lscoughlin.jeorje.core.model.Chunk> chunks) {
         for (var skills : skillTools) skills.releasePruned(agentId, chunks);
     }
 
+    /** Restores the main agent of this session from its manifest and transcript, and queues its notice. */
     private void restoreAgent() {
-        restoreAgent(main);
+        startupNotices.add(String.join("\n", restoreAgent(main)));
     }
 
-    private void restoreAgent(MainSession ms) {
+    /**
+     * Restores the agent of a session from its manifest and the transcript of its conversation.
+     *
+     * @return the lines that show the end of the earlier conversation in the chat
+     */
+    private List<String> restoreAgent(MainSession ms) {
         var conversation = ms.session();
         var agent = ms.agent();
         var transcriptTurns = TranscriptReader.read(conversation.transcriptPath());
         var source = Wiring.rootAgentOf(conversation.manifest());
         agent.restore(conversation.manifest(), transcriptTurns, source);
-        resumedTurns = agent.turns().size();
-        var recent = agent.turns().subList(Math.max(0, resumedTurns - 3), resumedTurns);
+        var turns = agent.turns().size();
+        resumedTurns = turns;
+        var recent = agent.turns().subList(Math.max(0, turns - 3), turns);
         var lines = new ArrayList<String>();
-        lines.add("Resumed session " + conversation.id() + " with " + resumedTurns + " turns. Last turns:");
+        lines.add("Resumed session " + conversation.id() + " with " + turns + " turns. Last turns:");
         for (var turn : recent) {
             for (var message : turn.messages()) {
                 var sb = new StringBuilder();
@@ -785,7 +795,7 @@ public final class InteractiveSession implements AutoCloseable {
                         + (text.length() > 160 ? text.substring(0, 160) + "..." : text));
             }
         }
-        startupNotices.add(String.join("\n", lines));
+        return lines;
     }
 
     private ImplementOrchestrator buildOrchestrator(MainSession ms) {
