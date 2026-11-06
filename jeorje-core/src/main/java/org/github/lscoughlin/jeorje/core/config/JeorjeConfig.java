@@ -249,16 +249,33 @@ public record JeorjeConfig(Llm llm, Models models, Context context, Index index,
      *
      * @param retryFrom where a new attempt starts after a failed attempt: {@code previous} (the branch of the failed
      *     attempt, the default) or {@code source} (the source branch)
+     * @param reviewOutputTokens the output token limit of one review call
+     * @param reviewRetryOutputTokens the output token limit of a review call that is asked again after a stop at the
+     *     output limit
      */
     public record Implement(int parallel, String model, String review, int maxAttempts, int maxModelCalls,
-                            boolean handoff, String retryFrom) {
+                            boolean handoff, String retryFrom, int reviewOutputTokens, int reviewRetryOutputTokens) {
+        /** The default output limit of one review call. */
+        public static final int DEFAULT_REVIEW_OUTPUT_TOKENS = 2048;
+        /** The default output limit of a review call that is asked again after a stop at the output limit. */
+        public static final int DEFAULT_REVIEW_RETRY_OUTPUT_TOKENS = 8192;
+
         public Implement {
             retryFrom = retryFrom == null || retryFrom.isBlank() ? "previous" : retryFrom;
         }
 
+        /** The settings with the default review output limits. */
+        public Implement(int parallel, String model, String review, int maxAttempts, int maxModelCalls,
+                         boolean handoff, String retryFrom) {
+            this(parallel, model, review, maxAttempts, maxModelCalls, handoff, retryFrom,
+                    DEFAULT_REVIEW_OUTPUT_TOKENS, DEFAULT_REVIEW_RETRY_OUTPUT_TOKENS);
+        }
+
+        /** The settings with {@code retryFrom: previous} and the default review output limits. */
         public Implement(int parallel, String model, String review, int maxAttempts, int maxModelCalls,
                          boolean handoff) {
-            this(parallel, model, review, maxAttempts, maxModelCalls, handoff, "previous");
+            this(parallel, model, review, maxAttempts, maxModelCalls, handoff, "previous",
+                    DEFAULT_REVIEW_OUTPUT_TOKENS, DEFAULT_REVIEW_RETRY_OUTPUT_TOKENS);
         }
     }
 
