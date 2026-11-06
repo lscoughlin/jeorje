@@ -47,9 +47,9 @@ def run(check):
         check.ok("Enter on a file opens the editor", s.wait_for("alpha.txt", 10) and s.wait_for("Ln 1", 10),
                  s.view.text())
         check.ok("editor shows the file text", s.view.find("alpha file") is not None, s.view.text())
-        s.key("Alt-x")
+        s.key("Ctrl-Alt-X")
         s.wait_idle(0.8)
-        check.ok("Alt-X returns to the chat", s.view.find("open/close, ") is None and s.view.find("Ln 1") is None,
+        check.ok("Ctrl-Alt-X returns to the chat", s.view.find("open/close, ") is None and s.view.find("Ln 1") is None,
                  s.view.text())
 
         # Esc closes the browser

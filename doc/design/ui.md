@@ -451,14 +451,14 @@ A menu opens with `Alt` plus the highlighted letter (for example `Alt-F`). `F10`
 
 | Menu | Items |
 |------|-------|
-| File | Save (`Ctrl-S`), Save As, Revert, Reload (only when the file changed on disk), Close and return to chat (`Alt-X`) |
+| File | Save (`Ctrl-S`), Save As, Revert, Reload (only when the file changed on disk), Close and return to chat (`Ctrl-Alt-X`) |
 | Edit | Undo (`Ctrl-Z`), Redo (`Ctrl-Y`), Cut (`Shift-Del`), Copy (`Ctrl-Ins`), Paste (`Shift-Ins`), Clear (`Del` with a selection), Select All |
 | Search | Find (`Ctrl-Q F`), Repeat Last Find (`F3`), Change (find and replace, `Ctrl-Q A`), Go To Line (`Ctrl-G`) |
 | View | Line Numbers, Wrap Long Lines, Split Window (see below), Show Whitespace, Show Changes |
 | Options | Tab Width, Use Spaces For Tabs (on by default, width 4), Syntax Colors (on or off), Syntax (choose a syntax for this file), Colors |
 | Help | Keys (`F1`), About the Editor |
 
-`Alt-X` is the same key as the exit key of QBasic. `Ctrl-Q F` and `Ctrl-Q A` follow the QBasic and WordStar key style. If the terminal does not send Alt keys, the user can open the menu bar with `F10`.
+`Ctrl-Alt-X` closes the editor and returns to the chat. `Alt-X` does the same. `Alt-X` is the same key as the exit key of QBasic. On macOS the terminal sends the Option key as `Alt`, so `Ctrl-Option-X` and `Option-X` also close the editor. `Ctrl-Q F` and `Ctrl-Q A` follow the QBasic and WordStar key style. If the terminal does not send Alt keys, the user can open the menu bar with `F10`.
 
 ### Editing keys
 

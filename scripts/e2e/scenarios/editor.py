@@ -142,8 +142,9 @@ def run(check):
 
         # --- back to the chat ---
         mark = len(s.raw)
-        s.key("Alt-x")
-        check.ok("Alt-X returns to the chat", s.wait_for("peers", 10) and s.view.find("Ln 4") is None, s.view.text())
+        s.key("Ctrl-Alt-X")
+        check.ok("Ctrl-Alt-X returns to the chat",
+                 s.wait_for("peers", 10) and s.view.find("Ln 4") is None, s.view.text())
         s.wait_idle(0.8)
         closed = modes(s.raw[mark:])
         check.ok("the alternate screen is entered again", closed.count((b"1049", b"h")) >= 1, closed)
@@ -173,8 +174,8 @@ def run(check):
         check.ok("Java identifier inside the fence is plain", fg(s, 7, 14) == "default", fg(s, 7, 14))
         check.ok("the python fence has Python colors", fg(s, 11, 1) == "brightblue", fg(s, 11, 1))
         check.ok("ordinary text stays plain", fg(s, 4, 1) == "default", fg(s, 4, 1))
-        s.key("Alt-x")
-        check.ok("Alt-X leaves the Markdown file", s.wait_for("peers", 10), s.view.text())
+        s.key("Ctrl-Alt-X")
+        check.ok("Ctrl-Alt-X leaves the Markdown file", s.wait_for("peers", 10), s.view.text())
         s.exit_quit()
         check.ok("terminal restored", s.terminal_restored())
     finally:

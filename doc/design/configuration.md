@@ -428,7 +428,7 @@ Editor (`editor.keys`):
 | `menu` | `F10` | Open the menu bar |
 | `menuFile`, `menuEdit`, `menuSearch`, `menuView`, `menuOptions`, `menuHelp` | `Alt-F`, `Alt-E`, `Alt-S`, `Alt-V`, `Alt-O`, `Alt-H` | Open one menu |
 | `save` | `Ctrl-S` | Save |
-| `close` | `Alt-X` | Close the editor and return to the chat |
+| `close` | `Ctrl-Alt-X` and `Alt-X` | Close the editor and return to the chat |
 | `undo`, `redo` | `Ctrl-Z`, `Ctrl-Y` | Undo and redo |
 | `cut`, `copy`, `paste` | `Shift-Del`, `Ctrl-Ins`, `Shift-Ins` | Clipboard |
 | `selectAll` | `Ctrl-A` | Select all text |
@@ -448,7 +448,7 @@ Editor (`editor.keys`):
 
 Movement keys (arrows, `Home`, `End`, `PgUp`, `PgDn`), `Backspace`, `Del`, and the keys of `lineStart` and `lineEnd` are also actions of the editor (`left`, `right`, `up`, `down`, `lineStart`, `lineEnd`, `pageUp`, `pageDown`, `backspace`, `delete`, `deleteWordLeft`, `deleteWordRight`). Users can change these keys in the same way. The `Shift-` form of each movement key selects text. Jeorje derives it from the movement key and gives it the internal id `select:<id>`, for example `select:left`. The same holds for `wordLeft`, `wordRight`, `fileStart`, and `fileEnd`. Jeorje does not derive a Shift form when another action already uses that key. A derived key is not an action id, so the config cannot name it.
 
-Some terminals send `Ctrl-Left` and `Ctrl-Right` as `ESC [ 5 D` and `ESC [ 5 C`. Jeorje accepts both forms for the same action. Terminal.app on macOS sends `Alt-Left` and `Alt-Right` as `ESC [ 1 ; 3 D` and `ESC [ 1 ; 3 C`, and also as `Alt-B` and `Alt-F`. Jeorje binds all of these forms.
+Some terminals send `Ctrl-Left` and `Ctrl-Right` as `ESC [ 5 D` and `ESC [ 5 C`. Jeorje accepts both forms for the same action. Terminal.app on macOS sends `Alt-Left` and `Alt-Right` as `ESC [ 1 ; 3 D` and `ESC [ 1 ; 3 C`, and also as `Alt-B` and `Alt-F`. Jeorje binds all of these forms. macOS terminals send the Option key as `Alt`, so a key such as `Alt-X` also answers to `Option-X`. Jeorje keeps the name `Alt` for these keys in the config and in the menus.
 
 A terminal with the Kitty keyboard protocol sends `Ctrl-Backspace` as `ESC [ 127 ; 5 u`. Other terminals send the control code `0x08`. That code is the same as `Ctrl-H`, so on those terminals `Ctrl-H` also deletes a word.
 

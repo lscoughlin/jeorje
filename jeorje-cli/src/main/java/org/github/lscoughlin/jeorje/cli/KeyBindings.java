@@ -21,7 +21,8 @@ final class KeyBindings {
                 "browserFilter", "/", "browserHidden", ".", "browserExit", "Esc");
         put(EDITOR, "menu", "F10", "menuFile", "Alt-F", "menuEdit", "Alt-E", "menuSearch", "Alt-S",
                 "menuView", "Alt-V", "menuOptions", "Alt-O", "menuHelp", "Alt-H", "save", "Ctrl-S",
-                "close", "Alt-X", "undo", "Ctrl-Z", "redo", "Ctrl-Y", "cut", "Shift-Del", "copy", "Ctrl-Ins",
+                "close", "Ctrl-Alt-X, Alt-X", "undo", "Ctrl-Z", "redo", "Ctrl-Y", "cut", "Shift-Del",
+                "copy", "Ctrl-Ins",
                 "paste", "Shift-Ins", "selectAll", "Ctrl-A", "find", "Ctrl-Q f", "repeatFind", "F3",
                 "change", "Ctrl-Q a", "goToLine", "Ctrl-G", "help", "F1", "switchWindow", "F6",
                 "toggleInsert", "Ins", "indent", "Tab", "unindent", "Shift-Tab", "wordLeft", "Alt-Left",

@@ -55,7 +55,7 @@ public final class ActionRegistry {
         editor("menuOptions", "Open the Options menu", false, "Alt-O");
         editor("menuHelp", "Open the Help menu", false, "Alt-H");
         editor("save", "Save", true, "Ctrl-S");
-        editor("close", "Close the editor and return to the chat", true, "Alt-X");
+        editor("close", "Close the editor and return to the chat", true, "Ctrl-Alt-X", "Alt-X");
         editor("undo", "Undo", false, "Ctrl-Z");
         editor("redo", "Redo", false, "Ctrl-Y");
         editor("cut", "Cut the selection", false, "Shift-Del");

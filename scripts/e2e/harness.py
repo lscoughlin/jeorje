@@ -218,15 +218,32 @@ def key_bytes(name):
     """Bytes for a named key. A chord is several keys with spaces, for example 'Ctrl-X a'."""
     out = b""
     for part in name.split(" "):
-        if part in KEYS:
-            out += KEYS[part]
-        elif part.startswith("Ctrl-") and len(part) == 6:
-            out += bytes([ord(part[5].upper()) & 0x1f])
-        elif part.startswith("Alt-") and len(part) == 5:
-            out += b"\x1b" + part[4].encode()
-        else:
-            out += part.encode()
+        out += one_key_bytes(part)
     return out
+
+
+def one_key_bytes(part):
+    """Bytes for one key with its modifiers, in the legacy form that a terminal without the Kitty protocol sends."""
+    if part in KEYS:
+        return KEYS[part]
+    ctrl, alt, rest = False, False, part
+    while True:
+        if rest.startswith("Ctrl-") and len(rest) > 5:
+            ctrl, rest = True, rest[5:]
+        elif rest.startswith("Alt-") and len(rest) > 4:
+            alt, rest = True, rest[4:]
+        else:
+            break
+    if len(rest) != 1:
+        return part.encode()
+    if ctrl:
+        if alt:
+            # A terminal sends Ctrl-Alt-X as ESC followed by the control byte of X.
+            return b"\x1b" + bytes([ord(rest.upper()) & 0x1F])
+        return bytes([ord(rest.upper()) & 0x1F])
+    if alt:
+        return b"\x1b" + rest.encode()
+    return rest.encode()
 
 
 class Cell:

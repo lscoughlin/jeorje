@@ -60,6 +60,7 @@ final class EditorFixture {
     static final String CTRL_HOME = "\u001b[1;5H";
     static final String CTRL_END = "\u001b[1;5F";
     static final String ALT_X = "\u001bx";
+    static final String CTRL_ALT_X = "\u001b\u0018";
     static final String ALT_F = "\u001bf";
     static final String ALT_E = "\u001be";
     static final String ALT_V = "\u001bv";

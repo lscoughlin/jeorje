@@ -197,6 +197,15 @@ class FileTest {
         var f = new EditorFixture(dir);
         f.write("a.txt", "x");
         f.editor.open(dir.resolve("a.txt"));
+        f.type(CTRL_ALT_X);
+        assertTrue(f.editor.isClosed());
+    }
+
+    @Test
+    void closeAlsoTakesAltX() throws IOException {
+        var f = new EditorFixture(dir);
+        f.write("a.txt", "x");
+        f.editor.open(dir.resolve("a.txt"));
         f.type(ALT_X);
         assertTrue(f.editor.isClosed());
     }
@@ -207,7 +216,7 @@ class FileTest {
         f.write("a.txt", "x");
         f.editor.open(dir.resolve("a.txt"));
         f.type("y");
-        f.type(ALT_X);
+        f.type(CTRL_ALT_X);
         assertEquals("Unsaved changes", f.editor.dialogTitle());
         assertTrue(f.screenHas("< Save >"));
         assertTrue(f.screenHas("< Discard >"));
@@ -215,7 +224,7 @@ class FileTest {
         f.type(ESC);
         assertFalse(f.editor.isClosed());
         assertEquals("yx", f.editor.text());
-        f.type(ALT_X + TAB + TAB + ENTER);
+        f.type(CTRL_ALT_X + TAB + TAB + ENTER);
         assertFalse(f.editor.isClosed());
     }
 
@@ -224,7 +233,7 @@ class FileTest {
         var f = new EditorFixture(dir);
         f.write("a.txt", "x");
         f.editor.open(dir.resolve("a.txt"));
-        f.type("y" + ALT_X + TAB + ENTER);
+        f.type("y" + CTRL_ALT_X + TAB + ENTER);
         assertTrue(f.editor.isClosed());
         assertEquals("x", f.read("a.txt"));
     }
@@ -234,7 +243,7 @@ class FileTest {
         var f = new EditorFixture(dir);
         f.write("a.txt", "x");
         f.editor.open(dir.resolve("a.txt"));
-        f.type("y" + ALT_X + ENTER);
+        f.type("y" + CTRL_ALT_X + ENTER);
         assertTrue(f.editor.isClosed());
         assertEquals("yx", f.read("a.txt"));
         assertEquals(1, f.saved.size());
@@ -243,7 +252,7 @@ class FileTest {
     @Test
     void closeOfANewFileWithSaveAsksForAName() throws IOException {
         var f = new EditorFixture(dir);
-        f.type("data" + ALT_X + ENTER);
+        f.type("data" + CTRL_ALT_X + ENTER);
         assertEquals("Save As", f.editor.dialogTitle());
         f.type("made.txt" + ENTER);
         assertTrue(f.editor.isClosed());

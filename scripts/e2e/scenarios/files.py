@@ -104,9 +104,9 @@ def run(check):
         check.ok("Enter on a file opens the editor", s.wait_for("Ln 1", 10), s.view.text())
         check.ok("the editor shows Deep.java", s.view.find("Deep.java") is not None, s.view.text())
         check.ok("the editor shows the text", s.view.find("class Deep {}") is not None, s.view.text())
-        s.key("Alt-x")
+        s.key("Ctrl-Alt-X")
         s.wait_idle(0.8)
-        check.ok("Alt-X returns to the chat", s.view.find("Ln 1") is None and s.view.find("open/close, ") is None,
+        check.ok("Ctrl-Alt-X returns to the chat", s.view.find("Ln 1") is None and s.view.find("open/close, ") is None,
                  s.view.text())
 
         # Esc closes the pane

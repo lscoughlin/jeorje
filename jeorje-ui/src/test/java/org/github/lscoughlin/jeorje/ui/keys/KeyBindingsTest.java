@@ -58,7 +58,7 @@ class KeyBindingsTest {
         assertEquals("Ctrl-L", b.display(KeyScope.UI, "redraw"));
         assertEquals("Ctrl-Q f", b.display(KeyScope.EDITOR, "find"));
         assertEquals("Shift-Del", b.display(KeyScope.EDITOR, "cut"));
-        assertEquals("Alt-X", b.display(KeyScope.EDITOR, "close"));
+        assertEquals("Ctrl-Alt-X, Alt-X", b.display(KeyScope.EDITOR, "close"));
         assertTrue(b.warnings().isEmpty());
         assertEquals("default", b.binding(KeyScope.UI, "send").orElseThrow().source());
     }
@@ -227,6 +227,7 @@ class KeyBindingsTest {
         assertEquals("find", editor.getBound("\021f"));
         assertEquals("change", editor.getBound("\021a"));
         assertEquals("close", editor.getBound("\033x"));
+        assertEquals("close", editor.getBound("\033\u0018"));
         assertEquals("copy", editor.getBound("\033[2;5~"));
         assertEquals("cut", editor.getBound("\033[3;2~"));
         assertEquals("paste", editor.getBound("\033[2;2~"));
@@ -265,6 +266,20 @@ class KeyBindingsTest {
         var b = KeyBindings.resolve(List.of(editor("user config", Map.of("wordLeft", "Shift-Left"))));
         var editor = new KeyMapBuilder(b, false).build(KeyContext.EDITOR);
         assertEquals("wordLeft", editor.getBound("\033[1;2D"));
+    }
+
+    @Test
+    void closeTakesCtrlAltXAndAltX() {
+        var b = KeyBindings.defaults();
+        var close = b.binding(KeyScope.EDITOR, "close").orElseThrow();
+        assertEquals(2, close.keys().size());
+        assertEquals("Ctrl-Alt-X", close.keys().getFirst().toString());
+        var plain = new KeyMapBuilder(b, false).build(KeyContext.EDITOR);
+        assertEquals("close", plain.getBound("\033\u0018"));
+        assertEquals("close", plain.getBound("\033x"));
+        // Kitty sends Ctrl-Alt-X as code point 120 with the modifier number 1 + alt (2) + ctrl (4).
+        var kitty = new KeyMapBuilder(b, true).build(KeyContext.EDITOR);
+        assertEquals("close", kitty.getBound("\033[120;7u"));
     }
 
     @Test

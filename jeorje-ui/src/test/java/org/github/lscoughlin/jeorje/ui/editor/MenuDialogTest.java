@@ -91,7 +91,7 @@ class MenuDialogTest {
         var f = new EditorFixture(dir);
         f.type(F10);
         assertTrue(f.screenHas("Ctrl-S"));
-        assertTrue(f.screenHas("Alt-X"));
+        assertTrue(f.screenHas("Ctrl-Alt-X, Alt-X"));
         f.type(ESC + ALT_E);
         assertTrue(f.screenHas("Ctrl-Z"));
         assertTrue(f.screenHas("Ctrl-Y"));
