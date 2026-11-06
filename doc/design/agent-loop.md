@@ -96,7 +96,33 @@ loop:
 
 ## Events to the UI
 
-The agent publishes these `AgentEvent` types: `TokenDelta`, `ToolStarted`, `ToolFinished`, `ConfirmationRequested`, `TurnFinished`, `Compacted`, and `Error`. The UI never reads the state of an agent directly.
+The agent publishes these `AgentEvent` types: `TokenDelta`, `ToolStarted`, `ToolFinished`, `ConfirmationRequested`, `TurnFinished`, `Compacted`, `ContextTrimmed`, `ContextUsage`, `Working`, `Steered`, `Cleared`, and `Error`. The subagent runtime also publishes `HelpRequested` (see [Turn watch for subagents](#turn-watch-for-subagents)). The `Working` event has an active flag and the token counts up and down of the model call. The UI shows it in the activity row (see [ui.md](ui.md#activity-row)). The UI never reads the state of an agent directly.
+
+## Turn watch for subagents
+
+The subagent runtime watches each subagent. The watch counts the model calls of the subagent since its last progress. The turn limit of the subagent is the limit for this count.
+
+A subagent makes progress when its todo list changes. These changes are progress:
+
+- A task becomes done.
+- A task is added.
+- A task is removed.
+- A task gets a new text or a new state.
+
+These events are not progress: repeated tool calls, new tool results, and new assistant text.
+
+The watch works in this way:
+
+1. The watch reads the todo list before each model call. The first list is the base. It is not a change.
+2. When the list is different from the last list, the count goes back to 0. The subagent also gets a new budget of model calls.
+3. When the count reaches 80 percent of the turn limit, the subagent asks the advisor for help. The subagent asks once for each window. A window ends when the count goes back to 0.
+4. The help request names the goal of the subagent, its open todos, the count of turns, and the turn limit. The runtime publishes the `HelpRequested` event when it sends the request.
+5. The advisor answers with advice. The runtime sends the advice to the subagent as a message at its next step boundary. The advisor can also write a new todo list in its answer. Each line of the list has the form `- [ ] text`, `- [~] text`, or `- [x] text`. The new list replaces the todo list of the subagent.
+6. When the advisor changes the todo list, the count of the subagent goes back to 0. The step limit of the agent and the model call limit of the subagent start again from 0. The subagent can continue.
+
+A subagent with no progress continues to count after the help request. At 100 percent of the turn limit, the turn ends with the step limit error, as before.
+
+The watch is on only when the runtime has an advisor link. The advisor link uses the same advisor path as the `advisor` tool and the same todo store as the `todo` tool. When no advisor model is set, the help request gets no advice, and the count continues.
 
 ## Retries and errors
 
@@ -121,11 +147,13 @@ When the user cancels a turn, the `CancellationToken` of the agent triggers:
 ## Token budget
 
 - `ContextBuilder` estimates the tokens of a request. The estimate is one token for four characters, rounded up, plus 4 tokens for each message. It counts the system prompt, the tool definitions, and all messages. It improves the estimate with the `Usage` values from the provider: the scale is the input tokens that the provider counted divided by the raw estimate. The scale stays between 0.25 and 4.
-- The default working-context budget is 60% of the context window of the model. The budget is the smaller value of that share and the window less `maxOutputTokens`.
+- The builder reserves the room for the output first. The **hard headroom** is the context window of the model less `maxOutputTokens`, and at least 1. The **soft working budget** is `context.budgetPercent` (default 60) of the headroom, and never more than the headroom. The builder aims for the soft budget. A request is over budget only when it is larger than the hard headroom. See [Budget](context-and-compaction.md#budget).
 - `maxOutputTokens` is configuration (`llm.maxOutputTokens`).
 - The builder puts the pinned items and the pruned chunks in front of the first user message. It puts the trailing state (the todo list and the decisions of the user) in a last user message, so that the start of the request stays the same for the prompt cache. When the request is over the budget, the builder drops whole recent turns from the request, the oldest first. It drops turns until the request uses 90% of the budget, so that the next calls drop the same turns. It never drops the current turn. The `Built` result reports the number of dropped turns, their numbers, and whether the request is still over the budget. A drop is the last step. The agent makes room before it, as the next bullets say.
 - **Spill of the running turn.** Compaction runs only when a turn ends, but one turn can read many files. Before each model call, when the request is over the soft limit (`context.compaction.softPercent` of the budget) and the turn has at least 8 tool results, the agent moves the biggest old tool results of the turn out of the messages. The full text goes to the index as chunks with part numbers from 1000, and the message keeps a stub with the first lines and a `recall:` hint. The agent spills until the request is under 40% of the budget. The last 6 tool results, the results of `todo`, `skill`, `ask_user`, `plan_submit`, and `recall`, and results with an error stay whole. The transcript keeps the full text. The agent publishes a `Compacted` event. See [Spilled results](context-and-compaction.md#spilled-results).
+- **Forced spill of the current turn.** The minimum of 8 results leaves a turn with a few huge results whole, so that turn alone can put the request far over the soft budget, and the builder never drops the current turn. After the pruning and the turn drops, when the request is still over the soft budget and the current turn is at least as large as the excess, the agent spills again with the forced flag. The forced flag lifts the minimum count of results, so that a turn with a few huge results can shrink. A result under 800 characters still stays whole, because its stub would save almost nothing. The other rules stay the same: the live tail, the text of the user and of the assistant, the error results, the stubs, and the keep-whole tools stay whole. The agent publishes `Compacted` with the number of results and the tokens that the forced spill freed, then it builds the request again.
 - **Prune before drop.** When the request is still over the budget and a recent turn would leave it, the agent moves the oldest recent turn to the older entries and prunes it at the hard level. It repeats this for one turn at a time. A turn leaves the request only when pruning does not make enough room. The request then has a line in the earlier context that names the turn and points to `recall`, the agent logs a warning, and it publishes the event `ContextTrimmed` with the numbers of the dropped turns, the number of pruned chunks, and whether the request is still over the budget. A request that stays over the budget with nothing left to drop gives one such event for each turn.
+- **Overflow that stays.** A forced spill and a turn drop are best effort. They never remove the live tail, the active tool result, or the text of the user. When the request is still larger than the hard headroom after them, the next model call can fail. The command `/context` then shows a warning that names the current turn as the cause.
 - **Recent window by tokens.** The recent turns are at most `context.recentTurns` turns and use at most `context.recentMaxPercent` of the budget (default 40). The last finished turn is always recent. A turn that does not fit moves to the older entries when the next turn ends, and compaction prunes it.
 - The agent publishes the event `ContextUsage` before each model call: the estimated tokens of the request and the budget. The status line shows the share. The command `/context` shows the tokens of each part and the prompt cache numbers of the provider. See [ui.md](ui.md).
 - An **empty reply** of the model (no tool call and no text, or only white space) does not end the turn. The agent adds a system note, `Your last reply was empty. Continue with the task. If you are done, say so.`, and calls the model again. After two notes in a row, a third empty reply ends the turn with the error `The model gave an empty reply 3 times. The turn ends.` A system note is a text of the user role that starts with `[Jeorje note] `. It is not a word of the user: the chunker writes it as a `NOTE` line, not as a `USER:` text.

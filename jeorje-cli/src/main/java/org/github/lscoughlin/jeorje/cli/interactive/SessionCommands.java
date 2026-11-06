@@ -130,7 +130,7 @@ final class SessionCommands {
     // ---- implement ----
 
     private CommandResult implement(String args) {
-        var orchestrator = session.orchestrator();
+        var orchestrator = session.ensureOrchestrator();
         var tokens = args.isBlank() ? new String[0] : args.strip().split("\\s+");
         if (tokens.length == 1) {
             switch (tokens[0]) {

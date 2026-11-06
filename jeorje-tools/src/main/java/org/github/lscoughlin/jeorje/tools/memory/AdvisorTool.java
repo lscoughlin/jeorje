@@ -46,16 +46,26 @@ public final class AdvisorTool extends RecordTool<AdvisorTool.Input> {
 
     @Override
     protected ToolResultData run(Input input, ToolContext context) throws Exception {
-        var working = contexts.apply(context.agent());
-        var question = input.question() == null || input.question().isBlank() ? DEFAULT_QUESTION : input.question();
+        var advice = advise(context.agent(), input.question(), context.cancel());
+        if (advice.isBlank()) return ToolResultData.error("The advisor gave no answer.");
+        return ToolResultData.ok(advice);
+    }
+
+    /**
+     * Asks the advisor about the work of an agent. The {@code advisor} tool and the help request of the turn
+     * watch of a subagent both use this method.
+     *
+     * @return the advice. It is empty when the advisor gave no answer.
+     */
+    public String advise(AgentId agent, String question, CancellationToken cancel) throws Exception {
+        var working = contexts.apply(agent);
+        var text = question == null || question.isBlank() ? DEFAULT_QUESTION : question;
         var messages = new ArrayList<Message>(working.messages());
-        messages.add(Message.user("[Advisor request] " + question));
+        messages.add(Message.user("[Advisor request] " + text));
         var system = (working.system() == null ? "" : working.system() + "\n\n")
                 + "You are the advisor of the agent above. You have no tools. Give short, concrete advice.";
         var request = new LlmRequest(system, messages, List.of(), MAX_OUTPUT_TOKENS);
-        var advice = collect(client.stream(request, context.cancel()), context.cancel());
-        if (advice.isBlank()) return ToolResultData.error("The advisor gave no answer.");
-        return ToolResultData.ok(advice);
+        return collect(client.stream(request, cancel), cancel);
     }
 
     private static String collect(Flow.Publisher<LlmEvent> publisher, CancellationToken cancel) throws Exception {

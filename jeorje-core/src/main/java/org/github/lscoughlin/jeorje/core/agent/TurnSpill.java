@@ -70,9 +70,20 @@ final class TurnSpill {
 
     /**
      * Spills tool results until about {@code charsToFree} characters are gone, or no candidate is left. Changes
-     * the list in place.
+     * the list in place. This is the normal mode: a turn with fewer than {@link #MIN_RESULTS} results stays whole.
      */
     Outcome spill(List<Message> messages, TurnChunker chunker, long charsToFree) {
+        return spill(messages, chunker, charsToFree, false);
+    }
+
+    /**
+     * Spills tool results until about {@code charsToFree} characters are gone, or no candidate is left. Changes
+     * the list in place. In the forced mode the turn may hold fewer than {@link #MIN_RESULTS} results, so that a
+     * big result of the current turn can leave when that turn alone overflows. The live tail, the text of the user
+     * and of the model, the error results, the stubs, the results under {@link #MIN_CHARS}, and the keep-whole tools
+     * stay whole in both modes.
+     */
+    Outcome spill(List<Message> messages, TurnChunker chunker, long charsToFree, boolean forced) {
         var tools = new HashMap<String, ToolUse>();
         var results = new ArrayList<Candidate>();
         for (var i = 0; i < messages.size(); i++) {
@@ -81,7 +92,7 @@ final class TurnSpill {
                 if (c instanceof ToolResult r) results.add(new Candidate(i, r, results.size()));
             }
         }
-        if (results.size() < MIN_RESULTS) return new Outcome(0, 0);
+        if (!forced && results.size() < MIN_RESULTS) return new Outcome(0, 0);
         var live = results.subList(Math.max(0, results.size() - LIVE_TAIL), results.size());
         var candidates = new ArrayList<Candidate>();
         for (var c : results) {

@@ -22,6 +22,12 @@ final class LimitedLlm implements LlmClient {
 
     int calls() { return calls.get(); }
 
+    /**
+     * Starts a new count. The subagent made progress, so it gets a new budget. The runtime calls this before the
+     * model call that it watches, and that call does not count. The step limit of the agent counts the same way.
+     */
+    void reset() { calls.set(-1); }
+
     @Override
     public Flow.Publisher<LlmEvent> stream(LlmRequest request, CancellationToken cancel) {
         if (calls.incrementAndGet() > limit) {

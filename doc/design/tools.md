@@ -264,6 +264,7 @@ The advisor is a second model. It is usually stronger than the default model. Th
 - Output: the advice as text. The calling agent receives it as a normal tool result. While the advisor is off, the tool is not in the tool list of the model. If a call arrives anyway, the answer is `The advisor is off. Use /advisor to turn it on.`
 - The user sets the model with `/advisor [slug]`. With no slug, it sets `~deepseek/deepseek-pro-latest`. `/advisor none` turns the advisor off for the session. The change applies to all agents at once.
 - The advisor call is part of the turn of the calling agent. It is in the history as part of the chunk of that turn.
+- The runtime can also call the advisor for a subagent that makes no progress. The help request asks the advisor to write a todo list with lines in the form `- [ ] text`, `- [~] text`, or `- [x] text`. The runtime replaces the todo list of the subagent with these lines. See [Turn watch for subagents](agent-loop.md#turn-watch-for-subagents).
 
 ### Extension tools
 

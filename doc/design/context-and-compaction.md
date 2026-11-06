@@ -58,6 +58,16 @@ A user chunk is short, so the index finds it easily and the embedding covers all
 - **Pruned chunks** are the chunks of older turns. A chunk that compaction has not touched shows its original text. A pruned chunk has fewer tokens than the original and ends with a keyword hint.
 - When a request is over the budget, the builder drops the oldest recent turns. See [agent-loop.md](agent-loop.md#token-budget).
 
+## Budget
+
+The agent keeps each request inside two limits. Both limits count tokens.
+
+- The **hard headroom** is the context window of the model less `llm.maxOutputTokens`. The model needs the output room, so the agent reserves it first. The headroom is at least 1 token.
+- The **soft working budget** is `context.budgetPercent` (default 60) of the hard headroom. It is never more than the headroom. The agent aims for the soft budget when it prunes, spills, and drops turns.
+- A request is **over budget** only when it is larger than the hard headroom.
+
+Trimming is best effort. The builder drops the oldest recent turns first. The agent then spills the big old tool results of the current turn, also when the turn has few results. The agent never drops or spills the live tail, the active tool result, the text of the user, error results, stubs, or the results of the keep-whole tools. A request can therefore stay over the soft budget, and can stay over the hard headroom. The command `/context` shows both limits and a warning when the request is over the hard headroom.
+
 ## Prompt caching
 
 Model providers keep the start of a request in a prompt cache. A later request that starts with the same tokens reads that part from the cache. This costs less and starts faster. The cache matches the start of the request only. The first token that differs ends the match. Jeorje therefore keeps the start of each request the same from one model call to the next.
@@ -222,7 +232,7 @@ The header has the tool, the input (80 characters at most), the size, and the `r
 
 ## Compaction policy
 
-Compaction runs after each turn. It does not wait for a hard limit. The budget is the share of the context window for the working context (60% by default, `context.budgetPercent`). The triggers measure the estimated tokens of the earlier context only: the chunks of the turns outside the recent window, in their current form. They do not count the system prompt, the tool definitions, the pinned items, or the recent turns. A large system prompt or large recent turns therefore never starts a compaction by themselves. The request builder keeps the whole request inside the budget: when a request is over the budget, it drops the oldest recent turns. See [agent-loop.md](agent-loop.md#token-budget).
+Compaction runs after each turn. It does not wait for a hard limit. The budget is the soft working budget: a share of the hard headroom (60% by default, `context.budgetPercent`). See [Budget](#budget). The triggers measure the estimated tokens of the earlier context only: the chunks of the turns outside the recent window, in their current form. They do not count the system prompt, the tool definitions, the pinned items, or the recent turns. A large system prompt or large recent turns therefore never starts a compaction by themselves. The request builder keeps the whole request inside the budget: when a request is over the budget, it drops the oldest recent turns. See [agent-loop.md](agent-loop.md#token-budget).
 
 An **eligible** chunk is not `PROTECTED`, is older than the recent turns, and is below the highest level of its class.
 

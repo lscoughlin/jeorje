@@ -90,7 +90,7 @@ models:
 context:
   window: 128000                     # context window in tokens, for all models
   windows: {}                        # window in tokens for single models, by slug. It wins over window.
-  budgetPercent: 60
+  budgetPercent: 60                  # the soft working budget, as a share of the headroom. 1 to 100. The headroom is the window less llm.maxOutputTokens: the agent reserves the output tokens first.
   recentTurns: 6
   recentMaxPercent: 40               # most of the budget that the recent turns use. 1 to 100. A turn that does not fit moves to the earlier context.
   compaction:

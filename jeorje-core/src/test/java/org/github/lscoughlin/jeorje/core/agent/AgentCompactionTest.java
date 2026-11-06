@@ -247,6 +247,85 @@ class AgentCompactionTest {
         assertTrue(event.getLast().tokensFreed() > 0);
     }
 
+    /** Settings with a chosen context window, so that a small budget can overflow. */
+    private AgentSettings windowSettings(int window, int recent) {
+        var d = AgentSettings.defaults("s1", dir, window);
+        return new AgentSettings(d.sessionId(), dir, window, 60, 8192, recent, 100, d.retry(), null, "",
+            d.sleeper());
+    }
+
+    /** The tool results of a request, in order. */
+    private static List<org.github.lscoughlin.jeorje.core.model.ToolResult> toolResults(LlmRequest request) {
+        var out = new ArrayList<org.github.lscoughlin.jeorje.core.model.ToolResult>();
+        request.messages().forEach(m -> m.content().forEach(c -> {
+            if (c instanceof org.github.lscoughlin.jeorje.core.model.ToolResult r) out.add(r);
+        }));
+        return out;
+    }
+
+    /** A text of about 40,000 characters, which is about 10,000 tokens. */
+    private static String hugeText() {
+        var sb = new StringBuilder();
+        for (var i = 0; sb.length() < 40_000; i++) {
+            sb.append("line ").append(i).append(" of the huge output with some words of the file\n");
+        }
+        return sb.toString();
+    }
+
+    @Test
+    void aTurnThatOverflowsOnlyThroughItsOwnToolResultsIsSpilledInForcedMode() {
+        // Seven results are fewer than the minimum count of the normal spill, and the live tail holds the six newest,
+        // so only the first result can leave. It is huge, and the turn alone pushes the request over the soft budget.
+        var steps = new ArrayList<Step>();
+        steps.add(calls("c1", "huge", "{}", "c2", "small", "{}", "c3", "small", "{}", "c4", "small", "{}",
+            "c5", "small", "{}", "c6", "small", "{}", "c7", "small", "{}"));
+        steps.add(text("Done."));
+        var llm = new Scripted(steps.toArray(new Step[0]));
+        var window = 20_000;
+        var rig = new Rig(llm, policy(Decision.ALLOW), windowSettings(window, 6),
+            tool("huge", true, (in, ctx) -> ToolResultData.ok(hugeText())),
+            tool("small", true, (in, ctx) -> ToolResultData.ok("small output")));
+        var budget = new ContextBuilder(window, 60, 8192).budget();
+        rig.agent.runTurn("read the files");
+        assertEquals(2, llm.requests.size());
+        var last = llm.requests.getLast();
+        var results = toolResults(last);
+        assertEquals(7, results.size(), "the turn is below the minimum count of the normal spill");
+        assertTrue(7 < TurnSpill.MIN_RESULTS);
+        assertTrue(ContextBuilder.rawEstimate(last) <= budget,
+            ContextBuilder.rawEstimate(last) + " > " + budget);
+        assertTrue(results.getFirst().output().startsWith(TurnSpill.MARK), "the oldest result is a stub");
+        for (var i = 1; i < results.size(); i++) {
+            assertFalse(results.get(i).output().startsWith(TurnSpill.MARK), "the live tail stays whole, result " + i);
+        }
+        assertTrue(ContextBuilder.rawEstimate(last) <= budget,
+            ContextBuilder.rawEstimate(last) + " > " + budget);
+        var event = rig.events(AgentEvent.Compacted.class);
+        assertFalse(event.isEmpty(), "the user sees the forced spill");
+        assertEquals(1, event.getLast().chunksPruned());
+        assertTrue(event.getLast().tokensFreed() > 5_000);
+        assertTrue(rig.store.chunks.stream().anyMatch(c -> c.part() >= TurnSpill.FIRST_PART),
+            "the full text is in the store");
+    }
+
+    @Test
+    void aTurnUnderTheSoftBudgetIsNotSpilledInForcedMode() {
+        var steps = new ArrayList<Step>();
+        steps.add(calls("c1", "huge", "{}", "c2", "small", "{}", "c3", "small", "{}", "c4", "small", "{}",
+            "c5", "small", "{}", "c6", "small", "{}", "c7", "small", "{}"));
+        steps.add(text("Done."));
+        var llm = new Scripted(steps.toArray(new Step[0]));
+        var window = 200_000;
+        var rig = new Rig(llm, policy(Decision.ALLOW), windowSettings(window, 6),
+            tool("huge", true, (in, ctx) -> ToolResultData.ok(hugeText())),
+            tool("small", true, (in, ctx) -> ToolResultData.ok("small output")));
+        rig.agent.runTurn("read the file");
+        assertTrue(toolResults(llm.requests.getLast()).stream()
+            .noneMatch(r -> r.output().startsWith(TurnSpill.MARK)), "a turn in the budget keeps every result");
+        assertTrue(rig.events(AgentEvent.Compacted.class).isEmpty());
+        assertTrue(rig.store.chunks.stream().noneMatch(c -> c.part() >= TurnSpill.FIRST_PART));
+    }
+
     /** Reads the whole text of a request. */
     private static final class ContextBuilderSupport {
         static String text(LlmRequest request) {

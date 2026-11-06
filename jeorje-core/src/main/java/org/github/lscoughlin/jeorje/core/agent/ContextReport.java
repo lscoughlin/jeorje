@@ -21,14 +21,15 @@ import org.github.lscoughlin.jeorje.core.model.Turn;
  * @param recentTurns the number of recent turns
  * @param current the tokens of the turn that runs
  * @param request the estimate of the whole request, with the scale
- * @param budget the budget of the working context
+ * @param budget the soft working budget: the share of the headroom that the agent aims for
+ * @param headroom the hard ceiling: the window minus the room for the output
  * @param spilled the number of tool results that the agent moved out of a running turn, since it started
  * @param droppedTurns the numbers of the turns that left the last request
  * @param cache what the provider reported about its prompt cache
  */
 public record ContextReport(String agent, int system, int tools, int pinned, int earlier, int earlierChunks,
                             int earlierPruned, int recent, int recentTurns, int current, int request, int budget,
-                            int spilled, List<Integer> droppedTurns, Cache cache) {
+                            int headroom, int spilled, List<Integer> droppedTurns, Cache cache) {
     /**
      * The prompt cache numbers of the provider. The input counts include the cached tokens.
      *
@@ -60,20 +61,34 @@ public record ContextReport(String agent, int system, int tools, int pinned, int
     /** A report with no cache numbers. */
     public ContextReport(String agent, int system, int tools, int pinned, int earlier, int earlierChunks,
                          int earlierPruned, int recent, int recentTurns, int current, int request, int budget,
-                         int spilled, List<Integer> droppedTurns) {
+                         int headroom, int spilled, List<Integer> droppedTurns) {
         this(agent, system, tools, pinned, earlier, earlierChunks, earlierPruned, recent, recentTurns, current,
-            request, budget, spilled, droppedTurns, Cache.NONE);
+            request, budget, headroom, spilled, droppedTurns, Cache.NONE);
     }
 
     /** The same report with these cache numbers. */
     public ContextReport withCache(Cache value) {
         return new ContextReport(agent, system, tools, pinned, earlier, earlierChunks, earlierPruned, recent,
-            recentTurns, current, request, budget, spilled, droppedTurns, value);
+            recentTurns, current, request, budget, headroom, spilled, droppedTurns, value);
     }
 
-    /** The share of the budget that the request used, as a percent. */
-    public int percent() {
-        return budget <= 0 ? 0 : (int) Math.min(999, Math.round(request * 100.0 / budget));
+    /** The share of the soft budget that the request used, as a percent. It can pass 100. */
+    public int percent() { return percentOf(request, budget); }
+
+    /** The share of the hard headroom that the request used, as a percent. */
+    public int headroomPercent() { return percentOf(request, headroom); }
+
+    /** The share of the hard headroom that the current turn used, as a percent. */
+    public int currentPercent() { return percentOf(current, headroom); }
+
+    /** The share of the hard headroom that the recent turns used, as a percent. */
+    public int recentPercent() { return percentOf(recent, headroom); }
+
+    /** True when the request is larger than the hard headroom. */
+    public boolean overHeadroom() { return request > headroom; }
+
+    private static int percentOf(long part, long whole) {
+        return whole <= 0 ? 0 : (int) Math.min(999, Math.round(part * 100.0 / whole));
     }
 
     static ContextReport of(String agent, ContextBuilder.Input in, ContextBuilder.Built built, int spilled) {
@@ -97,7 +112,7 @@ public record ContextReport(String agent, int system, int tools, int pinned, int
         var current = 0;
         for (var m : in.current()) current += ContextBuilder.estimate(m);
         return new ContextReport(agent, system, tools, pinned, earlier, in.older().size(), pruned, recent,
-            kept, current, built.estimate(), built.budget(), spilled, built.droppedTurnNumbers());
+            kept, current, built.estimate(), built.budget(), built.headroom(), spilled, built.droppedTurnNumbers());
     }
 
     private static int toolTokens(ToolDefinition t) {
@@ -124,8 +139,18 @@ public record ContextReport(String agent, int system, int tools, int pinned, int
         row(sb, "earlier context", earlier, earlierChunks + " chunks, " + earlierPruned + " pruned");
         row(sb, "recent turns", recent, recentTurns + (recentTurns == 1 ? " turn" : " turns"));
         row(sb, "current turn", current, "");
-        sb.append(String.format(Locale.ROOT, "  %-17s%,9d of %,d tokens (%d%%)%n", "request", request, budget,
+        sb.append(String.format(Locale.ROOT, "  %-17s%,9d tokens%n", "request", request));
+        sb.append(String.format(Locale.ROOT, "  %-17s%,9d tokens (request at %d%%)%n", "soft budget", budget,
             percent()));
+        sb.append(String.format(Locale.ROOT,
+            "  %-17s%,9d tokens (request at %d%%, current turn %d%%, recent turns %d%%)%n", "hard headroom",
+            headroom, headroomPercent(), currentPercent(), recentPercent()));
+        if (overHeadroom()) {
+            sb.append(String.format(Locale.ROOT,
+                "WARNING: the request is %,d tokens over the hard headroom. The current turn holds %,d tokens"
+                    + " and causes most of this. Run /compact, wait for the turn to end, or search the spilled"
+                    + " results with recall.%n", request - headroom, current));
+        }
         if (cache.calls() == 0) {
             sb.append("Prompt cache: the provider reported no usage yet\n");
         } else {

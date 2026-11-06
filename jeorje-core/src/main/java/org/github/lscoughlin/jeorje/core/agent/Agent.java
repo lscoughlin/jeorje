@@ -144,7 +144,7 @@ public final class Agent implements AutoCloseable {
     public ContextReport contextReport() {
         var report = lastReport;
         return (report != null ? report
-            : new ContextReport(id.value(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, contextBuilder.budget(), 0, List.of()))
+            : new ContextReport(id.value(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, contextBuilder.budget(), contextBuilder.headroom(), 0, List.of()))
             .withCache(cacheStats.snapshot());
     }
 
@@ -566,6 +566,15 @@ public final class Agent implements AutoCloseable {
      */
     private record TurnOutcome(int calls, boolean cancelled, List<String> late) {}
 
+    /** Set by {@link #resetCallCount()}. The running turn reads it at its next step boundary. */
+    private final java.util.concurrent.atomic.AtomicBoolean callReset = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * Starts a new count of model calls for the running turn, as a text of the user does. The turn reads the
+     * request at its next step boundary. The subagent runtime calls this when the subagent made progress.
+     */
+    public void resetCallCount() { callReset.set(true); }
+
     private TurnOutcome runOneTurn(String input, int limit) {
         var token = new CancellationToken();
         current = token;
@@ -582,6 +591,7 @@ public final class Agent implements AutoCloseable {
             for (var note : notes) messages.add(Message.user(Notes.of(note)));
             messages.add(Message.user(input));
             flushed = 0;
+            work.reset();
             var calls = 0;
             var total = 0;
             var emptyReplies = 0;
@@ -590,6 +600,7 @@ public final class Agent implements AutoCloseable {
                 if (token.isCancelled()) break;
                 // A text of the user starts a new count, so the step limit gives the turn a new budget.
                 if (addBoundaryMessages(messages)) calls = 0;
+                if (callReset.getAndSet(false)) calls = 0;
                 if (calls >= limit) {
                     publish(new AgentEvent.Error(id, "Step limit reached: " + limit
                         + " model calls in one turn. The turn ends."));
@@ -610,6 +621,7 @@ public final class Agent implements AutoCloseable {
                     }
                 }
                 built = fitRecent(built, messages);
+                built = spillCurrentTurn(built, messages, number, spill);
                 lastReport = ContextReport.of(id.value(), input(messages), built, spilledTotal);
                 publish(new AgentEvent.ContextUsage(id, built.estimate(), built.budget()));
                 lastRequest = built.request();
@@ -908,6 +920,37 @@ public final class Agent implements AutoCloseable {
     static final int SPILL_TARGET_PERCENT = 40;
 
     /**
+     * Spills the big tool results of the current turn when that turn alone pushes the request over the soft budget.
+     * The normal spill has a minimum count of results and a minimum size, so a turn with a few huge results stays
+     * whole and the request can grow far past the budget. This method runs after {@link #fitRecent}, which cannot
+     * drop the messages of the current turn, and forces the spill on a best-effort basis. It skips the live tail, the
+     * text of the user and of the model, the error results, the stubs, and the keep-whole tools.
+     *
+     * @return the rebuilt request when at least one result left, else {@code built}
+     */
+    private ContextBuilder.Built spillCurrentTurn(ContextBuilder.Built built, List<Message> messages, int number,
+                                                  TurnSpill spill) {
+        if (built.estimate() <= built.budget()) return built;
+        var scale = Math.max(0.25, contextBuilder.scale());
+        var over = (long) built.estimate() - built.budget();
+        var current = 0L;
+        for (var m : messages) current += ContextBuilder.estimate(m);
+        // The current turn is the cause only when the rest of the request fits the budget without it.
+        if (Math.ceil(current * scale) < over) return built;
+        var chars = (long) (over * 4 / scale);
+        var outcome = spill.spill(messages, chunker, chars, true);
+        if (outcome.spilled() == 0) {
+            log.atDebug().log(() -> "turn " + number + " is over the soft budget and no tool result can leave it");
+            return built;
+        }
+        spilledTotal += outcome.spilled();
+        log.atInfo().log(() -> "The forced spill of turn " + number + " moved " + outcome.spilled()
+            + " tool results out of the turn, to reach the soft budget of " + built.budget() + " tokens");
+        publish(new AgentEvent.Compacted(id, outcome.spilled(), outcome.freedChars() / 4));
+        return contextBuilder.build(input(messages));
+    }
+
+    /**
      * @param turn the turn as the model saw it: a spilled result is a stub
      * @param full the turn with the full text of every result, for the transcript
      */
@@ -1028,10 +1071,91 @@ public final class Agent implements AutoCloseable {
         return new Assistant(assembler.content(), error, assembler.broken());
     }
 
+    /** The fewest milliseconds between two {@code Working} events while the answer streams. */
+    static final long WORKING_INTERVAL_MS = 250;
+
+    /** The token counts that the {@code Working} events of one turn carry. Only the thread of the turn uses it. */
+    private final class Work {
+        private long upBefore;
+        private long downBefore;
+        private int up;
+        private int downChars;
+        private int providerDown = -1;
+        private boolean streamed;
+        private long lastPublished;
+
+        void reset() {
+            upBefore = 0;
+            downBefore = 0;
+            clearCall();
+        }
+
+        private void clearCall() {
+            up = 0;
+            downChars = 0;
+            providerDown = -1;
+            streamed = false;
+        }
+
+        void begin(int estimate) {
+            clearCall();
+            up = estimate;
+            publish(true);
+        }
+
+        void fragment(int chars) {
+            downChars += chars;
+            var now = clock.millis();
+            if (!streamed || now - lastPublished >= WORKING_INTERVAL_MS) {
+                streamed = true;
+                publish(true);
+            }
+        }
+
+        void usage(LlmEvent.Usage usage) {
+            up = usage.inputTokens();
+            providerDown = usage.outputTokens();
+            publish(true);
+        }
+
+        /** Keeps the counts of a failed attempt. The state stays active. */
+        void retry() { fold(); }
+
+        void end() {
+            fold();
+            publish(false);
+        }
+
+        private void fold() {
+            upBefore += up;
+            downBefore += providerDown >= 0 ? providerDown : downChars / 4;
+            clearCall();
+        }
+
+        private void publish(boolean active) {
+            lastPublished = clock.millis();
+            var down = downBefore + (providerDown >= 0 ? providerDown : downChars / 4);
+            Agent.this.publish(new AgentEvent.Working(id, active, (int) Math.min(Integer.MAX_VALUE, upBefore + up),
+                (int) Math.min(Integer.MAX_VALUE, down)));
+        }
+    }
+
+    private final Work work = new Work();
+
     private Assistant callModel(ContextBuilder.Built built, CancellationToken token) {
+        work.begin(built.estimate());
+        try {
+            return callModelWithRetry(built, token);
+        } finally {
+            work.end();
+        }
+    }
+
+    private Assistant callModelWithRetry(ContextBuilder.Built built, CancellationToken token) {
         var retry = settings.retry();
         for (var attempt = 1; ; attempt++) {
             var assembler = new Assembler(token);
+            if (attempt > 1) work.begin(built.estimate());
             try {
                 stream(built.request(), token, assembler);
                 if (assembler.usage != null) {
@@ -1047,6 +1171,7 @@ public final class Agent implements AutoCloseable {
                 if (!retryable || attempt >= retry.maxAttempts()) {
                     return reply(assembler, "Model call failed: " + message(e));
                 }
+                work.retry();
                 var delay = retry.delay(attempt, e);
                 var number = attempt;
                 log.atDebug().log(() -> "Retry " + number + " in " + delay.toMillis() + " ms after: " + message(e));
@@ -1118,15 +1243,21 @@ public final class Agent implements AutoCloseable {
                 case LlmEvent.TextDelta d -> {
                     text.append(d.text());
                     publish(new AgentEvent.TokenDelta(id, d.text()));
+                    work.fragment(d.text().length());
                 }
                 case LlmEvent.ToolUseStart s -> {
                     names.put(s.id(), s.tool());
                     inputs.putIfAbsent(s.id(), new StringBuilder());
                 }
-                case LlmEvent.ToolUseInput i -> inputs.computeIfAbsent(i.id(), k -> new StringBuilder())
-                    .append(i.jsonFragment());
+                case LlmEvent.ToolUseInput i -> {
+                    inputs.computeIfAbsent(i.id(), k -> new StringBuilder()).append(i.jsonFragment());
+                    work.fragment(i.jsonFragment().length());
+                }
                 case LlmEvent.MessageStop s -> finishReason = s.stopReason();
-                case LlmEvent.Usage u -> usage = u;
+                case LlmEvent.Usage u -> {
+                    usage = u;
+                    work.usage(u);
+                }
             }
         }
 

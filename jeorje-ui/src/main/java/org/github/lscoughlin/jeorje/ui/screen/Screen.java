@@ -107,6 +107,9 @@ public final class Screen implements AutoCloseable {
     private final Display display;
     private final StatusLine status = new StatusLine();
     private final Map<AgentId, ChatView> chats = new ConcurrentHashMap<>();
+    private final Map<AgentId, ActivityLine> activities = new ConcurrentHashMap<>();
+    private volatile java.time.Clock activityClock = java.time.Clock.systemUTC();
+    private volatile boolean activityPlain;
     private final BlockingQueue<AgentEvent> events = new LinkedBlockingQueue<>();
     private final Deque<PermissionPrompt> prompts = new ArrayDeque<>();
     private volatile java.util.function.Predicate<AgentId> promptFilter = a -> true;
@@ -279,6 +282,42 @@ public final class Screen implements AutoCloseable {
     public AgentId foreground() { return foreground; }
 
     /**
+     * Sets the clock of the activity rows and the mode of their spinner. Call it before the first {@link #working}
+     * call. The default is the system clock and the UTF spinner.
+     *
+     * @param plain true for no-color mode or non-UTF mode, where the spinner uses ASCII
+     */
+    public void activity(java.time.Clock clock, boolean plain) {
+        this.activityClock = clock;
+        this.activityPlain = plain;
+    }
+
+    /** Sets the state of the activity row of an agent. The row shows only for the foreground agent. */
+    public void working(AgentId agent, boolean active, int tokensUp, int tokensDown) {
+        activities.computeIfAbsent(agent, a -> ActivityLine.create(activityClock, activityPlain))
+                .update(active, tokensUp, tokensDown);
+    }
+
+    /**
+     * Moves the spinner of the foreground agent to the next frame.
+     *
+     * @return true when the activity row of the foreground agent is active, so that the caller redraws
+     */
+    public boolean tickActivity() {
+        var line = activities.get(foreground);
+        if (line == null || !line.active()) return false;
+        line.tick();
+        return true;
+    }
+
+    /** The activity row for the foreground agent, or null when it must not show. */
+    private AttributedString activityRow(int columns) {
+        if (activePane != null || pendingPrompt() != null || pendingForm() != null) return null;
+        var line = activities.get(foreground);
+        return line == null ? null : line.render(columns, activityClock.instant());
+    }
+
+    /**
      * Appends a block to the end of the chat view of an agent. The block is local: it is not part of the
      * conversation and never goes to the model. The caller redraws the screen.
      */
@@ -415,6 +454,7 @@ public final class Screen implements AutoCloseable {
                     status.contextPercent(u.budget() <= 0 ? -1 : (int) Math.min(999, Math.round(u.tokens() * 100.0 / u.budget())));
             case AgentEvent.TurnFinished t when event.agent().equals(foreground) -> status.state("idle");
             case AgentEvent.TokenDelta d when event.agent().equals(foreground) -> status.state("working");
+            case AgentEvent.Working w -> working(w.agent(), w.active(), w.tokensUp(), w.tokensDown());
             default -> {}
         }
     }
@@ -499,6 +539,8 @@ public final class Screen implements AutoCloseable {
     public List<AttributedString> renderRegion(int rows, int columns) {
         var regionRows = Math.max(1, rows - 1 - inputRows);
         var pane = activePane;
+        var activity = pane == null && regionRows > 1 ? activityRow(columns) : null;
+        if (activity != null) regionRows--;
         if (pane != null) {
             chatRows = 0;
             return paneRegion(pane, regionRows, columns);
@@ -526,6 +568,7 @@ public final class Screen implements AutoCloseable {
         var lines = new ArrayList<>(chat(foreground).visible(columns, chatRows));
         while (lines.size() < chatRows) lines.add(AttributedString.EMPTY);
         lines.addAll(box);
+        if (activity != null) lines.add(activity);
         return lines;
     }
 

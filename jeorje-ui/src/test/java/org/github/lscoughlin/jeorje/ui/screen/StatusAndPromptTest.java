@@ -1,6 +1,7 @@
 package org.github.lscoughlin.jeorje.ui.screen;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Optional;
@@ -29,6 +30,21 @@ class StatusAndPromptTest {
     void implementBarShowsEmptyAndFullProgress() {
         assertTrue(new StatusLine().implement(0, 1).text().contains("IMPLEMENT [░░░░░░░░░░] 0/1"));
         assertTrue(new StatusLine().implement(5, 5).text().contains("IMPLEMENT [██████████] 5/5"));
+    }
+
+    @Test
+    void turnFieldFollowsTheImplementField() {
+        assertTrue(new StatusLine().implement(2, 5).turns(12, 40).text()
+                .contains("IMPLEMENT [████░░░░░░] 2/5 | turn 12/40"));
+        assertTrue(new StatusLine().implement(2, 5).turns(12, 0).text().contains("2/5 | turn 12 |"));
+    }
+
+    @Test
+    void noTurnFieldWithoutTurnsOrWithoutImplement() {
+        assertFalse(new StatusLine().implement(2, 5).text().contains("turn"));
+        assertFalse(new StatusLine().turns(3, 10).text().contains("turn"));
+        assertFalse(new StatusLine().implement(2, 5).turns(3, 10).clearTurns().text().contains("turn"));
+        assertFalse(new StatusLine().implement(2, 5).turns(3, 10).clearImplement().text().contains("turn"));
     }
 
     @Test

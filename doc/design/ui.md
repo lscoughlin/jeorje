@@ -14,17 +14,41 @@ The interface is in `jeorje-ui`. It uses JLine 4 (`org.jline:jline`). The parent
 | chat view (scrolling)                            |
 |                                                  |
 +--------------------------------------------------+
+| activity row (only while a model call runs)      |
 | > input line                                     |
 +--------------------------------------------------+
-| agent [state] | model | ctx % | peers | notices  |
+| agent [state] | IMPLEMENT [bar] n/m | ctx % | peers |
 +--------------------------------------------------+
 ```
 
 - The **chat view** shows the conversation of the foreground agent. It uses all rows above the input line. A permission prompt appears as a box at the bottom of this region. A pane (the agent switcher or the file browser) replaces the chat view while it is open.
 - The **input line** is owned by a JLine `LineReader`. It has history and multi-line input. The history file is `${HOME}/.jeorje/history`. `Alt-Enter` adds a new line. The input area grows with the text, up to three rows less than the terminal height. `Tab` completes the text before the cursor. See [Tab completion](#tab-completion).
-- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT n/m` during `/implement`, the model, `ctx n%` (the estimated size of the last request as a percent of the budget; the whole status line changes its color from 85%), `peers n` (the number of live peers, or `peers off` when the swarm is off), and notices. The fields have a ` | ` between them. Notices come from background agents and from the interface. The line keeps the last three notices.
+- The **activity row** is the row above the input line. It shows only while a model call of the foreground agent runs. See [Activity row](#activity-row).
+- The **status line** is the last row. The text has the foreground agent name and its state in brackets, then these fields. A field shows only when it applies, except `peers n`: the git branch of the foreground agent, `YOLO` when permission checks are off, `PLAN` in plan mode, `IMPLEMENT [bar] n/m | turn t/l` (see below), `ctx n%` (the estimated size of the last request as a percent of the budget; the whole status line changes its color from 85%), `peers n` (the number of live peers, or `peers off` when the swarm is off), and notices. The fields have a ` | ` between them. The status line has no model field.
+
+  The `IMPLEMENT [bar] n/m` field shows only for the foreground session that runs `/implement`. The bar has 10 cells. A filled cell is `█` and an empty cell is `░`. The number `n` is the count of finished stories and `m` is the count of stories in the run. Each top-level session can run its own `/implement`. When the user switches to a session that does not run `/implement`, the field does not show. The `turn t/l` field follows the `IMPLEMENT` field. The number `t` is the count of model calls of the running worker. The number `l` is the limit of model calls for one worker. When the limit is not known, the field shows `turn t`. The `turn` field shows and hides together with the `IMPLEMENT` field. Notices come from background agents and from the interface. The line keeps the last three notices.
 
 JLine `Display` draws the chat region. It writes only the lines that change. The status line is written directly to the last row after each draw. The input line belongs to the `LineReader`, which draws its own rows. A permission prompt interrupts the input read. While the prompt waits, the screen reads the answer keys itself. After the answer, the input read starts again and keeps the text that the user had typed.
+
+## Activity row
+
+The activity row shows between the chat view and the input line. It is not part of the status line. The row has this form:
+
+```
+⠹ Pondering... (12s | ↑ 8.4k tokens | ↓ 1.2k tokens)
+```
+
+- The row shows only while a model call of the foreground agent runs. It hides when the call ends, fails, or is cancelled. The row never shows for a background agent. When the user switches the foreground, the row shows the state of the new foreground agent.
+- The row does not show while a permission prompt, a form, or a pane is open. The user works then.
+- While the row shows, the chat view has one row less. When the row hides, the chat view has its full height again.
+- The first part is a spinner. It moves one step each 100 ms. The frames are `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`. In no-color mode or when the terminal does not use UTF, the frames are `|/-\`.
+- The word changes each 4 seconds, in the order of a fixed list. Each new model call starts at the next word of the list.
+- The elapsed time is `Ns` below 60 seconds. After that, it is `Nm Ns`.
+- `↑` is the count of tokens that Jeorje sent in the model calls of the running turn. It starts as the estimate of the request. It changes to the count of the provider when that count arrives.
+- `↓` is the count of tokens that Jeorje received in the model calls of the running turn. It grows while the answer streams. It is an estimate of one token for each four characters. It changes to the count of the provider when that count arrives.
+- A count below 1000 shows as a number. A larger count shows with one decimal and `k`, for example `1.2k`.
+- The text is dim. The spinner has the accent color in color mode. The row is cut at the terminal width with `…` and never wraps.
+- The agent publishes the state in `Working` events. The event has the agent, an active flag, and the two counts. The agent publishes it when a call starts, at most about 4 times each second while the answer streams, when the counts of the provider arrive, and when the call ends. A retry after a failed call keeps the row active and keeps the counts of the earlier calls of the turn. The ticker of the interface moves the spinner and draws the screen.
 
 ## Chat view
 
@@ -505,7 +529,7 @@ A terminal with the Kitty keyboard protocol sends `Ctrl-Backspace` as `ESC [ 127
 | `/files [list [filter]]` | Open the file browser, or print the file tree. `Ctrl-X f` opens the browser pane. |
 | `/edit <path>` | Open a file in the editor |
 | `/compact` | Run compaction now |
-| `/context` | Show how full the context of the foreground agent was at its last model call: the tokens of the system prompt, the tool definitions, the pinned items, the earlier context, the recent turns, and the current turn, the share of the budget, the prompt cache numbers of the provider (the share of the prompt tokens read from the cache in the last call and in all calls), the results moved out of a running turn, and the turns that left the request |
+| `/context` | Show how full the context of the foreground agent was at its last model call: the tokens of the system prompt, the tool definitions, the pinned items, the earlier context, the recent turns, and the current turn, the soft budget and the hard headroom (the window less the output tokens) as two lines, with the share of each that the request, the current turn, and the recent turns use, a warning line when the request is over the hard headroom (it names the current turn as the cause and suggests `/compact`, waiting for the turn to end, or `recall` to search the spilled results), the prompt cache numbers of the provider (the share of the prompt tokens read from the cache in the last call and in all calls), the results moved out of a running turn, and the turns that left the request |
 | `/compactor [slug\|off]` | Show or set the compactor model for this session |
 | `/advisor [slug\|none]` | Set the advisor model for this session. With no slug, it sets `~deepseek/deepseek-pro-latest`. `none` turns the advisor off |
 | `/plan [goal\|show\|edit\|done\|cancel]` | Enter, show, edit, or leave plan mode. See [planning.md](planning.md). |

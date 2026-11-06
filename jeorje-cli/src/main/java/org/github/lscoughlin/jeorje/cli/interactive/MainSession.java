@@ -5,6 +5,7 @@ import java.util.function.Consumer;
 import org.github.lscoughlin.jeorje.core.agent.Agent;
 import org.github.lscoughlin.jeorje.core.agent.AgentInput;
 import org.github.lscoughlin.jeorje.core.compaction.Pruner;
+import org.github.lscoughlin.jeorje.core.implement.ImplementOrchestrator;
 import org.github.lscoughlin.jeorje.core.model.AgentId;
 import org.github.lscoughlin.jeorje.core.plan.PlanMode;
 import org.github.lscoughlin.jeorje.core.port.ContextStore;
@@ -35,6 +36,7 @@ public final class MainSession {
     private GatedPolicy policy;
     private final PlanMode planMode = new PlanMode();
     private Pruner pruner;
+    private volatile ImplementOrchestrator orchestrator;
     private Consumer<AgentInput> input;
     private volatile boolean ended;
 
@@ -84,6 +86,11 @@ public final class MainSession {
     void policy(GatedPolicy policy) { this.policy = policy; }
 
     public PlanMode planMode() { return planMode; }
+
+    /** The {@code /implement} orchestrator of this conversation, or null before the first {@code /implement}. */
+    public ImplementOrchestrator orchestrator() { return orchestrator; }
+
+    void orchestrator(ImplementOrchestrator orchestrator) { this.orchestrator = orchestrator; }
 
     /** The compaction support of this conversation. */
     Pruner pruner() { return pruner; }

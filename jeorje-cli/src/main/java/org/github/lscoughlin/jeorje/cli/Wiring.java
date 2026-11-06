@@ -238,6 +238,14 @@ public final class Wiring {
                                         org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy network,
                                         AgentState state, String sessionId, boolean yolo,
                                         org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp) {
+        return registry(config, policy, network, state, sessionId, yolo, mcp, new TodoTool());
+    }
+
+    /** The tools of the agent as a registry. The caller keeps {@code todos}, so the runtime can read the lists. */
+    public static ToolRegistry registry(JeorjeConfig config, PermissionPolicy policy,
+                                        org.github.lscoughlin.jeorje.core.permissions.NetworkPolicy network,
+                                        AgentState state, String sessionId, boolean yolo,
+                                        org.github.lscoughlin.jeorje.tools.mcp.McpManager mcp, TodoTool todos) {
         var builtInNames = BUILT_IN_NAMES;
         var read = config.tools().read();
         var nestedOn = config.instructions().enabled() && read.directoryDocs().contains("AGENTS.md");
@@ -268,7 +276,7 @@ public final class Wiring {
                                 List.of(), List.of()), true, WebFetchTool.DEFAULT_MAX_BYTES, Duration.ofSeconds(30))
                         : new WebFetchTool(network, false, WebFetchTool.DEFAULT_MAX_BYTES, Duration.ofSeconds(30)))
                 .register(new RecallTool(sessionId, id -> id))
-                .register(new TodoTool())
+                .register(todos)
                 .registerAll(extensionTools(config, builtInNames))
                 .registerAll(mcp == null ? List.<Tool>of() : mcp.tools())
                 .build();
@@ -570,7 +578,9 @@ public final class Wiring {
         PermissionPolicy policy = grants;
         var state = new AgentState();
         var mcp = mcp(config, options, basePolicy.network(), cwd, env.env());
-        var registry = registry(config, grants, basePolicy.network(), state, session.id(), options.yolo(), mcp);
+        var todoTool = new TodoTool();
+        var registry = registry(config, grants, basePolicy.network(), state, session.id(), options.yolo(), mcp,
+                todoTool);
         var tools = new ArrayList<>(adapt(registry, state, scrubber));
         var window = contextWindow(loaded, roles.defaultModel());
         var skillRegistry = skills(config, env.home(), cwd, loaded.trusted());
@@ -619,6 +629,7 @@ public final class Wiring {
             var builder = SubagentRuntime.builder(session.id(), settings, model -> llmClient(config, env,
                             model == null || model.isBlank() ? roles.defaultModel() : model))
                     .store(store).transcript(transcript).agentEvents(onEvent)
+                    .advisorLink(advisor.help(todoTool))
                     .pruneListener((child, chunks) -> skillTool.ifPresent(t -> t.releasePruned(child.value(), chunks)))
                     .events(swarm::onSubagentEvent).remote(swarm)
                     .limits(SubagentLimits.defaults().withMaxModelCalls(config.subagents().stepLimit()));

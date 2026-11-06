@@ -363,6 +363,23 @@ public final class ImplementOrchestrator implements StoryHost, AutoCloseable {
         }
     }
 
+    /**
+     * The model calls of the running story and the limit of the call count. When more than one worker runs, the
+     * worker with the most calls counts. Empty when no worker runs.
+     */
+    public Optional<SubagentRuntime.ModelCalls> turnUsage() {
+        var workers = new ArrayList<String>();
+        synchronized (lock) {
+            for (var run : runs.values()) {
+                if (run.state == StoryState.RUNNING && run.worker != null && !run.worker.isBlank()) {
+                    workers.add(run.worker);
+                }
+            }
+        }
+        return workers.stream().map(w -> runtime.modelCalls(new AgentId(w))).flatMap(Optional::stream)
+            .max(java.util.Comparator.comparingInt(SubagentRuntime.ModelCalls::used));
+    }
+
     /** One row of the status table. */
     public record Row(String story, String title, StoryState state, int attempt, String worker, String branch) {}
 

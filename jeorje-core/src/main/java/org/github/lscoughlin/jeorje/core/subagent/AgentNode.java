@@ -44,6 +44,13 @@ final class AgentNode {
     volatile String lastOutput = "";
     volatile String failureReason;
     volatile Agent agent;
+    /** The turn watch of the subagent, or null when the runtime has no advisor link. */
+    volatile TurnWatch watch;
+    /** Gives the subagent a new budget of model calls. */
+    volatile Runnable resetCalls = () -> { };
+    /** The counter of the model calls of this agent and its limit. Null before the loop starts. */
+    volatile LimitedLlm limited;
+    volatile int maxCalls;
     volatile String branch;
     /** The handle of the task on a peer, or null for a local agent. */
     volatile RemoteSpawner.Task remote;

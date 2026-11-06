@@ -33,6 +33,27 @@ public sealed interface AgentEvent {
      */
     record ContextUsage(AgentId agent, int tokens, int budget) implements AgentEvent {}
 
+    /**
+     * A subagent used most of its turn limit without progress and asked the advisor for help.
+     *
+     * @param turns the model calls since the last progress
+     * @param limit the turn limit of the subagent
+     */
+    record HelpRequested(AgentId agent, int turns, int limit) implements AgentEvent {}
+
+    /**
+     * The state of the model call of an agent. The agent publishes it when a call starts, while the answer streams
+     * (at most about four times each second), when the provider counts arrive, and when the call ends or fails.
+     * A retry after a failed call keeps the state active.
+     *
+     * @param active true while a model call runs, false when the call ended, failed, or was cancelled
+     * @param tokensUp the tokens sent in the model calls of the running turn. It starts as the estimate of the
+     *                 request and becomes the count of the provider.
+     * @param tokensDown the tokens received in the model calls of the running turn. It is an estimate while the
+     *                   answer streams and becomes the count of the provider.
+     */
+    record Working(AgentId agent, boolean active, int tokensUp, int tokensDown) implements AgentEvent {}
+
     record Error(AgentId agent, String message) implements AgentEvent {}
 
     /**

@@ -33,7 +33,7 @@ The new subagent gets:
 
 The working context of the subagent does not have the history of the parent. The `task` text must contain all needed information. The subagent can ask questions with `recall`. `recall` always searches the full index of the session: the chunks of all agents, not only the chunks of the subagent. See [Recall in a subagent](#recall-in-a-subagent).
 
-A subagent has the `advisor` tool, unless the advisor is off. The advisor gets the last request of the subagent, so it never sees the context of the parent or of another agent.
+A subagent has the `advisor` tool, unless the advisor is off. The advisor gets the last request of the subagent, so it never sees the context of the parent or of another agent. A subagent that uses 80 percent of its turn limit with no progress asks the advisor for help. The advisor can then write a new todo list for the subagent, and the turn count of the subagent goes back to 0. See [Turn watch for subagents](agent-loop.md#turn-watch-for-subagents).
 
 A subagent writes its chunks to the session index with its own `agentId`. See [context-index-design.md](context-index-design.md).
 

@@ -39,6 +39,9 @@ public final class TodoTool extends RecordTool<TodoTool.Input> {
     /** The current list of an agent. It is empty before the first call. */
     public List<Item> list(String agentId) { return lists.getOrDefault(agentId, List.of()); }
 
+    /** Replaces the list of an agent. The advisor uses this to update the todos of a subagent. */
+    public void replace(String agentId, List<Item> items) { lists.put(agentId, List.copyOf(items)); }
+
     /** Renders a list as text. */
     public static String render(List<Item> items) {
         if (items.isEmpty()) return "Todo list: empty.";

@@ -77,6 +77,7 @@ public final class SubagentRuntime implements AutoCloseable {
     private final CompletionSteps steps;
     private final RemoteSpawner remote;
     private final WorkspacePolicies workspacePolicies;
+    private final AdvisorLink advisorLink;
 
     private final Object lock = new Object();
     private volatile ExternalDelivery externalDelivery;
@@ -109,6 +110,7 @@ public final class SubagentRuntime implements AutoCloseable {
         this.steps = b.steps == null ? CompletionSteps.none() : b.steps;
         this.remote = b.remote;
         this.workspacePolicies = b.workspacePolicies;
+        this.advisorLink = b.advisorLink;
     }
 
     public static Builder builder(String sessionId, AgentSettings settings, LlmProvider llm) {
@@ -132,6 +134,7 @@ public final class SubagentRuntime implements AutoCloseable {
         private CompletionSteps steps;
         private RemoteSpawner remote;
         private WorkspacePolicies workspacePolicies;
+        private AdvisorLink advisorLink;
 
         private Builder(String sessionId, AgentSettings settings, LlmProvider llm) {
             this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
@@ -173,6 +176,9 @@ public final class SubagentRuntime implements AutoCloseable {
         public Builder workspacePolicies(WorkspacePolicies value) { this.workspacePolicies = value; return this; }
 
         /** The port to the swarm. Without it, a spawn with a peer fails. */
+        /** Turns the turn watch on: a subagent at 80% of its limit without progress asks the advisor for help. */
+        public Builder advisorLink(AdvisorLink value) { this.advisorLink = value; return this; }
+
         public Builder remote(RemoteSpawner value) { this.remote = value; return this; }
 
         public SubagentRuntime build() { return new SubagentRuntime(this); }
@@ -506,6 +512,8 @@ public final class SubagentRuntime implements AutoCloseable {
             var maxCalls = n.callCap > 0 ? Math.min(limits.maxModelCalls(), n.callCap) : limits.maxModelCalls();
             var limited = new LimitedLlm(plain, maxCalls,
                 () -> fail(n, "Model call limit reached: " + maxCalls + " calls."));
+            n.maxCalls = maxCalls;
+            n.limited = limited;
             var workdir = n.request.workdir() != null ? n.request.workdir() : settings.workingDirectory();
             var suffix = new StringBuilder();
             suffix.append("You are the subagent \"").append(n.name).append("\" of the agent \"")
@@ -533,6 +541,13 @@ public final class SubagentRuntime implements AutoCloseable {
             });
             if (pruneListener != null) agent.withPruneListener(chunks -> pruneListener.accept(n.id, chunks));
             n.agent = agent;
+            if (advisorLink != null) {
+                n.watch = new TurnWatch(maxCalls);
+                n.resetCalls = () -> {
+                    limited.reset();
+                    agent.resetCallCount();
+                };
+            }
             n.turn = () -> agent.turns().size() + 1;
             n.token.onCancel(agent::cancel);
             var maxDuration = n.timeCap != null && n.timeCap.compareTo(limits.maxDuration()) < 0 ? n.timeCap
@@ -584,6 +599,7 @@ public final class SubagentRuntime implements AutoCloseable {
                 enterWait(n, AgentLifecycle.WAITING_INPUT, "user");
             case AgentEvent.ToolStarted s -> leaveWait(n, AgentLifecycle.WAITING_INPUT);
             case AgentEvent.ToolFinished f -> leaveWait(n, AgentLifecycle.WAITING_INPUT);
+            case AgentEvent.ContextUsage u -> watchTurn(n);
             case AgentEvent.Error e when !e.message().startsWith("Cannot store turn") -> fail(n, e.message());
             default -> { }
         }
@@ -592,6 +608,60 @@ public final class SubagentRuntime implements AutoCloseable {
         } catch (RuntimeException e) {
             log.atWarn().log(() -> "An event consumer failed: " + e.getMessage());
         }
+    }
+
+    // ---- the turn watch ----
+
+    /**
+     * Runs on each model call of a subagent. Progress resets the count. Without progress, the subagent asks the
+     * advisor for help once at 80% of its limit. When the advice changes the todos, the count starts again.
+     */
+    private void watchTurn(AgentNode n) {
+        var watch = n.watch;
+        if (watch == null || advisorLink == null) return;
+        try {
+            var todos = advisorLink.todos(n.id);
+            if (watch.onTurn(todos)) {
+                n.resetCalls.run();
+                return;
+            }
+            if (!watch.shouldAskForHelp()) return;
+            watch.helpAsked();
+            var used = watch.turns();
+            var limit = watch.limit();
+            log.atInfo().log(() -> "Subagent " + n.name + " asks the advisor for help: " + used + " of " + limit
+                + " turns without progress");
+            try {
+                agentEvents.accept(new AgentEvent.HelpRequested(n.id, used, limit));
+            } catch (RuntimeException e) {
+                log.atWarn().log(() -> "An event consumer failed: " + e.getMessage());
+            }
+            var advice = advisorLink.advise(n.id, helpRequest(n, todos, used, limit), n.token);
+            advice.filter(text -> !text.isBlank()).ifPresent(text ->
+                deliver(n, new AgentNode.InboxItem("[advice from the advisor]\n" + text, null)));
+            var after = advisorLink.todos(n.id);
+            if (!after.equals(todos)) {
+                log.atInfo().log(() -> "The advisor changed the todos of " + n.name + ". The turn count resets.");
+                watch.onTodosChanged(after);
+                n.resetCalls.run();
+            }
+        } catch (RuntimeException e) {
+            log.atWarn().log(() -> "The turn watch of " + n.name + " failed: " + e.getMessage());
+        }
+    }
+
+    /** The text of the help request to the advisor. */
+    static String helpRequest(AgentNode n, List<TodoItem> todos, int used, int limit) {
+        var out = new StringBuilder("[Help request] The subagent \"").append(n.name).append("\" made no progress.\n");
+        out.append("Goal: ").append(n.request == null ? "" : n.request.task()).append('\n');
+        out.append("Turns used since the last progress: ").append(used).append(" of ").append(limit).append(".\n");
+        out.append("Open todos:\n");
+        var open = todos.stream().filter(TodoItem::open).toList();
+        if (open.isEmpty()) out.append("- none\n");
+        for (var item : open) out.append("- ").append(item.text()).append(" (").append(item.state()).append(")\n");
+        out.append("Steer the subagent with short advice. To change its todos, write the full new list.");
+        out.append(" Write one task on each line as '- [ ] text', '- [~] text', or '- [x] text'.");
+        return out.toString();
     }
 
     private static void trackOutput(AgentNode n, String delta) {
@@ -817,6 +887,22 @@ public final class SubagentRuntime implements AutoCloseable {
     /** The snapshots of all agents of the session. */
     public List<AgentInfo> status() {
         synchronized (lock) { return nodes.values().stream().map(AgentNode::info).toList(); }
+    }
+
+    /**
+     * The model calls of a subagent task.
+     *
+     * @param used the calls that the agent made so far
+     * @param limit the most calls that the task may make
+     */
+    public record ModelCalls(int used, int limit) {}
+
+    /** The model calls of an agent and their limit. Empty when the agent is unknown or has not started its loop. */
+    public Optional<ModelCalls> modelCalls(AgentId id) {
+        synchronized (lock) {
+            return Optional.ofNullable(nodes.get(id)).map(n -> n.limited == null ? null
+                : new ModelCalls(n.limited.calls(), n.maxCalls));
+        }
     }
 
     public Optional<AgentInfo> info(AgentId id) {

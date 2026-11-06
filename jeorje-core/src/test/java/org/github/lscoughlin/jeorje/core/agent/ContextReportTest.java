@@ -21,6 +21,7 @@ class ContextReportTest {
         assertEquals(0, report.request());
         assertEquals(55_084, report.budget(), "60% of the 91,808-token headroom");
         assertEquals(0, report.percent());
+        assertEquals(91_808, report.headroom());
         assertTrue(report.render().contains("request"));
     }
 
@@ -52,6 +53,46 @@ class ContextReportTest {
         assertTrue(text.contains("1 turn)"), text);
         assertTrue(text.contains("Results moved out of a running turn: 0"), text);
         assertTrue(text.endsWith("Turns that left the last request: none"), text);
-        assertTrue(text.contains("of 55,084 tokens (" + report.percent() + "%)"), text);
+        assertTrue(text.contains("55,084 tokens (request at " + report.percent() + "%)"), text);
+        assertTrue(text.contains("91,808 tokens (request at " + report.headroomPercent() + "%"), text);
+        assertFalse(text.contains("WARNING"), text);
+    }
+
+    private static ContextReport report(int current, int request) {
+        return new ContextReport("a1", 100, 200, 0, 0, 0, 0, 1_000, 2, current, request, 600, 1_000, 0, List.of());
+    }
+
+    @Test
+    void belowTheSoftBudgetThereIsNoWarning() {
+        var report = report(100, 500);
+        assertEquals(83, report.percent());
+        assertEquals(50, report.headroomPercent());
+        assertFalse(report.overHeadroom());
+        var text = report.render();
+        assertTrue(text.contains("soft budget") && text.contains("hard headroom"), text);
+        assertTrue(text.contains("request at 83%"), text);
+        assertFalse(text.contains("WARNING"), text);
+    }
+
+    @Test
+    void betweenTheSoftBudgetAndTheHeadroomTheReportShowsTheOverrunWithoutAWarning() {
+        var report = report(400, 900);
+        assertEquals(150, report.percent(), "the soft percent passes 100");
+        assertEquals(90, report.headroomPercent());
+        assertEquals(40, report.currentPercent());
+        assertEquals(100, report.recentPercent());
+        assertFalse(report.overHeadroom());
+        assertFalse(report.render().contains("WARNING"), report.render());
+    }
+
+    @Test
+    void overTheHeadroomTheReportWarnsAboutTheCurrentTurn() {
+        var report = report(1_500, 2_000);
+        assertTrue(report.overHeadroom());
+        assertEquals(200, report.headroomPercent());
+        var text = report.render();
+        assertTrue(text.contains("WARNING: the request is 1,000 tokens over the hard headroom"), text);
+        assertTrue(text.contains("current turn holds 1,500 tokens"), text);
+        assertTrue(text.contains("/compact") && text.contains("recall"), text);
     }
 }

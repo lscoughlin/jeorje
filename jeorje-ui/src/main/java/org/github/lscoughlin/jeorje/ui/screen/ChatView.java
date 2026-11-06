@@ -338,12 +338,18 @@ public final class ChatView {
                 add(new TextEntry("? waiting for approval: " + c.toolUse().tool(), false, DIM));
             }
             case AgentEvent.TurnFinished t -> streaming = null;
+            case AgentEvent.HelpRequested h -> {
+                streaming = null;
+                add(new TextEntry("? " + h.agent().value() + " asked the advisor for help: " + h.turns() + " of "
+                        + h.limit() + " turns without progress", false, DIM));
+            }
             case AgentEvent.Compacted c -> {
                 streaming = null;
                 add(new TextEntry("[compacted: " + c.chunksPruned() + " chunks, " + c.tokensFreed()
                         + " tokens freed]", false, DIM));
             }
             case AgentEvent.ContextUsage u -> { }
+            case AgentEvent.Working w -> { }
             case AgentEvent.ContextTrimmed t -> {
                 streaming = null;
                 var text = new StringBuilder("[context: ");

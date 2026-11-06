@@ -18,7 +18,7 @@ The plan code is in `jeorje-core` (`PlanMode`, `PlanParser`, `PlanValidator`, `P
 - **Story**: one unit of work that a single subagent can finish alone. It has a goal, acceptance criteria, context, and tasks.
 - **Task**: one step in a story. A subagent does the tasks of its story in order.
 - **Worker**: the subagent that implements one story.
-- **Orchestrator**: the foreground agent that runs `/implement`. It schedules the workers.
+- **Orchestrator**: the agent that runs `/implement`. It schedules the workers. Each top-level session has its own orchestrator. Sessions can run `/implement` at the same time. The orchestrator is built on the first `/implement` of its session.
 
 ## Plan mode
 
@@ -256,7 +256,7 @@ The command `jeorje run` runs the plan commands with no UI. No user is present, 
 
 ## Events and UI
 
-- The status line shows `IMPLEMENT n/m` (stories done of total) and a count of blocked stories.
+- The status line shows `IMPLEMENT [bar] n/m | turn t/l` only for the session that runs the active implementation, and only while that session is in the foreground. The bar has 10 cells. The number `n` is the count of stories done and `m` is the total. The number `t` is the count of model calls of the running worker and `l` is the limit of model calls for one worker. Each top-level session can run its own `/implement`.
 - The agent switcher shows each worker with its story id, its state, and the current task.
 - `ConfirmationRequested` events from workers have the story id in the prompt. The orchestrator gives the story id of a worker with `storyOf(agentId)`.
 - `/implement status` shows a table with the story, state, attempt, worker, and branch.

@@ -14,6 +14,8 @@ import org.github.lscoughlin.jeorje.core.port.Tool;
 import org.github.lscoughlin.jeorje.core.port.ToolContext;
 import org.github.lscoughlin.jeorje.tools.memory.AdvisorContext;
 import org.github.lscoughlin.jeorje.tools.memory.AdvisorTool;
+import org.github.lscoughlin.jeorje.tools.memory.SubagentHelp;
+import org.github.lscoughlin.jeorje.tools.memory.TodoTool;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -56,6 +58,17 @@ public final class AdvisorSupport {
                     var last = lastContext.get();
                     return last == null ? new AdvisorContext(null, java.util.List.of()) : last;
                 });
+    }
+
+    /**
+     * The link for the turn watch of the subagent runtime. It asks the advisor the same way as the tool, and
+     * reads and updates the todos in {@code todos}. It answers with no advice while no advisor model is set.
+     */
+    public SubagentHelp help(TodoTool todos) {
+        return new SubagentHelp(todos, (agent, question, cancel) -> {
+            if (!enabled()) return null;
+            return new AdvisorTool(advisorClient.get(), this::context).advise(agent, question, cancel);
+        });
     }
 
     /** The tool for the agent. It answers with an error while no advisor model is set. */

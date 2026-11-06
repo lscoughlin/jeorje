@@ -20,6 +20,8 @@ public final class StatusLine {
     private boolean plan;
     private int implementDone = -1;
     private int implementTotal;
+    private int turnsUsed = -1;
+    private int turnsLimit;
     private final Deque<String> notices = new ArrayDeque<>();
     private String follow;
 
@@ -50,6 +52,18 @@ public final class StatusLine {
 
     public synchronized StatusLine clearImplement() { this.implementDone = -1; return this; }
 
+    /**
+     * Shows {@code turn used/limit} after the IMPLEMENT field. A limit of 0 or less shows {@code turn used}. The field
+     * shows only while the IMPLEMENT field shows.
+     */
+    public synchronized StatusLine turns(int used, int limit) {
+        this.turnsUsed = used;
+        this.turnsLimit = limit;
+        return this;
+    }
+
+    public synchronized StatusLine clearTurns() { this.turnsUsed = -1; return this; }
+
     /** Adds a notice from a background agent. Only the last three notices stay. */
     public synchronized StatusLine notice(String text) {
         notices.addLast(text);
@@ -75,6 +89,9 @@ public final class StatusLine {
         if (plan) parts.add("PLAN");
         if (implementDone >= 0) parts.add("IMPLEMENT " + implementBar(implementDone, implementTotal) + " "
                 + implementDone + "/" + implementTotal);
+        if (implementDone >= 0 && turnsUsed >= 0) {
+            parts.add("turn " + turnsUsed + (turnsLimit > 0 ? "/" + turnsLimit : ""));
+        }
         if (contextPercent >= 0) parts.add("ctx " + contextPercent + "%");
         parts.add(swarmOff ? "peers off" : "peers " + peers);
         if (!notices.isEmpty()) parts.add(String.join(" ; ", notices));

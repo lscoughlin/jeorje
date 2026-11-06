@@ -7,9 +7,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.github.lscoughlin.jeorje.core.model.AgentEvent;
+import org.github.lscoughlin.jeorje.core.model.AgentId;
 import org.github.lscoughlin.jeorje.core.model.LlmRequest;
+import org.github.lscoughlin.jeorje.core.model.Message;
+import org.github.lscoughlin.jeorje.core.model.Role;
+import org.github.lscoughlin.jeorje.core.model.Text;
 import org.github.lscoughlin.jeorje.core.model.ToolResult;
 import org.github.lscoughlin.jeorje.core.model.ToolResultData;
+import org.github.lscoughlin.jeorje.core.model.ToolUse;
 import org.github.lscoughlin.jeorje.core.model.Turn;
 import org.github.lscoughlin.jeorje.core.port.PermissionPolicy.Decision;
 import org.github.lscoughlin.jeorje.core.session.TurnChunker;
@@ -165,4 +170,95 @@ class TurnSpillTest {
         assertTrue(kw.contains("WidgetService"), kw.toString());
         assertTrue(kw.size() <= 6);
     }
+
+    /** A message with the use of {@code tool} under the id {@code id}. */
+    private static Message use(String id, String tool) {
+        return new Message(Role.ASSISTANT, List.of(new ToolUse(id, tool, MAPPER.createObjectNode())));
+    }
+
+    /** A message with one result. */
+    private static Message result(String id, String output, boolean error) {
+        return new Message(Role.USER, List.of(new ToolResult(id, output, error)));
+    }
+
+    /** The result with the id {@code id}. */
+    private static ToolResult result(List<Message> messages, String id) {
+        return messages.stream().flatMap(m -> m.content().stream()).filter(ToolResult.class::isInstance)
+            .map(ToolResult.class::cast).filter(r -> r.toolUseId().equals(id)).findFirst().orElseThrow();
+    }
+
+    @Test
+    void theNormalModeKeepsATurnWithFewResultsWhole() {
+        var spill = new TurnSpill(new ListStore(), "s1", new AgentId("a1"), 1, CLOCK);
+        var messages = new ArrayList<Message>();
+        messages.add(Message.user("read the big file"));
+        messages.add(use("c1", "bigread"));
+        messages.add(result("c1", big("File1"), false));
+        for (var i = 2; i <= TurnSpill.MIN_RESULTS - 1; i++) {
+            messages.add(use("c" + i, "bigread"));
+            messages.add(result("c" + i, "small " + i, false));
+        }
+        assertEquals(0, spill.spill(messages, CHUNKER, 1_000_000).spilled());
+        assertFalse(result(messages, "c1").output().startsWith(TurnSpill.MARK));
+    }
+
+    @Test
+    void theForcedModeSpillsOneBigResultBelowTheMinimumCount() {
+        var store = new ListStore();
+        var spill = new TurnSpill(store, "s1", new AgentId("a1"), 1, CLOCK);
+        var messages = new ArrayList<Message>();
+        messages.add(Message.user("read the big file"));
+        messages.add(use("c1", "bigread"));
+        messages.add(result("c1", big("File1"), false));
+        for (var i = 2; i <= TurnSpill.LIVE_TAIL + 1; i++) {
+            messages.add(use("c" + i, "bigread"));
+            messages.add(result("c" + i, "small " + i, false));
+        }
+        var outcome = spill.spill(messages, CHUNKER, 1_000_000, true);
+        assertEquals(1, outcome.spilled());
+        assertTrue(outcome.freedChars() > 10_000, "freed: " + outcome.freedChars());
+        assertTrue(result(messages, "c1").output().startsWith(TurnSpill.MARK), "the old result is a stub");
+        var full = spill.full(turn(messages));
+        var original = full.messages().stream().flatMap(m -> m.content().stream())
+            .filter(ToolResult.class::isInstance).map(ToolResult.class::cast)
+            .filter(r -> r.toolUseId().equals("c1")).findFirst().orElseThrow();
+        assertEquals(big("File1"), original.output(), "the transcript keeps the full text");
+        assertTrue(store.chunks.stream().anyMatch(c -> c.part() >= TurnSpill.FIRST_PART));
+    }
+
+    @Test
+    void theForcedModeKeepsTheLiveTailTheErrorsTheStubsAndTheKeepWholeToolsWhole() {
+        var spill = new TurnSpill(new ListStore(), "s1", new AgentId("a1"), 1, CLOCK);
+        var messages = new ArrayList<Message>();
+        messages.add(Message.user("do the work"));
+        messages.add(use("old", "bigread"));
+        messages.add(result("old", big("Old"), false));
+        messages.add(use("bad", "bigread"));
+        messages.add(result("bad", big("Bad"), true));
+        messages.add(use("todo", "todo"));
+        messages.add(result("todo", big("Todo"), false));
+        messages.add(use("done", "bigread"));
+        messages.add(result("done", TurnSpill.MARK + "bigread {} | recall: x, id=a1:1.1000]\nstopped", false));
+        for (var i = 1; i <= TurnSpill.LIVE_TAIL; i++) {
+            messages.add(use("live" + i, "bigread"));
+            messages.add(result("live" + i, big("Live" + i), false));
+        }
+        var outcome = spill.spill(messages, CHUNKER, 1_000_000, true);
+        assertEquals(1, outcome.spilled(), "only the old result can leave");
+        assertTrue(result(messages, "old").output().startsWith(TurnSpill.MARK));
+        assertTrue(result(messages, "bad").output().equals(big("Bad")), "an error result stays whole");
+        assertTrue(result(messages, "todo").output().equals(big("Todo")), "a keep-whole tool stays whole");
+        assertTrue(result(messages, "done").output().startsWith(TurnSpill.MARK), "a stub stays a stub");
+        for (var i = 1; i <= TurnSpill.LIVE_TAIL; i++) {
+            assertTrue(result(messages, "live" + i).output().equals(big("Live" + i)), "the live tail stays whole");
+        }
+        assertTrue(messages.getFirst().content().getFirst() instanceof Text t && t.text().equals("do the work"),
+            "the text of the user stays whole");
+    }
+
+    private static Turn turn(List<Message> messages) {
+        return new Turn(new AgentId("a1"), 1, List.copyOf(messages));
+    }
+
+    private static final TurnChunker CHUNKER = new TurnChunker("s1");
 }

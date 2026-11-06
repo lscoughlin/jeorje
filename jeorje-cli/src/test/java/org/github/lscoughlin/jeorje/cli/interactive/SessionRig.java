@@ -54,6 +54,8 @@ final class SessionRig implements AutoCloseable {
         final ScriptedLlmClient main;
         final Map<String, ScriptedLlmClient> workers = new ConcurrentHashMap<>();
         final List<LlmRequest> mainRequests = new CopyOnWriteArrayList<>();
+        /** When set, each model call of a worker waits for a permit. */
+        volatile java.util.concurrent.Semaphore workerGate;
 
         Router(ScriptedLlmClient main) {
             this.main = main;
@@ -74,6 +76,15 @@ final class SessionRig implements AutoCloseable {
             }
             var m = STORY.matcher(first);
             if (m.find()) {
+                var gate = workerGate;
+                if (gate != null) {
+                    try {
+                        gate.acquire();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(e);
+                    }
+                }
                 var worker = workers.get(m.group(1));
                 if (worker == null) throw new IllegalStateException("No script for story " + m.group(1));
                 return worker.stream(request, cancel);

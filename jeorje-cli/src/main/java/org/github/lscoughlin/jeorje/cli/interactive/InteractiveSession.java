@@ -168,7 +168,7 @@ public final class InteractiveSession implements AutoCloseable {
     // ---- state ----
     private final CountDownLatch quit = new CountDownLatch(1);
     private final AtomicBoolean closed = new AtomicBoolean();
-    /** The first session of the process. The orchestrator and the swarm bridge belong to it. */
+    /** The first session of the process. The swarm bridge belongs to it. */
     private final MainSession main = MainSession.first();
     private final SessionHub hub = new SessionHub();
     private final Map<String, LlmClient> clients = new ConcurrentHashMap<>();
@@ -190,6 +190,9 @@ public final class InteractiveSession implements AutoCloseable {
     private volatile org.github.lscoughlin.jeorje.ui.keys.KeyBindings keys;
     private volatile int window;
     private AdvisorSupport advisor;
+    /** The todo lists of all agents of the session. The turn watch reads and updates them. */
+    private final org.github.lscoughlin.jeorje.tools.memory.TodoTool todoTool =
+            new org.github.lscoughlin.jeorje.tools.memory.TodoTool();
     private SessionDirectory directory;
 
     private LoadedConfig loaded;
@@ -203,7 +206,6 @@ public final class InteractiveSession implements AutoCloseable {
     private ToolPermissionPolicy policy;
     private Screen screen;
     private PromptGate gate;
-    private ImplementOrchestrator orchestrator;
     private WorktreeManager worktrees;
     private WorktreeCommands worktreeCommands;
     private WorktreeCompletion completion;
@@ -266,7 +268,31 @@ public final class InteractiveSession implements AutoCloseable {
 
     public Agent agent() { return fg().agent(); }
 
-    public ImplementOrchestrator orchestrator() { return orchestrator; }
+    /** The orchestrator of the foreground session, or null when that session has not started {@code /implement}. */
+    public ImplementOrchestrator orchestrator() {
+        var session = hub.foregroundSession();
+        return session == null ? null : session.orchestrator();
+    }
+
+    /** The orchestrator of the foreground session. It builds the orchestrator on the first call. */
+    ImplementOrchestrator ensureOrchestrator() {
+        return ensureOrchestrator(fg());
+    }
+
+    /** The orchestrator of a session. It builds the orchestrator on the first call. */
+    synchronized ImplementOrchestrator ensureOrchestrator(MainSession ms) {
+        if (ms.orchestrator() == null) ms.orchestrator(buildOrchestrator(ms));
+        return ms.orchestrator();
+    }
+
+    /** The orchestrators that exist now, one for each session that started {@code /implement}. */
+    private List<ImplementOrchestrator> orchestrators() {
+        var list = new ArrayList<ImplementOrchestrator>();
+        for (var session : hub.sessions()) {
+            if (session.orchestrator() != null) list.add(session.orchestrator());
+        }
+        return list;
+    }
 
     public WorktreeManager worktrees() { return worktrees; }
 
@@ -378,17 +404,17 @@ public final class InteractiveSession implements AutoCloseable {
         clipboard = new org.github.lscoughlin.jeorje.ui.mouse.Clipboard(realTerminal,
                 org.github.lscoughlin.jeorje.ui.mouse.Clipboard.osc52Likely(env.env()));
         screen.status().yolo(options.yolo());
+        screen.activity(Clock.systemUTC(), ChatHighlighting.noColor(env.env())
+                || !realTerminal.encoding().name().toUpperCase(java.util.Locale.ROOT).startsWith("UTF"));
         gate = new PromptGate(screen::post);
         askTrustFirst();
 
         rescanRegistries();
         openWorktrees();
         buildAgents();
-        buildOrchestrator();
         if (resume != null) restoreAgent();
 
-        roster = new AgentRoster(hub, () -> orchestrator == null ? List.<SubagentRuntime>of()
-                : List.of(orchestrator.runtime()),
+        roster = new AgentRoster(hub, () -> orchestrators().stream().map(ImplementOrchestrator::runtime).toList(),
                 () -> swarm == null ? List.of() : AgentRoster.alive(swarm.peers(PeerState.ALIVE)),
                 session -> branchOf(session.id()), this::historyOf, this::steerMain,
                 new RemoteRosters(peerId -> swarm == null
@@ -500,7 +526,7 @@ public final class InteractiveSession implements AutoCloseable {
         if (first) toolState = state;
         var grants = skillGrants();
         var registry = Wiring.registry(config, grants, policy.network(), state, sessionId, options.yolo(),
-                mcpManager());
+                mcpManager(), todoTool);
         var out = new ArrayList<Tool>();
         for (var name : registry.names()) {
             var tool = registry.find(name).orElseThrow();
@@ -625,6 +651,7 @@ public final class InteractiveSession implements AutoCloseable {
         var runtimeBuilder = SubagentRuntime.builder(sessionId,
                         settings, model -> advisor.tap(clientFor(model)))
                 .store(ms.store()).transcript(ms.transcript()).agentEvents(this::onEvent)
+                .advisorLink(advisor.help(todoTool))
                 .pruneListener((child, chunks) -> releaseSkills(child.value(), chunks))
                 .events(event -> {
                     if (bridge != null) bridge.onSubagentEvent(event);
@@ -652,7 +679,7 @@ public final class InteractiveSession implements AutoCloseable {
         var llm = new LlmClient() {
             @Override
             public Flow.Publisher<LlmEvent> stream(LlmRequest request, CancellationToken cancel) {
-                var coordinating = ms.planMode().active() || orchestrator != null && orchestrator.active();
+                var coordinating = ms.planMode().active() || ms.orchestrator() != null && ms.orchestrator().active();
                 var model = coordinating && roles.advisorSet() ? roles.advisor() : modelOverride;
                 return advisor.tap(clientFor(model)).stream(request, cancel);
             }
@@ -715,18 +742,18 @@ public final class InteractiveSession implements AutoCloseable {
         startupNotices.add(String.join("\n", lines));
     }
 
-    private void buildOrchestrator() {
-        var settings = agentSettings(main.session().id());
-        var workerPolicy = new GatedPolicy(skillGrants(), null, this::askForWorker);
-        var builder = ImplementOrchestrator.builder(main.session().id(),
+    private ImplementOrchestrator buildOrchestrator(MainSession ms) {
+        var settings = agentSettings(ms.session().id());
+        var workerPolicy = new GatedPolicy(skillGrants(), null, (who, use) -> askForWorker(ms, who, use));
+        var builder = ImplementOrchestrator.builder(ms.session().id(),
                         settings, model -> advisor.tap(clientFor(model)), config.implement())
-                .store(main.store()).transcript(main.transcript()).worktrees(worktrees)
-                .stateStore(RunStateStore.file(main.session().dir().resolve("implement.json")))
-                .events(this::onImplementEvent).agentEvents(this::onEvent).subagentEvents(e -> refreshStatus())
-                .orchestratorInput(input -> notice(MAIN, input.text()))
+                .store(ms.store()).transcript(ms.transcript()).worktrees(worktrees)
+                .stateStore(RunStateStore.file(ms.session().dir().resolve("implement.json")))
+                .events(event -> onImplementEvent(ms, event)).agentEvents(this::onEvent).subagentEvents(e -> refreshStatus())
+                .orchestratorInput(input -> notice(ms.id(), input.text()))
                 .limits(limits()).policy(workerPolicy).workspacePolicies(this::policyForWorkspace)
                 .approver(plan -> askApproval(plan.render()))
-                .baseTools(baseTools(workerPolicy, main.session().id(), false))
+                .baseTools(baseTools(workerPolicy, ms.session().id(), false))
                 .workerTools(StoryTools.factory(List.of()));
         if (hooks.mergeRetryInterval() != null) builder.mergeRetryInterval(hooks.mergeRetryInterval());
         if (roles.advisorSet() && "advisor".equals(config.implement().review())) {
@@ -734,7 +761,7 @@ public final class InteractiveSession implements AutoCloseable {
         }
         var compactorClient = roles.pruningModel().map(this::clientFor).orElse(null);
         builder.compactor(compactorClient);
-        orchestrator = builder.build();
+        return builder.build();
     }
 
     private LlmClient clientFor(String model) {
@@ -919,11 +946,18 @@ public final class InteractiveSession implements AutoCloseable {
 
     // ---- status ----
 
+    /** The time between two ticks. The spinner moves one frame each tick. */
+    private static final long TICK_MS = 100;
+    /** The status line refreshes at each third tick. */
+    private static final int STATUS_EVERY = 3;
+
     private void tickLoop() {
+        var tick = 0L;
         while (!closed.get()) {
             try {
-                Thread.sleep(300);
-                refreshStatus();
+                Thread.sleep(TICK_MS);
+                if (screen != null && uiStarted && screen.tickActivity()) screen.draw();
+                if (++tick % STATUS_EVERY == 0) refreshStatus();
             } catch (InterruptedException e) {
                 return;
             } catch (RuntimeException e) {
@@ -940,13 +974,17 @@ public final class InteractiveSession implements AutoCloseable {
         status.branch(branchOf(screen.foreground()));
         status.swarmOff(swarm == null);
         status.peers(swarm == null ? 0 : swarm.peers(PeerState.ALIVE).size());
+        var orchestrator = orchestrator();
         var rows = orchestrator == null ? List.<ImplementOrchestrator.Row>of() : orchestrator.rows();
         if (orchestrator != null && (orchestrator.active() || !rows.isEmpty())) {
             var done = (int) rows.stream().filter(r -> r.state()
                     == org.github.lscoughlin.jeorje.core.implement.StoryState.DONE).count();
             status.implement(done, rows.size());
+            var calls = orchestrator.turnUsage();
+            if (calls.isPresent()) status.turns(calls.get().used(), calls.get().limit());
+            else status.clearTurns();
         } else {
-            status.clearImplement();
+            status.clearImplement().clearTurns();
         }
         var text = status.text();
         if (!text.equals(lastStatus)) {
@@ -979,6 +1017,7 @@ public final class InteractiveSession implements AutoCloseable {
         if (bridge != null) bridge.onAgentEvent(event);
         screen.post(event);
         notifyEditor(event);
+        if (event instanceof AgentEvent.ContextUsage) refreshStatus();
         var owner = hub.get(event.agent());
         if (owner == null) return;
         switch (event) {
@@ -993,7 +1032,7 @@ public final class InteractiveSession implements AutoCloseable {
         }
     }
 
-    private void onImplementEvent(ImplementEvent event) {
+    private void onImplementEvent(MainSession owner, ImplementEvent event) {
         var line = switch (event) {
             case ImplementEvent.RunStarted s ->
                     "IMPLEMENT: plan " + s.plan() + ", " + s.open() + " of " + s.stories() + " stories are open.";
@@ -1009,9 +1048,9 @@ public final class InteractiveSession implements AutoCloseable {
             case ImplementEvent.RunControl c -> "IMPLEMENT: " + c.action() + ".";
             case ImplementEvent.RunFinished f -> f.report().render();
         };
-        notice(MAIN, line);
+        notice(owner.id(), line);
         refreshStatus();
-        if (event instanceof ImplementEvent.RunFinished) saveManifest(main, "idle");
+        if (event instanceof ImplementEvent.RunFinished) saveManifest(owner, "idle");
     }
 
     /** Appends lines to the chat of an agent. */
@@ -1049,7 +1088,17 @@ public final class InteractiveSession implements AutoCloseable {
     // ---- permission ----
 
     private PermissionPolicy.Decision askForWorker(AgentId who, ToolUse use) {
-        var story = orchestrator == null ? Optional.<String>empty() : orchestrator.storyOf(who);
+        return askForWorker(null, who, use);
+    }
+
+    /**
+     * Asks for a worker. Worker ids count up in each runtime, so two sessions can have a worker with the same id. The
+     * orchestrator of the owning session looks first. The orchestrators of all sessions are the fallback.
+     */
+    private PermissionPolicy.Decision askForWorker(MainSession owner, AgentId who, ToolUse use) {
+        var own = owner == null || owner.orchestrator() == null ? Optional.<String>empty()
+                : owner.orchestrator().storyOf(who);
+        var story = own.or(() -> orchestrators().stream().map(o -> o.storyOf(who)).flatMap(Optional::stream).findFirst());
         var label = story.orElseGet(() -> allRuntimes().stream().map(r -> r.info(who))
                 .flatMap(Optional::stream).map(i -> i.name()).findFirst().orElse(who.value()));
         screen.status().notice(label + " asks to run " + use.tool());
@@ -1236,7 +1285,7 @@ public final class InteractiveSession implements AutoCloseable {
         for (var session : hub.sessions()) {
             if (session.runtime() != null) list.add(session.runtime());
         }
-        if (orchestrator != null) list.add(orchestrator.runtime());
+        for (var o : orchestrators()) list.add(o.runtime());
         return list;
     }
 
@@ -1580,9 +1629,9 @@ public final class InteractiveSession implements AutoCloseable {
     private void shutdown() {
         if (!closed.compareAndSet(false, true)) return;
         if (gate != null) gate.denyAll();
-        if (orchestrator != null) {
+        for (var o : orchestrators()) {
             try {
-                if (orchestrator.active()) orchestrator.stop();
+                if (o.active()) o.stop();
             } catch (RuntimeException e) {
                 log.atWarn().log(() -> "Cannot stop the run: " + e);
             }
@@ -1594,7 +1643,7 @@ public final class InteractiveSession implements AutoCloseable {
             if (session.runtime() != null) session.runtime().close();
         }
         if (mcp != null) closeQuietly(mcp);
-        if (orchestrator != null) orchestrator.close();
+        for (var o : orchestrators()) o.close();
         if (mouse != null) mouse.close();
         if (screen != null) screen.close();
         remotes.values().forEach(RemoteAgent::close);
